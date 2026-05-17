@@ -1106,7 +1106,7 @@ function PositionFormModal({
           </div>
         </Section>
 
-        <Section title="LP Range">
+        <Section title="LP Range & Transaction">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Entry Price (Base)" htmlFor="entryPrice">
               <input
