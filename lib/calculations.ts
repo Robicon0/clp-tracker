@@ -1,0 +1,213 @@
+import type { PortfolioSummary, Position } from "./types";
+
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+function toFinite(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function calcDaysActive(
+  entryDatetime: string,
+  exitDatetime?: string | null,
+): number {
+  const entry = new Date(entryDatetime).getTime();
+  if (Number.isNaN(entry)) return 0;
+
+  const endRaw = exitDatetime ? new Date(exitDatetime).getTime() : Date.now();
+  const end = Number.isNaN(endRaw) ? Date.now() : endRaw;
+
+  const diff = (end - entry) / MS_PER_DAY;
+  return diff > 0 ? diff : 0;
+}
+
+export function calcTotalFees(claimed: number, newFees: number): number {
+  return toFinite(claimed) + toFinite(newFees);
+}
+
+export function calcPriceDiff(currentBalance: number, deposited: number): number {
+  return toFinite(currentBalance) - toFinite(deposited);
+}
+
+export function calcProfit(priceDiff: number, fees: number): number {
+  return toFinite(priceDiff) + toFinite(fees);
+}
+
+export function calcFeeAPR(
+  fees: number,
+  deposited: number,
+  daysActive: number,
+): number {
+  if (deposited <= 0 || daysActive <= 0) return 0;
+  return (fees / deposited) * (365 / daysActive) * 100;
+}
+
+export function calcDailyAPR(feeAPR: number): number {
+  return toFinite(feeAPR) / 365;
+}
+
+export function calcMonthlyAPR(feeAPR: number): number {
+  return toFinite(feeAPR) / 12;
+}
+
+export function calcYearlyAPR(
+  fees: number,
+  daysActive: number,
+  deposited: number,
+): number {
+  return calcFeeAPR(fees, deposited, daysActive);
+}
+
+export function calcROI(profit: number, deposited: number): number {
+  if (deposited <= 0) return 0;
+  return (profit / deposited) * 100;
+}
+
+export function calcADF(fees: number, daysActive: number): number {
+  if (daysActive <= 0) return 0;
+  return fees / daysActive;
+}
+
+export interface ILResult {
+  lowerPrice: number;
+  upperPrice: number;
+  currentRatio: number;
+  futureRatio: number;
+  inRange: boolean;
+  initialToken0: number;
+  initialToken1: number;
+  futureToken0: number;
+  futureToken1: number;
+  hodlValue: number;
+  lpValue: number;
+  lpWithYield: number;
+  yieldEarned: number;
+  ilDollar: number;
+  ilPercent: number;
+  hodlPct: number;
+  lpPct: number;
+  daysToCover: number;
+  apr: number;
+  yieldPct: number;
+}
+
+export function calcIL(
+  p0: number,
+  p1: number,
+  f0: number,
+  f1: number,
+  inv: number,
+  lowerPct: number,
+  upperPct: number,
+  dailyYield: number,
+  days: number,
+): ILResult {
+  const cr = p0 / p1;
+  const fr = f0 / f1;
+  const lp = cr * (1 + lowerPct / 100);
+  const up = cr * (1 + upperPct / 100);
+  const inR = fr >= lp && fr <= up;
+  const spa = Math.sqrt(lp);
+  const spb = Math.sqrt(up);
+  const sp0 = Math.sqrt(cr);
+  const sp1 = Math.sqrt(fr);
+  const t0pL = Math.max(0, 1 / sp0 - 1 / spb);
+  const t1pL = Math.max(0, sp0 - spa);
+  const vpL = t0pL * cr + t1pL;
+  const L = vpL > 0 ? inv / vpL : 0;
+  const it0 = L * t0pL;
+  const it1 = L * t1pL;
+  let ft0: number;
+  let ft1: number;
+  if (fr <= lp) {
+    ft0 = L * (1 / spa - 1 / spb);
+    ft1 = 0;
+  } else if (fr >= up) {
+    ft0 = 0;
+    ft1 = L * (spb - spa);
+  } else {
+    ft0 = L * (1 / sp1 - 1 / spb);
+    ft1 = L * (sp1 - spa);
+  }
+  const hv0 = it0 * f0;
+  const hv1 = it1 * f1;
+  const hodl = hv0 + hv1;
+  const fv0 = ft0 * f0;
+  const fv1 = ft1 * f1;
+  const lpValue = fv0 + fv1;
+  const apr = dailyYield * 365;
+  const yieldPct = dailyYield * days;
+  const yieldEarned = inv * (yieldPct / 100);
+  const lpWithYield = lpValue + yieldEarned;
+  const ilDollar = lpValue - hodl;
+  const ilPercent = hodl > 0 ? (ilDollar / hodl) * 100 : 0;
+  const dailyYieldDollar = (apr / 100 / 365) * inv;
+  const daysToCover =
+    dailyYieldDollar > 0 ? Math.abs(ilDollar) / dailyYieldDollar : 99999;
+  const hodlPct = inv > 0 ? ((hodl - inv) / inv) * 100 : 0;
+  const lpPct = inv > 0 ? ((lpWithYield - inv) / inv) * 100 : 0;
+  return {
+    lowerPrice: lp,
+    upperPrice: up,
+    currentRatio: cr,
+    futureRatio: fr,
+    inRange: inR,
+    initialToken0: it0,
+    initialToken1: it1,
+    futureToken0: ft0,
+    futureToken1: ft1,
+    hodlValue: hodl,
+    lpValue,
+    lpWithYield,
+    yieldEarned,
+    ilDollar,
+    ilPercent,
+    hodlPct,
+    lpPct,
+    daysToCover,
+    apr,
+    yieldPct,
+  };
+}
+
+export function calcPortfolioSummary(positions: Position[]): PortfolioSummary {
+  const summary: PortfolioSummary = {
+    totalDeposited: 0,
+    totalCurrentValue: 0,
+    totalFees: 0,
+    totalProfit: 0,
+    averageAPR: 0,
+    activePositions: 0,
+    closedPositions: 0,
+  };
+
+  if (positions.length === 0) return summary;
+
+  let aprWeightedNumerator = 0;
+  let aprWeightDenominator = 0;
+
+  for (const p of positions) {
+    const fees = calcTotalFees(p.claimed, p.newFees);
+    const days = calcDaysActive(p.entryDatetime, p.exitDatetime);
+    const priceDiff = calcPriceDiff(p.currentBalance, p.deposited);
+    const profit = calcProfit(priceDiff, fees);
+    const apr = calcFeeAPR(fees, p.deposited, days);
+
+    summary.totalDeposited += toFinite(p.deposited);
+    summary.totalCurrentValue += toFinite(p.currentBalance);
+    summary.totalFees += fees;
+    summary.totalProfit += profit;
+
+    if (p.status === "active") summary.activePositions += 1;
+    else summary.closedPositions += 1;
+
+    if (p.deposited > 0) {
+      aprWeightedNumerator += apr * p.deposited;
+      aprWeightDenominator += p.deposited;
+    }
+  }
+
+  summary.averageAPR =
+    aprWeightDenominator > 0 ? aprWeightedNumerator / aprWeightDenominator : 0;
+
+  return summary;
+}
