@@ -14,6 +14,12 @@ import {
   saveClaims,
   savePositions,
 } from "../../lib/storage";
+import {
+  calcDaysActive,
+  calcFeeAPR,
+  calcPortfolioSummary,
+  calcTotalFees,
+} from "../../lib/calculations";
 import type { FeeClaim, Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -34,6 +40,17 @@ function formatUsd(value: number): string {
 
 function formatToken(value: number): string {
   return tokenFormatter.format(Number.isFinite(value) ? value : 0);
+}
+
+function formatPercent(value: number): string {
+  const safe = Number.isFinite(value) ? value : 0;
+  return `${safe.toFixed(2)}%`;
+}
+
+function positionFeeAPR(position: Position): number {
+  const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
+  const totalFees = calcTotalFees(position.claimed, position.newFees);
+  return calcFeeAPR(totalFees, position.deposited, days);
 }
 
 function pad(n: number): string {
@@ -252,6 +269,25 @@ export default function ClaimsPage() {
     };
   }, [claims]);
 
+  const positionById = useMemo(() => {
+    const map = new Map<string, Position>();
+    for (const p of positions) map.set(p.id, p);
+    return map;
+  }, [positions]);
+
+  // Deposit-weighted average APR across positions that have at least one claim.
+  // Reuses calcPortfolioSummary so this matches the Dashboard "Average Fee APR"
+  // card exactly (Invariant #6) when both pages cover the same positions.
+  const averagePositionApr = useMemo<number | null>(() => {
+    if (claims.length === 0) return null;
+    const claimedPositionIds = new Set(claims.map((c) => c.positionId));
+    const claimedPositions = positions.filter((p) =>
+      claimedPositionIds.has(p.id),
+    );
+    if (claimedPositions.length === 0) return null;
+    return calcPortfolioSummary(claimedPositions).averageAPR;
+  }, [claims, positions]);
+
   const handleAdd = (form: ClaimFormState) => {
     const claim = buildClaim(newId(), form);
     saveClaims([...getClaims(), claim]);
@@ -292,7 +328,7 @@ export default function ClaimsPage() {
         </button>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryStat label="Total Claims" value={String(totals.total)} />
         <SummaryStat
           label="Total Fees Earned (USD)"
@@ -301,6 +337,14 @@ export default function ClaimsPage() {
         <SummaryStat
           label="Total Converted to Stable"
           value={`${totals.converted} / ${totals.total}`}
+        />
+        <SummaryStat
+          label="Average Position APR"
+          value={
+            averagePositionApr === null
+              ? "—"
+              : formatPercent(averagePositionApr)
+          }
         />
       </div>
 
@@ -372,6 +416,9 @@ export default function ClaimsPage() {
                   <th className="px-4 py-3 text-left font-medium">Pair</th>
                   <th className="px-4 py-3 text-left font-medium">Platform</th>
                   <th className="px-4 py-3 text-left font-medium">Chain</th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    Position Fee APR
+                  </th>
                   <th className="px-4 py-3 text-right font-medium">Token 1</th>
                   <th className="px-4 py-3 text-right font-medium">Token 2</th>
                   <th className="px-4 py-3 text-left font-medium">Converted</th>
@@ -383,7 +430,12 @@ export default function ClaimsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {filteredSorted.map((claim) => (
+                {filteredSorted.map((claim) => {
+                  const parentPosition = positionById.get(claim.positionId);
+                  const positionApr = parentPosition
+                    ? formatPercent(positionFeeAPR(parentPosition))
+                    : "—";
+                  return (
                   <tr
                     key={claim.id}
                     className="transition-colors hover:bg-[var(--surface-2)]/60"
@@ -399,6 +451,9 @@ export default function ClaimsPage() {
                     </td>
                     <td className="px-4 py-3 text-[var(--muted)]">
                       {claim.chain}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {positionApr}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {formatToken(claim.token1Amount)}{" "}
@@ -466,7 +521,8 @@ export default function ClaimsPage() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
