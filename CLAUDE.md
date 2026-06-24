@@ -196,8 +196,8 @@ at the plan gate.
 
 ## Recent Shipped Sprints
 
-- Sprint 0 (bootstrap): CLAUDE.md added to repo root [commit
-  hash to be filled in by this sprint's commit]
+- Sprint 0 (bootstrap): CLAUDE.md added to repo root [dcb33d0]
+- Sprint 1: Fee APR display on Fee Claims page [8ca1f93]
 
 ## Known Issues
 
