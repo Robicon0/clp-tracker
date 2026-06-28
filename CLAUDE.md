@@ -186,7 +186,14 @@ at the plan gate.
 - Sprint 2: Bring Back Scalp Field
 - Sprint 3: Wide Range % Auto-Calculation
 - Sprint 4: Combined LP + Short Exposure Display
-- Sprint 5: Full Metric Suite on Positions
+- Sprint 5: Full Metric Suite + Three-Way APR View
+  (Active / Closed / Combined) — Adds Fee ROI, ADF, Daily/
+  Monthly/Yearly APR display where missing. Adds three-way
+  APR breakdown on Dashboard and Fee Claims page: Active APR
+  (open positions only, deposit-weighted), Closed APR (closed
+  positions only, deposit-weighted), Combined APR (all
+  positions ever, deposit-weighted). Approved by Osho during
+  Sprint 2 plan gate.
 - Sprint 6: Realized + Unrealized P&L per Token (Pool P&L rebuild)
 - Sprint 7: Business P&L Page (new)
 - Sprint 8: Unconverted Token Holdings + Current Value
@@ -198,6 +205,8 @@ at the plan gate.
 
 - Sprint 0 (bootstrap): CLAUDE.md added to repo root [dcb33d0]
 - Sprint 1: Fee APR display on Fee Claims page [8ca1f93]
+- Sprint 2: Restore Scalp field with closed-position profit
+  branching [e310118]
 
 ## Known Issues
 
