@@ -19,8 +19,8 @@ import {
   calcDaysActive,
   calcFeeAPR,
   calcIL,
+  calcPositionProfit,
   calcPriceDiff,
-  calcProfit,
   calcTotalFees,
   type ILResult,
 } from "../../lib/calculations";
@@ -167,7 +167,7 @@ function derive(positions: Position[]): DerivedRow[] {
     const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
     const apr = calcFeeAPR(fees, position.deposited, days);
     const priceDiff = calcPriceDiff(position.currentBalance, position.deposited);
-    const profit = calcProfit(priceDiff, fees);
+    const profit = calcPositionProfit(position, fees, priceDiff);
     return { position, fees, days, apr, priceDiff, profit };
   });
 }
@@ -186,6 +186,7 @@ interface PositionFormState {
   protocol: string;
   entryDatetime: string;
   deposited: string;
+  scalp: string;
   notes: string;
   entryPrice: string;
   bottomRange: string;
@@ -212,6 +213,7 @@ const EMPTY_FORM: PositionFormState = {
   protocol: "",
   entryDatetime: "",
   deposited: "",
+  scalp: "",
   notes: "",
   entryPrice: "",
   bottomRange: "",
@@ -244,6 +246,7 @@ function positionToForm(p: Position): PositionFormState {
     protocol: p.protocol,
     entryDatetime: isoToDatetimeLocal(p.entryDatetime),
     deposited: String(p.deposited),
+    scalp: numStr(p.scalp),
     notes: p.notes,
     entryPrice: String(p.entryPrice),
     bottomRange: String(p.bottomRange),
@@ -328,6 +331,7 @@ function buildRecords(
     shortNotes: form.shortNotes.trim() ? form.shortNotes.trim().toUpperCase() : null,
     outOfRangeUpside: ooUp,
     outOfRangeDownside: ooDown,
+    scalp: optionalNum(form.scalp),
     txLink: form.txLink.trim() === "" ? null : form.txLink.trim(),
     notes: form.notes.trim().toUpperCase(),
     status: base?.status ?? "active",
@@ -456,7 +460,11 @@ export default function PositionsPage() {
 
   const handleClose = (
     target: Position,
-    next: { exitDatetime: string; currentBalance: number },
+    next: {
+      exitDatetime: string;
+      currentBalance: number;
+      scalp: number | null;
+    },
   ) => {
     const updated = getPositions().map((p) =>
       p.id === target.id
@@ -464,6 +472,7 @@ export default function PositionsPage() {
             ...p,
             exitDatetime: next.exitDatetime,
             currentBalance: next.currentBalance,
+            scalp: next.scalp,
             status: "closed" as const,
           }
         : p,
@@ -521,6 +530,7 @@ export default function PositionsPage() {
           title={`Edit — ${modal.position.pair}`}
           submitLabel="Save Changes"
           initial={positionToForm(modal.position)}
+          editingStatus={modal.position.status}
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={(form) => handleEdit(modal.position, form)}
         />
@@ -648,6 +658,9 @@ function PositionsTable({
                   <th className="px-4 py-3 text-left font-medium">Exit Date</th>
                 )}
                 <th className="px-4 py-3 text-right font-medium">Price Diff</th>
+                {variant === "closed" && (
+                  <th className="px-4 py-3 text-right font-medium">Scalp</th>
+                )}
                 <th className="px-4 py-3 text-right font-medium">Profit</th>
                 {variant === "active" && (
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
@@ -709,6 +722,13 @@ function PositionsTable({
                   >
                     {formatUsd(priceDiff)}
                   </td>
+                  {variant === "closed" && (
+                    <td
+                      className={`px-4 py-3 text-right tabular-nums font-medium ${pnlColor(position.scalp ?? 0)}`}
+                    >
+                      {formatUsd(position.scalp ?? 0)}
+                    </td>
+                  )}
                   <td
                     className={`px-4 py-3 text-right tabular-nums font-medium ${pnlColor(profit)}`}
                   >
@@ -966,6 +986,7 @@ interface PositionFormModalProps {
   title: string;
   submitLabel: string;
   initial: PositionFormState;
+  editingStatus?: Position["status"];
   onCancel: () => void;
   onSubmit: (form: PositionFormState) => void;
 }
@@ -974,6 +995,7 @@ function PositionFormModal({
   title,
   submitLabel,
   initial,
+  editingStatus,
   onCancel,
   onSubmit,
 }: PositionFormModalProps) {
@@ -1092,6 +1114,23 @@ function PositionFormModal({
                 onChange={(e) => set("deposited", e.target.value)}
               />
             </Field>
+            {editingStatus === "closed" && (
+              <Field
+                label="Scalp (USD)"
+                htmlFor="scalp"
+                hint="Positive = gain at close. Negative = loss at close."
+              >
+                <input
+                  id="scalp"
+                  type="number"
+                  step="any"
+                  className={inputClass}
+                  placeholder="0.00"
+                  value={form.scalp}
+                  onChange={(e) => set("scalp", e.target.value)}
+                />
+              </Field>
+            )}
           </div>
           <div className="mt-4">
             <Field label="Notes" htmlFor="notes">
@@ -1442,7 +1481,11 @@ function UpdatePositionModal({
 interface ClosePositionModalProps {
   position: Position;
   onCancel: () => void;
-  onSubmit: (next: { exitDatetime: string; currentBalance: number }) => void;
+  onSubmit: (next: {
+    exitDatetime: string;
+    currentBalance: number;
+    scalp: number | null;
+  }) => void;
 }
 
 function ClosePositionModal({
@@ -1451,6 +1494,7 @@ function ClosePositionModal({
   onSubmit,
 }: ClosePositionModalProps) {
   const [exitDatetime, setExitDatetime] = useState(nowDatetimeLocal());
+  const [scalp, setScalp] = useState("");
   const [currentBalance, setCurrentBalance] = useState(
     String(position.currentBalance ?? 0),
   );
@@ -1460,6 +1504,7 @@ function ClosePositionModal({
     onSubmit({
       exitDatetime: new Date(exitDatetime).toISOString(),
       currentBalance: num(currentBalance),
+      scalp: optionalNum(scalp),
     });
   };
 
@@ -1484,6 +1529,21 @@ function ClosePositionModal({
               onChange={setExitDatetime}
               required
             />
+            <Field
+              label="Scalp (USD)"
+              htmlFor="c_scalp"
+              hint="Positive = realized gain at close. Negative = realized loss at close. Leave blank if no scalp event."
+            >
+              <input
+                id="c_scalp"
+                type="number"
+                step="any"
+                className={inputClass}
+                placeholder="0.00"
+                value={scalp}
+                onChange={(e) => setScalp(e.target.value)}
+              />
+            </Field>
             <Field label="Final Current Balance (USD)" htmlFor="c_balance">
               <input
                 id="c_balance"

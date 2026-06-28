@@ -28,6 +28,7 @@ export interface Position {
   shortNotes: string | null;
   outOfRangeUpside: number | null;
   outOfRangeDownside: number | null;
+  scalp: number | null;
   txLink: string | null;
   notes: string;
   status: "active" | "closed";

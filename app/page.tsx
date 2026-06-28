@@ -7,8 +7,8 @@ import {
   calcDaysActive,
   calcFeeAPR,
   calcPortfolioSummary,
+  calcPositionProfit,
   calcPriceDiff,
-  calcProfit,
   calcTotalFees,
 } from "../lib/calculations";
 import type { FeeClaim, PortfolioSummary, Position } from "../lib/types";
@@ -140,7 +140,7 @@ function deriveRows(positions: Position[]): DerivedRow[] {
     const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
     const apr = calcFeeAPR(fees, position.deposited, days);
     const priceDiff = calcPriceDiff(position.currentBalance, position.deposited);
-    const profit = calcProfit(priceDiff, fees);
+    const profit = calcPositionProfit(position, fees, priceDiff);
     return {
       position,
       fees,

@@ -6,8 +6,8 @@ import { getClaims, getPositions } from "../../lib/storage";
 import {
   calcDaysActive,
   calcFeeAPR,
+  calcPositionProfit,
   calcPriceDiff,
-  calcProfit,
   calcTotalFees,
 } from "../../lib/calculations";
 import type { FeeClaim, Position } from "../../lib/types";
@@ -129,7 +129,7 @@ function summarizeSegment(positions: Position[]): SegmentSummary {
     const days = calcDaysActive(p.entryDatetime, p.exitDatetime);
     const apr = calcFeeAPR(fees, p.deposited, days);
     const priceDiff = calcPriceDiff(p.currentBalance, p.deposited);
-    const profit = calcProfit(priceDiff, fees);
+    const profit = calcPositionProfit(p, fees, priceDiff);
     out.count += 1;
     out.invested += p.deposited;
     out.fees += fees;

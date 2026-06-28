@@ -2,8 +2,8 @@ import type { PortfolioSummary, Position } from "./types";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
-function toFinite(value: number): number {
-  return Number.isFinite(value) ? value : 0;
+function toFinite(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export function calcDaysActive(
@@ -30,6 +30,27 @@ export function calcPriceDiff(currentBalance: number, deposited: number): number
 
 export function calcProfit(priceDiff: number, fees: number): number {
   return toFinite(priceDiff) + toFinite(fees);
+}
+
+export function calcClosedProfit(
+  scalp: number | null,
+  fees: number,
+): number {
+  return toFinite(scalp) + toFinite(fees);
+}
+
+// Branches on status: closed positions realize profit from Scalp + Fees,
+// active positions from Price Diff + Fees. Single source of truth so every
+// surface (Dashboard, Positions, Total P&L) agrees (Invariant #6).
+export function calcPositionProfit(
+  position: Position,
+  totalFees: number,
+  priceDiff: number,
+): number {
+  if (position.status === "closed") {
+    return calcClosedProfit(position.scalp, totalFees);
+  }
+  return calcProfit(priceDiff, totalFees);
 }
 
 export function calcFeeAPR(
@@ -189,7 +210,7 @@ export function calcPortfolioSummary(positions: Position[]): PortfolioSummary {
     const fees = calcTotalFees(p.claimed, p.newFees);
     const days = calcDaysActive(p.entryDatetime, p.exitDatetime);
     const priceDiff = calcPriceDiff(p.currentBalance, p.deposited);
-    const profit = calcProfit(priceDiff, fees);
+    const profit = calcPositionProfit(p, fees, priceDiff);
     const apr = calcFeeAPR(fees, p.deposited, days);
 
     summary.totalDeposited += toFinite(p.deposited);
