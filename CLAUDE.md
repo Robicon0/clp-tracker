@@ -124,6 +124,15 @@ wallet connection, live price feeds, and on-chain reads.
 8. [ACTIVE] **Defensive Plausibility Checks** — Boundary checks at
    every route. Never reintroduce a previously fixed bug.
 
+9. [ACTIVE] **IL Projections From Token Amounts** — IL projections
+   must use stored token amounts as primary source, Deposited USD
+   as secondary fallback only. Divergence between Deposited USD and
+   TokenCount × EntryPrice indicates data entry error and must warn
+   the user non-blockingly (>2% drift threshold). All IL math flows
+   through computePositionIL in lib/calculations.ts — never
+   duplicate the wrapper per page. Stored outOfRangeUpside/Downside
+   are stale-able snapshots; readers must prefer live recomputation.
+
 ## Master Formulas (Ground Truth from Google Sheet)
 
 Sheet source: 1fR61R3ZBGLFk8cEWlNC589WsmVZcsu3ZWogdVXnhBR4
@@ -207,10 +216,17 @@ at the plan gate.
 - Sprint 1: Fee APR display on Fee Claims page [8ca1f93]
 - Sprint 2: Restore Scalp field with closed-position profit
   branching [e310118]
+- Sprint 3: calcIL formula fixes (token-count liquidity +
+  entry-outside-range branch), Wide Range % display, auto-suggest
+  Deposited + drift warning, IL wrapper centralized [3f82052]
 
 ## Known Issues
 
-[Empty — to be populated as issues are identified]
+- Drift warning threshold is >2%, so Osho's reference SOL/USDC
+  case (Deposited $2,839.97 vs token-implied $2,786.77 = 1.91%
+  drift) does not trigger the warning. Projections are still
+  correct (token counts win). Lowering the threshold needs a plan
+  gate decision.
 
 ## Architecture Notes
 
