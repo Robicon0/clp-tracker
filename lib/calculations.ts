@@ -121,6 +121,8 @@ export function calcIL(
   upperPct: number,
   dailyYield: number,
   days: number,
+  token0Count?: number,
+  token1Count?: number,
 ): ILResult {
   const cr = p0 / p1;
   const fr = f0 / f1;
@@ -131,10 +133,35 @@ export function calcIL(
   const spb = Math.sqrt(up);
   const sp0 = Math.sqrt(cr);
   const sp1 = Math.sqrt(fr);
-  const t0pL = Math.max(0, 1 / sp0 - 1 / spb);
-  const t1pL = Math.max(0, sp0 - spa);
+  // Initial amounts per unit of liquidity branch on where the entry
+  // price sits relative to the range: at/below the bottom the position
+  // is 100% token0, at/above the top it is 100% token1.
+  let t0pL: number;
+  let t1pL: number;
+  if (cr <= lp) {
+    t0pL = 1 / spa - 1 / spb;
+    t1pL = 0;
+  } else if (cr >= up) {
+    t0pL = 0;
+    t1pL = spb - spa;
+  } else {
+    t0pL = 1 / sp0 - 1 / spb;
+    t1pL = sp0 - spa;
+  }
   const vpL = t0pL * cr + t1pL;
-  const L = vpL > 0 ? inv / vpL : 0;
+  // Liquidity from actual token amounts when available — Deposited USD
+  // may be valued at a different price than entryPrice (DEX interfaces
+  // report live market value), which would skew L by the mismatch ratio.
+  const t0 = toFinite(token0Count);
+  const t1 = toFinite(token1Count);
+  let L: number;
+  if (t1 > 0 && t1pL > 0) {
+    L = t1 / t1pL;
+  } else if (t0 > 0 && t0pL > 0) {
+    L = t0 / t0pL;
+  } else {
+    L = vpL > 0 ? inv / vpL : 0;
+  }
   const it0 = L * t0pL;
   const it1 = L * t1pL;
   let ft0: number;
@@ -188,6 +215,67 @@ export function calcIL(
     apr,
     yieldPct,
   };
+}
+
+export interface ILInput {
+  entryPrice: number;
+  rangeDown: number;
+  rangeUp: number;
+  deposited: number;
+  token0Count?: number;
+  token1Count?: number;
+}
+
+// Single source of truth for out-of-range projections — every surface
+// (position form, Pool P&L) must go through this wrapper (Invariant #6).
+export function computePositionIL(
+  input: ILInput,
+  futurePrice: number,
+): ILResult | null {
+  const { entryPrice, rangeDown, rangeUp, deposited, token0Count, token1Count } =
+    input;
+  if (
+    ![entryPrice, rangeDown, rangeUp, deposited, futurePrice].every(
+      Number.isFinite,
+    ) ||
+    entryPrice <= 0 ||
+    rangeDown <= 0 ||
+    rangeUp <= 0 ||
+    deposited <= 0 ||
+    futurePrice <= 0 ||
+    rangeUp <= rangeDown
+  ) {
+    return null;
+  }
+  const lowerPct = ((rangeDown - entryPrice) / entryPrice) * 100;
+  const upperPct = ((rangeUp - entryPrice) / entryPrice) * 100;
+  return calcIL(
+    entryPrice,
+    1,
+    futurePrice,
+    1,
+    deposited,
+    lowerPct,
+    upperPct,
+    0,
+    0,
+    token0Count,
+    token1Count,
+  );
+}
+
+export function calcWideRangePercent(
+  rangeDown: number,
+  rangeUp: number,
+): number {
+  if (
+    rangeDown <= 0 ||
+    !Number.isFinite(rangeDown) ||
+    !Number.isFinite(rangeUp)
+  ) {
+    return 0;
+  }
+  return ((rangeUp - rangeDown) / rangeDown) * 100;
 }
 
 export function calcPortfolioSummary(positions: Position[]): PortfolioSummary {

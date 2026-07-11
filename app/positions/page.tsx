@@ -18,10 +18,11 @@ import {
 import {
   calcDaysActive,
   calcFeeAPR,
-  calcIL,
   calcPositionProfit,
   calcPriceDiff,
   calcTotalFees,
+  calcWideRangePercent,
+  computePositionIL,
   type ILResult,
 } from "../../lib/calculations";
 import type {
@@ -123,6 +124,10 @@ function computeShortTotal(
   return (gain ?? 0) - (loss ?? 0) + (funding ?? 0);
 }
 
+// Parses form strings, then delegates to the shared computePositionIL in
+// lib/calculations (Invariant #6 — one IL source of truth across pages).
+// Form naming: token1 = base token (calcIL token0), token2 = quote token
+// (calcIL token1, priced at $1 by convention).
 function tryComputeIL(
   form: PositionFormState,
   side: "down" | "up",
@@ -134,22 +139,19 @@ function tryComputeIL(
   ) {
     return null;
   }
-  const entryPrice = Number(form.entryPrice);
   const rangeDown = Number(form.bottomRange);
   const rangeUp = Number(form.topRange);
-  const deposited = Number(form.deposited);
-  if (
-    ![entryPrice, rangeDown, rangeUp, deposited].every(Number.isFinite) ||
-    entryPrice <= 0 ||
-    deposited <= 0
-  ) {
-    return null;
-  }
-  const futurePrice = side === "down" ? rangeDown : rangeUp;
-  if (!Number.isFinite(futurePrice) || futurePrice <= 0) return null;
-  const lowerPct = ((rangeDown - entryPrice) / entryPrice) * 100;
-  const upperPct = ((rangeUp - entryPrice) / entryPrice) * 100;
-  return calcIL(entryPrice, 1, futurePrice, 1, deposited, lowerPct, upperPct, 0, 0);
+  return computePositionIL(
+    {
+      entryPrice: Number(form.entryPrice),
+      rangeDown,
+      rangeUp,
+      deposited: Number(form.deposited),
+      token0Count: num(form.token1Count),
+      token1Count: num(form.token2Count),
+    },
+    side === "down" ? rangeDown : rangeUp,
+  );
 }
 
 interface DerivedRow {
@@ -204,6 +206,9 @@ interface PositionFormState {
   shortLoss: string;
   shortFundingFees: string;
   shortNotes: string;
+  // While true, Deposited (USD) auto-fills from token counts × entry price.
+  // Flips false the first time the user edits Deposited manually.
+  depositedIsAuto: boolean;
 }
 
 const EMPTY_FORM: PositionFormState = {
@@ -231,6 +236,7 @@ const EMPTY_FORM: PositionFormState = {
   shortLoss: "",
   shortFundingFees: "",
   shortNotes: "",
+  depositedIsAuto: true,
 };
 
 function positionToForm(p: Position): PositionFormState {
@@ -264,6 +270,7 @@ function positionToForm(p: Position): PositionFormState {
     shortLoss: numStr(p.shortLoss),
     shortFundingFees: numStr(p.shortFundingFees),
     shortNotes: p.shortNotes ?? "",
+    depositedIsAuto: false,
   };
 }
 
@@ -293,6 +300,10 @@ function buildRecords(
   const sLoss = optionalNum(form.shortLoss);
   const sFunding = optionalNum(form.shortFundingFees);
   const sTotal = computeShortTotal(sGain, sLoss, sFunding);
+  // Stored outOfRangeUpside/Downside are last-computed values and may be
+  // stale — readers must always prefer live recomputation via
+  // computePositionIL and only fall back to these on corrupt/incomplete
+  // records.
   const upIL = tryComputeIL(form, "up");
   const downIL = tryComputeIL(form, "down");
   const ooUp = upIL ? upIL.lpValue : null;
@@ -650,6 +661,7 @@ function PositionsTable({
                 <th className="px-4 py-3 text-right font-medium">Claimed</th>
                 <th className="px-4 py-3 text-right font-medium">Total Fees</th>
                 <th className="px-4 py-3 text-right font-medium">Fee APR</th>
+                <th className="px-4 py-3 text-right font-medium">Range %</th>
                 {variant === "active" ? (
                   <th className="px-4 py-3 text-right font-medium">
                     Days Active
@@ -702,6 +714,15 @@ function PositionsTable({
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {formatPercent(apr)}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
+                    {(() => {
+                      const wr = calcWideRangePercent(
+                        position.bottomRange,
+                        position.topRange,
+                      );
+                      return wr > 0 ? formatPercent(wr) : "—";
+                    })()}
                   </td>
                   {variant === "active" ? (
                     <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
@@ -1022,14 +1043,68 @@ function PositionFormModal({
 
   const downsideIL = useMemo(
     () => tryComputeIL(form, "down"),
-    [form.entryPrice, form.bottomRange, form.topRange, form.deposited],
+    [
+      form.entryPrice,
+      form.bottomRange,
+      form.topRange,
+      form.deposited,
+      form.token1Count,
+      form.token2Count,
+    ],
   );
   const upsideIL = useMemo(
     () => tryComputeIL(form, "up"),
-    [form.entryPrice, form.bottomRange, form.topRange, form.deposited],
+    [
+      form.entryPrice,
+      form.bottomRange,
+      form.topRange,
+      form.deposited,
+      form.token1Count,
+      form.token2Count,
+    ],
   );
 
   const depositedNum = useMemo(() => num(form.deposited), [form.deposited]);
+
+  const wideRangePct = useMemo(
+    () => calcWideRangePercent(num(form.bottomRange), num(form.topRange)),
+    [form.bottomRange, form.topRange],
+  );
+
+  // Quote token is a stablecoin priced at $1 by convention (matches how
+  // calcIL treats p1 = f1 = 1), so expected deposit = base × entry + quote.
+  const expectedDeposited = useMemo(() => {
+    const base = num(form.token1Count);
+    const entry = num(form.entryPrice);
+    const quote = num(form.token2Count);
+    if (base <= 0 || entry <= 0) return quote > 0 ? quote : 0;
+    return base * entry + (quote > 0 ? quote : 0);
+  }, [form.token1Count, form.entryPrice, form.token2Count]);
+
+  const depositDriftPct = useMemo(() => {
+    if (expectedDeposited <= 0 || depositedNum <= 0) return null;
+    const drift = Math.abs(depositedNum - expectedDeposited) / expectedDeposited;
+    return drift > 0.02 ? drift * 100 : null;
+  }, [expectedDeposited, depositedNum]);
+
+  // Auto-fill Deposited (USD) from token counts × entry price until the
+  // user overrides it manually (add mode only — edits start with auto off).
+  const setWithAutoDeposit = (
+    key: "entryPrice" | "token1Count" | "token2Count",
+    value: string,
+  ) =>
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (!next.depositedIsAuto) return next;
+      const base = num(next.token1Count);
+      const entry = num(next.entryPrice);
+      if (base > 0 && entry > 0) {
+        const quote = num(next.token2Count);
+        const suggested = base * entry + (quote > 0 ? quote : 0);
+        next.deposited = String(Math.round(suggested * 100) / 100);
+      }
+      return next;
+    });
   const downsideProfit = downsideIL ? downsideIL.lpValue - depositedNum : null;
   const upsideProfit = upsideIL ? upsideIL.lpValue - depositedNum : null;
 
@@ -1111,8 +1186,22 @@ function PositionFormModal({
                 className={inputClass}
                 placeholder="10000"
                 value={form.deposited}
-                onChange={(e) => set("deposited", e.target.value)}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    deposited: e.target.value,
+                    depositedIsAuto: false,
+                  }))
+                }
               />
+              {depositDriftPct !== null && (
+                <p className="text-[11px] text-amber-400" aria-live="polite">
+                  ⚠️ Deposited USD doesn&apos;t match Base Token × Entry
+                  Price. Expected {formatUsd(expectedDeposited)}. Difference:{" "}
+                  {depositDriftPct.toFixed(2)}%. Projections will be based on
+                  token counts; P/L will use Deposited.
+                </p>
+              )}
             </Field>
             {editingStatus === "closed" && (
               <Field
@@ -1155,7 +1244,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.entryPrice}
-                onChange={(e) => set("entryPrice", e.target.value)}
+                onChange={(e) => setWithAutoDeposit("entryPrice", e.target.value)}
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
@@ -1181,6 +1270,20 @@ function PositionFormModal({
                   onChange={(e) => set("topRange", e.target.value)}
                 />
               </Field>
+            </div>
+            <div className="space-y-1.5">
+              <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                Wide Range %
+              </span>
+              <div
+                className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]"
+                aria-live="polite"
+              >
+                {wideRangePct > 0 ? formatPercent(wideRangePct) : "—"}
+              </div>
+              <p className="text-[11px] text-[var(--muted)]">
+                Auto: (Range Up − Range Down) / Range Down × 100
+              </p>
             </div>
             <Field label="Base Token Symbol" htmlFor="token1Symbol">
               <input
@@ -1210,7 +1313,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.token1Count}
-                onChange={(e) => set("token1Count", e.target.value)}
+                onChange={(e) => setWithAutoDeposit("token1Count", e.target.value)}
               />
             </Field>
             <Field label="Quote Token Count" htmlFor="token2Count">
@@ -1221,7 +1324,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.token2Count}
-                onChange={(e) => set("token2Count", e.target.value)}
+                onChange={(e) => setWithAutoDeposit("token2Count", e.target.value)}
               />
             </Field>
           </div>

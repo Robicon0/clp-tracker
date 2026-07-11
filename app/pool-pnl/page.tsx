@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getPositions } from "../../lib/storage";
-import { calcIL, type ILResult } from "../../lib/calculations";
+import { computePositionIL, type ILResult } from "../../lib/calculations";
 import type { Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -54,20 +54,21 @@ interface DerivedPosition {
   downsideProfit: number | null;
 }
 
+// Delegates to the shared computePositionIL in lib/calculations
+// (Invariant #6 — one IL source of truth across pages). Position naming:
+// token1 = base token (calcIL token0), token2 = quote token (calcIL token1).
 function computeIL(p: Position, side: "down" | "up"): ILResult | null {
-  const { entryPrice, bottomRange, topRange, deposited } = p;
-  if (
-    ![entryPrice, bottomRange, topRange, deposited].every(Number.isFinite) ||
-    entryPrice <= 0 ||
-    deposited <= 0
-  ) {
-    return null;
-  }
-  const futurePrice = side === "down" ? bottomRange : topRange;
-  if (!Number.isFinite(futurePrice) || futurePrice <= 0) return null;
-  const lowerPct = ((bottomRange - entryPrice) / entryPrice) * 100;
-  const upperPct = ((topRange - entryPrice) / entryPrice) * 100;
-  return calcIL(entryPrice, 1, futurePrice, 1, deposited, lowerPct, upperPct, 0, 0);
+  return computePositionIL(
+    {
+      entryPrice: p.entryPrice,
+      rangeDown: p.bottomRange,
+      rangeUp: p.topRange,
+      deposited: p.deposited,
+      token0Count: p.token1Count,
+      token1Count: p.token2Count,
+    },
+    side === "down" ? p.bottomRange : p.topRange,
+  );
 }
 
 function derive(positions: Position[]): DerivedPosition[] {
@@ -75,12 +76,18 @@ function derive(positions: Position[]): DerivedPosition[] {
     const lpProfit = position.currentBalance - position.deposited;
     const shortTotal = position.shortTotal;
     const netPnl = lpProfit + (shortTotal ?? 0);
+    // Prefer live recomputation; fall back to the stored snapshot (which
+    // may hold stale pre-fix math) only when the record can't be computed.
     const upsideIL = computeIL(position, "up");
     const downsideIL = computeIL(position, "down");
-    const upsideProfit = upsideIL ? upsideIL.lpValue - position.deposited : null;
-    const downsideProfit = downsideIL
-      ? downsideIL.lpValue - position.deposited
-      : null;
+    const upsideValue = upsideIL ? upsideIL.lpValue : position.outOfRangeUpside;
+    const downsideValue = downsideIL
+      ? downsideIL.lpValue
+      : position.outOfRangeDownside;
+    const upsideProfit =
+      upsideValue === null ? null : upsideValue - position.deposited;
+    const downsideProfit =
+      downsideValue === null ? null : downsideValue - position.deposited;
     return {
       position,
       lpProfit,
@@ -325,10 +332,15 @@ interface PositionRowProps {
 }
 
 function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
-  const { position, lpProfit, shortTotal, netPnl, upsideProfit, downsideProfit } =
+  const { position, lpProfit, shortTotal, netPnl, upsideIL, downsideIL, upsideProfit, downsideProfit } =
     row;
-  const oorUp = position.outOfRangeUpside;
-  const oorDown = position.outOfRangeDownside;
+  // Live recomputation is the source of truth; the stored snapshot is only
+  // a fallback for records the live math can't compute (and may hold stale
+  // pre-fix values).
+  const oorUp = upsideIL ? upsideIL.lpValue : position.outOfRangeUpside;
+  const oorDown = downsideIL
+    ? downsideIL.lpValue
+    : position.outOfRangeDownside;
   return (
     <>
       <tr

@@ -10,6 +10,7 @@ import {
   calcPositionProfit,
   calcPriceDiff,
   calcTotalFees,
+  calcWideRangePercent,
 } from "../lib/calculations";
 import type { FeeClaim, PortfolioSummary, Position } from "../lib/types";
 
@@ -275,6 +276,9 @@ export default function DashboardPage() {
                         Days Active
                       </th>
                       <th className="px-4 py-3 text-right font-medium">
+                        Range %
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium">
                         Profit
                       </th>
                       <th className="px-4 py-3 text-left font-medium">
@@ -315,6 +319,15 @@ export default function DashboardPage() {
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
                             {days.toFixed(1)}
+                          </td>
+                          <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
+                            {(() => {
+                              const wr = calcWideRangePercent(
+                                position.bottomRange,
+                                position.topRange,
+                              );
+                              return wr > 0 ? formatPercent(wr) : "—";
+                            })()}
                           </td>
                           <td
                             className={`px-4 py-3 text-right tabular-nums font-medium ${pnlColor(profit)}`}
