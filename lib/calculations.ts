@@ -1,4 +1,4 @@
-import type { PortfolioSummary, Position } from "./types";
+import type { FeeClaim, PortfolioSummary, Position } from "./types";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -264,6 +264,36 @@ export function computePositionIL(
   );
 }
 
+// position.claimed is a derived value, not a user input (Invariant #10):
+// the sum of stableAmount across converted claims linked to the position.
+// Unconverted claims contribute $0 for now — they have no USD value until
+// claim-time historical pricing lands (Sprint 8 / Invariant #2). Falls back
+// to the stored value only for legacy positions with no logged claims.
+export function getEffectiveClaimed(
+  position: Position,
+  allClaims: FeeClaim[],
+): number {
+  const relatedClaims = allClaims.filter(
+    (c) =>
+      c.positionId === position.id &&
+      c.convertedToStable &&
+      c.stableAmount !== null,
+  );
+  if (relatedClaims.length > 0) {
+    return relatedClaims.reduce((sum, c) => sum + toFinite(c.stableAmount), 0);
+  }
+  return toFinite(position.claimed);
+}
+
+// newFees (unclaimed accrued fees) stays manual by definition — those fees
+// don't exist as claim records yet. Only claimed is derived.
+export function getEffectiveTotalFees(
+  position: Position,
+  allClaims: FeeClaim[],
+): number {
+  return getEffectiveClaimed(position, allClaims) + toFinite(position.newFees);
+}
+
 // Deposited USD is a derived value, not a user input (Invariant #9):
 // (base token count × entry price) + quote token count, quote being a $1
 // stablecoin by convention. Every calculation or display that reads
@@ -294,7 +324,10 @@ export function calcWideRangePercent(
   return ((rangeUp - rangeDown) / rangeDown) * 100;
 }
 
-export function calcPortfolioSummary(positions: Position[]): PortfolioSummary {
+export function calcPortfolioSummary(
+  positions: Position[],
+  allClaims: FeeClaim[] = [],
+): PortfolioSummary {
   const summary: PortfolioSummary = {
     totalDeposited: 0,
     totalCurrentValue: 0,
@@ -312,7 +345,7 @@ export function calcPortfolioSummary(positions: Position[]): PortfolioSummary {
 
   for (const p of positions) {
     const deposited = getEffectiveDeposited(p);
-    const fees = calcTotalFees(p.claimed, p.newFees);
+    const fees = getEffectiveTotalFees(p, allClaims);
     const days = calcDaysActive(p.entryDatetime, p.exitDatetime);
     const priceDiff = calcPriceDiff(p.currentBalance, deposited);
     const profit = calcPositionProfit(p, fees, priceDiff);

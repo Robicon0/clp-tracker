@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  getClaims,
   getPoolPnL,
   getPositions,
   getRanges,
@@ -23,9 +24,16 @@ import {
   calcTotalFees,
   calcWideRangePercent,
   computePositionIL,
+  getEffectiveClaimed,
   getEffectiveDeposited,
+  getEffectiveTotalFees,
   type ILResult,
 } from "../../lib/calculations";
+import {
+  ClaimFormModal,
+  persistNewClaim,
+} from "../../components/ClaimFormModal";
+import type { FeeClaim } from "../../lib/types";
 import type {
   LPRange,
   PoolPnLEntry,
@@ -171,6 +179,7 @@ function tryComputeIL(
 interface DerivedRow {
   position: Position;
   deposited: number;
+  claimed: number;
   fees: number;
   days: number;
   apr: number;
@@ -178,15 +187,16 @@ interface DerivedRow {
   profit: number;
 }
 
-function derive(positions: Position[]): DerivedRow[] {
+function derive(positions: Position[], allClaims: FeeClaim[]): DerivedRow[] {
   return positions.map((position) => {
     const deposited = getEffectiveDeposited(position);
-    const fees = calcTotalFees(position.claimed, position.newFees);
+    const claimed = getEffectiveClaimed(position, allClaims);
+    const fees = getEffectiveTotalFees(position, allClaims);
     const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
     const apr = calcFeeAPR(fees, deposited, days);
     const priceDiff = calcPriceDiff(position.currentBalance, deposited);
     const profit = calcPositionProfit(position, fees, priceDiff);
-    return { position, deposited, fees, days, apr, priceDiff, profit };
+    return { position, deposited, claimed, fees, days, apr, priceDiff, profit };
   });
 }
 
@@ -195,7 +205,8 @@ type ModalState =
   | { kind: "add" }
   | { kind: "edit"; position: Position }
   | { kind: "update"; position: Position }
-  | { kind: "close"; position: Position };
+  | { kind: "close"; position: Position }
+  | { kind: "claim"; position: Position };
 
 interface PositionFormState {
   pair: string;
@@ -401,11 +412,13 @@ function buildRecords(
 export default function PositionsPage() {
   const [hydrated, setHydrated] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [showClosed, setShowClosed] = useState(false);
 
   const refresh = () => {
     setPositions(getPositions());
+    setClaims(getClaims());
   };
 
   useEffect(() => {
@@ -414,10 +427,10 @@ export default function PositionsPage() {
   }, []);
 
   const active = hydrated
-    ? derive(positions.filter((p) => p.status === "active"))
+    ? derive(positions.filter((p) => p.status === "active"), claims)
     : [];
   const closed = hydrated
-    ? derive(positions.filter((p) => p.status === "closed"))
+    ? derive(positions.filter((p) => p.status === "closed"), claims)
     : [];
 
   const persistFull = (records: BuiltRecords, mode: "add" | "edit") => {
@@ -462,9 +475,11 @@ export default function PositionsPage() {
     persistFull(buildRecords(target.id, form, target), "edit");
   };
 
+  // Claimed is no longer part of the payload — it is derived from claim
+  // records (Invariant #10); the stored value stays as legacy fallback.
   const handleUpdate = (
     target: Position,
-    next: { currentBalance: number; newFees: number; claimed: number },
+    next: { currentBalance: number; newFees: number },
   ) => {
     const updated = getPositions().map((p) =>
       p.id === target.id
@@ -472,12 +487,19 @@ export default function PositionsPage() {
             ...p,
             currentBalance: next.currentBalance,
             newFees: next.newFees,
-            claimed: next.claimed,
-            totalFees: calcTotalFees(next.claimed, next.newFees),
+            totalFees: calcTotalFees(p.claimed, next.newFees),
           }
         : p,
     );
     savePositions(updated);
+    refresh();
+    setModal({ kind: "none" });
+  };
+
+  // Shared claim save path (persistNewClaim) — identical to the Fee Claims
+  // page so both entry points update position totals the same way.
+  const handleClaimSubmit = (claim: FeeClaim) => {
+    persistNewClaim(claim);
     refresh();
     setModal({ kind: "none" });
   };
@@ -531,6 +553,7 @@ export default function PositionsPage() {
         onEdit={(p) => setModal({ kind: "edit", position: p })}
         onUpdate={(p) => setModal({ kind: "update", position: p })}
         onClose={(p) => setModal({ kind: "close", position: p })}
+        onClaim={(p) => setModal({ kind: "claim", position: p })}
         emptyText="No active positions. Click Add Position to get started."
       />
 
@@ -538,6 +561,7 @@ export default function PositionsPage() {
         rows={closed}
         open={showClosed}
         onToggle={() => setShowClosed((v) => !v)}
+        onClaim={(p) => setModal({ kind: "claim", position: p })}
       />
 
       {modal.kind === "add" && (
@@ -562,8 +586,18 @@ export default function PositionsPage() {
       {modal.kind === "update" && (
         <UpdatePositionModal
           position={modal.position}
+          derivedClaimed={getEffectiveClaimed(modal.position, claims)}
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={(next) => handleUpdate(modal.position, next)}
+        />
+      )}
+      {modal.kind === "claim" && (
+        <ClaimFormModal
+          mode="add"
+          positions={positions}
+          lockedPositionId={modal.position.id}
+          onCancel={() => setModal({ kind: "none" })}
+          onSubmit={handleClaimSubmit}
         />
       )}
       {modal.kind === "close" && (
@@ -631,6 +665,7 @@ interface PositionsTableProps {
   onEdit?: (p: Position) => void;
   onUpdate?: (p: Position) => void;
   onClose?: (p: Position) => void;
+  onClaim?: (p: Position) => void;
   emptyText: string;
 }
 
@@ -641,6 +676,7 @@ function PositionsTable({
   onEdit,
   onUpdate,
   onClose,
+  onClaim,
   emptyText,
 }: PositionsTableProps) {
   return (
@@ -687,13 +723,11 @@ function PositionsTable({
                   <th className="px-4 py-3 text-right font-medium">Scalp</th>
                 )}
                 <th className="px-4 py-3 text-right font-medium">Profit</th>
-                {variant === "active" && (
-                  <th className="px-4 py-3 text-right font-medium">Actions</th>
-                )}
+                <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
-              {rows.map(({ position, deposited, fees, days, apr, priceDiff, profit }) => (
+              {rows.map(({ position, deposited, claimed, fees, days, apr, priceDiff, profit }) => (
                 <tr
                   key={position.id}
                   className="transition-colors hover:bg-[var(--surface-2)]/60"
@@ -720,7 +754,7 @@ function PositionsTable({
                     {formatUsd(position.newFees)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {formatUsd(position.claimed)}
+                    {formatUsd(claimed)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {formatUsd(fees)}
@@ -768,23 +802,34 @@ function PositionsTable({
                   >
                     {formatUsd(profit)}
                   </td>
-                  {variant === "active" && (
-                    <td className="px-4 py-3 text-right">
-                      <div className="inline-flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onEdit?.(position)}
-                          className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onUpdate?.(position)}
-                          className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
-                        >
-                          Update
-                        </button>
+                  <td className="px-4 py-3 text-right">
+                    <div className="inline-flex gap-2">
+                      {variant === "active" && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onEdit?.(position)}
+                            className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdate?.(position)}
+                            className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                          >
+                            Update
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onClaim?.(position)}
+                        className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+                      >
+                        Claim
+                      </button>
+                      {variant === "active" && (
                         <button
                           type="button"
                           onClick={() => onClose?.(position)}
@@ -792,9 +837,9 @@ function PositionsTable({
                         >
                           Close
                         </button>
-                      </div>
-                    </td>
-                  )}
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -809,9 +854,10 @@ interface ClosedSectionProps {
   rows: DerivedRow[];
   open: boolean;
   onToggle: () => void;
+  onClaim?: (p: Position) => void;
 }
 
-function ClosedSection({ rows, open, onToggle }: ClosedSectionProps) {
+function ClosedSection({ rows, open, onToggle, onClaim }: ClosedSectionProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
       <button
@@ -838,6 +884,7 @@ function ClosedSection({ rows, open, onToggle }: ClosedSectionProps) {
             title=""
             rows={rows}
             variant="closed"
+            onClaim={onClaim}
             emptyText=""
           />
         ))}
@@ -1484,16 +1531,17 @@ function PositionFormModal({
 
 interface UpdatePositionModalProps {
   position: Position;
+  derivedClaimed: number;
   onCancel: () => void;
   onSubmit: (next: {
     currentBalance: number;
     newFees: number;
-    claimed: number;
   }) => void;
 }
 
 function UpdatePositionModal({
   position,
+  derivedClaimed,
   onCancel,
   onSubmit,
 }: UpdatePositionModalProps) {
@@ -1501,14 +1549,12 @@ function UpdatePositionModal({
     String(position.currentBalance ?? 0),
   );
   const [newFees, setNewFees] = useState(String(position.newFees ?? 0));
-  const [claimed, setClaimed] = useState(String(position.claimed ?? 0));
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     onSubmit({
       currentBalance: num(currentBalance),
       newFees: num(newFees),
-      claimed: num(claimed),
     });
   };
 
@@ -1539,17 +1585,21 @@ function UpdatePositionModal({
                 onChange={(e) => setNewFees(e.target.value)}
               />
             </Field>
-            <Field label="Claimed (USD)" htmlFor="u_claimed">
-              <input
-                id="u_claimed"
-                type="number"
-                step="any"
-                required
-                className={inputClass}
-                value={claimed}
-                onChange={(e) => setClaimed(e.target.value)}
-              />
-            </Field>
+            <div className="space-y-1.5">
+              <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                Claimed (USD)
+              </span>
+              <div
+                className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]"
+                aria-live="polite"
+              >
+                {formatUsd(derivedClaimed)}
+              </div>
+              <p className="text-[11px] text-[var(--muted)]">
+                Auto: sum of converted claims for this position. Log claims
+                via the Fee Claims page or Claim button.
+              </p>
+            </div>
           </div>
         </Section>
         <FormActions onCancel={onCancel} submitLabel="Save" />

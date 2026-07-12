@@ -9,9 +9,9 @@ import {
   calcPortfolioSummary,
   calcPositionProfit,
   calcPriceDiff,
-  calcTotalFees,
   calcWideRangePercent,
   getEffectiveDeposited,
+  getEffectiveTotalFees,
 } from "../lib/calculations";
 import type { FeeClaim, PortfolioSummary, Position } from "../lib/types";
 
@@ -137,10 +137,13 @@ function rangeState(p: Position): "in" | "out" | "unknown" {
     : "out";
 }
 
-function deriveRows(positions: Position[]): DerivedRow[] {
+function deriveRows(
+  positions: Position[],
+  allClaims: FeeClaim[],
+): DerivedRow[] {
   return positions.map((position) => {
     const deposited = getEffectiveDeposited(position);
-    const fees = calcTotalFees(position.claimed, position.newFees);
+    const fees = getEffectiveTotalFees(position, allClaims);
     const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
     const apr = calcFeeAPR(fees, deposited, days);
     const priceDiff = calcPriceDiff(position.currentBalance, deposited);
@@ -180,9 +183,11 @@ export default function DashboardPage() {
     setHydrated(true);
   }, []);
 
-  const summary = hydrated ? calcPortfolioSummary(positions) : EMPTY_SUMMARY;
+  const summary = hydrated
+    ? calcPortfolioSummary(positions, claims)
+    : EMPTY_SUMMARY;
   const activeRows = hydrated
-    ? deriveRows(positions.filter((p) => p.status === "active"))
+    ? deriveRows(positions.filter((p) => p.status === "active"), claims)
     : [];
   const claimRows = hydrated ? recentClaims(claims) : [];
   const lastUpdated = useMemo(

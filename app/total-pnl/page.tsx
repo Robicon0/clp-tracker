@@ -8,8 +8,8 @@ import {
   calcFeeAPR,
   calcPositionProfit,
   calcPriceDiff,
-  calcTotalFees,
   getEffectiveDeposited,
+  getEffectiveTotalFees,
 } from "../../lib/calculations";
 import type { FeeClaim, Position } from "../../lib/types";
 
@@ -87,7 +87,10 @@ interface MonthRow {
   positionsActive: number;
 }
 
-function computeTotals(positions: Position[]): PortfolioTotals {
+function computeTotals(
+  positions: Position[],
+  allClaims: FeeClaim[],
+): PortfolioTotals {
   let totalInvested = 0;
   let totalCurrentValue = 0;
   let totalFees = 0;
@@ -95,7 +98,7 @@ function computeTotals(positions: Position[]): PortfolioTotals {
   for (const p of positions) {
     totalInvested += getEffectiveDeposited(p);
     totalCurrentValue += p.currentBalance;
-    totalFees += calcTotalFees(p.claimed, p.newFees);
+    totalFees += getEffectiveTotalFees(p, allClaims);
     if (p.shortTotal !== null && Number.isFinite(p.shortTotal)) {
       totalShortPnL += p.shortTotal;
     }
@@ -123,11 +126,14 @@ function emptySegment(): SegmentSummary {
   };
 }
 
-function summarizeSegment(positions: Position[]): SegmentSummary {
+function summarizeSegment(
+  positions: Position[],
+  allClaims: FeeClaim[],
+): SegmentSummary {
   const out = emptySegment();
   for (const p of positions) {
     const deposited = getEffectiveDeposited(p);
-    const fees = calcTotalFees(p.claimed, p.newFees);
+    const fees = getEffectiveTotalFees(p, allClaims);
     const days = calcDaysActive(p.entryDatetime, p.exitDatetime);
     const apr = calcFeeAPR(fees, deposited, days);
     const priceDiff = calcPriceDiff(p.currentBalance, deposited);
@@ -269,7 +275,7 @@ export default function TotalPnlPage() {
   const totals = useMemo(
     () =>
       hydrated
-        ? computeTotals(positions)
+        ? computeTotals(positions, claims)
         : {
             totalInvested: 0,
             totalCurrentValue: 0,
@@ -278,23 +284,29 @@ export default function TotalPnlPage() {
             lpPnL: 0,
             netPnL: 0,
           },
-    [hydrated, positions],
+    [hydrated, positions, claims],
   );
 
   const activeSummary = useMemo(
     () =>
       hydrated
-        ? summarizeSegment(positions.filter((p) => p.status === "active"))
+        ? summarizeSegment(
+            positions.filter((p) => p.status === "active"),
+            claims,
+          )
         : emptySegment(),
-    [hydrated, positions],
+    [hydrated, positions, claims],
   );
 
   const closedSummary = useMemo(
     () =>
       hydrated
-        ? summarizeSegment(positions.filter((p) => p.status === "closed"))
+        ? summarizeSegment(
+            positions.filter((p) => p.status === "closed"),
+            claims,
+          )
         : emptySegment(),
-    [hydrated, positions],
+    [hydrated, positions, claims],
   );
 
   const tokenRows = useMemo(

@@ -1,26 +1,20 @@
 "use client";
 
-import {
-  type ChangeEvent,
-  type FormEvent,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-import {
-  getClaims,
-  getPositions,
-  saveClaims,
-  savePositions,
-} from "../../lib/storage";
+import { useEffect, useMemo, useState } from "react";
+import { getClaims, getPositions, saveClaims } from "../../lib/storage";
 import {
   calcDaysActive,
   calcFeeAPR,
   calcPortfolioSummary,
-  calcTotalFees,
   getEffectiveDeposited,
+  getEffectiveTotalFees,
 } from "../../lib/calculations";
+import {
+  ClaimFormModal,
+  persistNewClaim,
+  persistUpdatedClaim,
+  positionOptionLabel,
+} from "../../components/ClaimFormModal";
 import type { FeeClaim, Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -48,9 +42,9 @@ function formatPercent(value: number): string {
   return `${safe.toFixed(2)}%`;
 }
 
-function positionFeeAPR(position: Position): number {
+function positionFeeAPR(position: Position, allClaims: FeeClaim[]): number {
   const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
-  const totalFees = calcTotalFees(position.claimed, position.newFees);
+  const totalFees = getEffectiveTotalFees(position, allClaims);
   return calcFeeAPR(totalFees, getEffectiveDeposited(position), days);
 }
 
@@ -63,128 +57,6 @@ function formatDateDDMMYYYY(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
-}
-
-function todayDateInput(): string {
-  const d = new Date();
-  const off = d.getTimezoneOffset();
-  return new Date(d.getTime() - off * 60_000).toISOString().slice(0, 10);
-}
-
-function newId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `id_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function num(value: string): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function optionalNum(value: string): number | null {
-  if (value.trim() === "") return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-interface ClaimFormState {
-  positionId: string;
-  date: string;
-  currentPositionValue: string;
-  txId: string;
-  pair: string;
-  platform: string;
-  chain: string;
-  token1Symbol: string;
-  token1Amount: string;
-  token2Symbol: string;
-  token2Amount: string;
-  convertedToStable: boolean;
-  stableSymbol: string;
-  stableAmount: string;
-  notes: string;
-}
-
-const EMPTY_FORM: ClaimFormState = {
-  positionId: "",
-  date: "",
-  currentPositionValue: "",
-  txId: "",
-  pair: "",
-  platform: "",
-  chain: "",
-  token1Symbol: "",
-  token1Amount: "",
-  token2Symbol: "",
-  token2Amount: "",
-  convertedToStable: false,
-  stableSymbol: "USDC",
-  stableAmount: "",
-  notes: "",
-};
-
-function claimToForm(c: FeeClaim): ClaimFormState {
-  return {
-    positionId: c.positionId,
-    date: c.date.slice(0, 10),
-    currentPositionValue:
-      c.currentPositionValue === null || c.currentPositionValue === undefined
-        ? ""
-        : String(c.currentPositionValue),
-    txId: c.txId ?? "",
-    pair: c.pair,
-    platform: c.platform,
-    chain: c.chain,
-    token1Symbol: c.token1Symbol,
-    token1Amount: String(c.token1Amount),
-    token2Symbol: c.token2Symbol,
-    token2Amount: String(c.token2Amount),
-    convertedToStable: c.convertedToStable,
-    stableSymbol: c.stableSymbol ?? "USDC",
-    stableAmount: c.stableAmount === null ? "" : String(c.stableAmount),
-    notes: c.notes,
-  };
-}
-
-function buildClaim(id: string, form: ClaimFormState): FeeClaim {
-  return {
-    id,
-    positionId: form.positionId,
-    date: form.date,
-    pair: form.pair.trim().toUpperCase(),
-    platform: form.platform.trim().toUpperCase(),
-    chain: form.chain.trim().toUpperCase(),
-    token1Symbol: form.token1Symbol.trim().toUpperCase(),
-    token1Amount: num(form.token1Amount),
-    token2Symbol: form.token2Symbol.trim().toUpperCase(),
-    token2Amount: num(form.token2Amount),
-    convertedToStable: form.convertedToStable,
-    stableSymbol: form.convertedToStable
-      ? form.stableSymbol.trim().toUpperCase() || null
-      : null,
-    stableAmount: form.convertedToStable
-      ? optionalNum(form.stableAmount)
-      : null,
-    currentPositionValue: optionalNum(form.currentPositionValue),
-    txId: form.txId.trim() === "" ? null : form.txId.trim(),
-    notes: form.notes.trim().toUpperCase(),
-  };
-}
-
-function applyPositionValueUpdate(claim: FeeClaim): void {
-  if (claim.currentPositionValue === null || !claim.positionId) return;
-  const positions = getPositions();
-  let changed = false;
-  const updated = positions.map((p) => {
-    if (p.id === claim.positionId) {
-      changed = true;
-      return { ...p, currentBalance: claim.currentPositionValue ?? p.currentBalance };
-    }
-    return p;
-  });
-  if (changed) savePositions(updated);
 }
 
 type ModalState =
@@ -286,21 +158,17 @@ export default function ClaimsPage() {
       claimedPositionIds.has(p.id),
     );
     if (claimedPositions.length === 0) return null;
-    return calcPortfolioSummary(claimedPositions).averageAPR;
+    return calcPortfolioSummary(claimedPositions, claims).averageAPR;
   }, [claims, positions]);
 
-  const handleAdd = (form: ClaimFormState) => {
-    const claim = buildClaim(newId(), form);
-    saveClaims([...getClaims(), claim]);
-    applyPositionValueUpdate(claim);
+  const handleAdd = (claim: FeeClaim) => {
+    persistNewClaim(claim);
     refresh();
     setModal({ kind: "none" });
   };
 
-  const handleEdit = (target: FeeClaim, form: ClaimFormState) => {
-    const updated = buildClaim(target.id, form);
-    saveClaims(getClaims().map((c) => (c.id === target.id ? updated : c)));
-    applyPositionValueUpdate(updated);
+  const handleEdit = (claim: FeeClaim) => {
+    persistUpdatedClaim(claim);
     refresh();
     setModal({ kind: "none" });
   };
@@ -359,7 +227,10 @@ export default function ClaimsPage() {
             }
             options={[
               { value: ALL, label: "All positions" },
-              ...positions.map((p) => ({ value: p.id, label: p.pair })),
+              ...positions.map((p) => ({
+                value: p.id,
+                label: positionOptionLabel(p),
+              })),
             ]}
           />
           <FilterSelect
@@ -434,7 +305,7 @@ export default function ClaimsPage() {
                 {filteredSorted.map((claim) => {
                   const parentPosition = positionById.get(claim.positionId);
                   const positionApr = parentPosition
-                    ? formatPercent(positionFeeAPR(parentPosition))
+                    ? formatPercent(positionFeeAPR(parentPosition, claims))
                     : "—";
                   return (
                   <tr
@@ -532,9 +403,7 @@ export default function ClaimsPage() {
 
       {modal.kind === "add" && (
         <ClaimFormModal
-          title="Add Claim"
-          submitLabel="Add Claim"
-          initial={{ ...EMPTY_FORM, date: todayDateInput() }}
+          mode="add"
           positions={positions}
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={handleAdd}
@@ -542,12 +411,11 @@ export default function ClaimsPage() {
       )}
       {modal.kind === "edit" && (
         <ClaimFormModal
-          title="Edit Claim"
-          submitLabel="Save Changes"
-          initial={claimToForm(modal.claim)}
+          mode="edit"
+          claim={modal.claim}
           positions={positions}
           onCancel={() => setModal({ kind: "none" })}
-          onSubmit={(form) => handleEdit(modal.claim, form)}
+          onSubmit={handleEdit}
         />
       )}
     </section>
@@ -621,422 +489,6 @@ function FilterSelect({ label, value, onChange, options }: FilterSelectProps) {
         ))}
       </select>
     </label>
-  );
-}
-
-interface ModalShellProps {
-  title: string;
-  onCancel: () => void;
-  children: ReactNode;
-}
-
-function ModalShell({ title, onCancel, children }: ModalShellProps) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 px-4 py-8"
-      onClick={onCancel}
-      role="presentation"
-    >
-      <div
-        className="w-full max-w-2xl rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
-          <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-md p-1 text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--foreground)]"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-interface FieldProps {
-  label: string;
-  htmlFor: string;
-  children: ReactNode;
-  hint?: string;
-}
-
-function Field({ label, htmlFor, children, hint }: FieldProps) {
-  return (
-    <div className="space-y-1.5">
-      <label
-        htmlFor={htmlFor}
-        className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]"
-      >
-        {label}
-      </label>
-      {children}
-      {hint && <p className="text-[11px] text-[var(--muted)]">{hint}</p>}
-    </div>
-  );
-}
-
-const inputClass =
-  "block w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 [color-scheme:dark] caret-[var(--accent)] focus:border-[var(--accent)] focus:bg-[var(--surface-2)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]";
-
-interface SectionProps {
-  title: string;
-  children: ReactNode;
-}
-
-function Section({ title, children }: SectionProps) {
-  return (
-    <div className="px-5 py-5">
-      <h3 className="mb-4 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-        {title}
-      </h3>
-      {children}
-    </div>
-  );
-}
-
-interface FormActionsProps {
-  onCancel: () => void;
-  submitLabel: string;
-}
-
-function FormActions({ onCancel, submitLabel }: FormActionsProps) {
-  return (
-    <div className="flex justify-end gap-2 px-5 py-4">
-      <button
-        type="button"
-        onClick={onCancel}
-        className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-      >
-        Cancel
-      </button>
-      <button
-        type="submit"
-        className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90"
-      >
-        {submitLabel}
-      </button>
-    </div>
-  );
-}
-
-interface ClaimFormModalProps {
-  title: string;
-  submitLabel: string;
-  initial: ClaimFormState;
-  positions: Position[];
-  onCancel: () => void;
-  onSubmit: (form: ClaimFormState) => void;
-}
-
-const PRESET_STABLES = ["USDC", "USDT"] as const;
-
-function ClaimFormModal({
-  title,
-  submitLabel,
-  initial,
-  positions,
-  onCancel,
-  onSubmit,
-}: ClaimFormModalProps) {
-  const [form, setForm] = useState<ClaimFormState>(initial);
-
-  const set = <K extends keyof ClaimFormState>(
-    key: K,
-    value: ClaimFormState[K],
-  ) => setForm((prev) => ({ ...prev, [key]: value }));
-
-  const upper =
-    (key: keyof ClaimFormState) =>
-    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-      set(key, e.target.value.toUpperCase() as ClaimFormState[typeof key]);
-
-  const onPositionChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    setForm((prev) => {
-      const next = { ...prev, positionId: id };
-      const p = positions.find((pos) => pos.id === id);
-      if (p) {
-        next.pair = p.pair;
-        next.platform = p.protocol;
-        next.chain = p.chain;
-        if (!prev.token1Symbol) next.token1Symbol = p.token1Symbol;
-        if (!prev.token2Symbol) next.token2Symbol = p.token2Symbol;
-      }
-      return next;
-    });
-  };
-
-  const stableMode: "USDC" | "USDT" | "OTHER" = (
-    PRESET_STABLES as readonly string[]
-  ).includes(form.stableSymbol)
-    ? (form.stableSymbol as "USDC" | "USDT")
-    : "OTHER";
-
-  const onStableModeChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value as "USDC" | "USDT" | "OTHER";
-    if (v === "OTHER") set("stableSymbol", "");
-    else set("stableSymbol", v);
-  };
-
-  const submit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    onSubmit(form);
-  };
-
-  return (
-    <ModalShell title={title} onCancel={onCancel}>
-      <form onSubmit={submit} className="divide-y divide-[var(--border)]">
-        <Section title="Claim Details">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Position" htmlFor="positionId">
-              <select
-                id="positionId"
-                value={form.positionId}
-                onChange={onPositionChange}
-                className={inputClass}
-              >
-                <option value="">— Select position —</option>
-                {positions.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.pair} · {p.chain}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Date" htmlFor="date">
-              <input
-                id="date"
-                type="date"
-                required
-                className={inputClass}
-                style={{ colorScheme: "dark" }}
-                value={form.date}
-                onChange={(e) => set("date", e.target.value)}
-              />
-            </Field>
-            <Field
-              label="Current Position Value (USD)"
-              htmlFor="currentPositionValue"
-              hint="This will automatically update your position's current balance"
-            >
-              <input
-                id="currentPositionValue"
-                type="number"
-                step="any"
-                className={inputClass}
-                placeholder="Current value of your LP position"
-                value={form.currentPositionValue}
-                onChange={(e) => set("currentPositionValue", e.target.value)}
-              />
-            </Field>
-            <Field
-              label="Transaction ID (optional)"
-              htmlFor="txId"
-              hint="From your blockchain explorer e.g. etherscan.io"
-            >
-              <input
-                id="txId"
-                className={inputClass}
-                placeholder="Paste transaction hash or explorer URL"
-                value={form.txId}
-                onChange={(e) => set("txId", e.target.value)}
-              />
-            </Field>
-            <Field label="Pair" htmlFor="pair">
-              <input
-                id="pair"
-                required
-                className={inputClass}
-                placeholder="ETH/USDC (0.05%)"
-                value={form.pair}
-                onChange={upper("pair")}
-              />
-            </Field>
-            <Field label="Platform" htmlFor="platform">
-              <input
-                id="platform"
-                required
-                className={inputClass}
-                placeholder="Aerodrome"
-                value={form.platform}
-                onChange={upper("platform")}
-              />
-            </Field>
-            <Field label="Chain" htmlFor="chain">
-              <input
-                id="chain"
-                required
-                className={inputClass}
-                placeholder="ETH"
-                value={form.chain}
-                onChange={upper("chain")}
-              />
-            </Field>
-          </div>
-        </Section>
-
-        <Section title="Token 1 Fees">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Token 1 Symbol" htmlFor="token1Symbol">
-              <input
-                id="token1Symbol"
-                required
-                className={inputClass}
-                placeholder="ETH"
-                value={form.token1Symbol}
-                onChange={upper("token1Symbol")}
-              />
-            </Field>
-            <Field label="Token 1 Amount" htmlFor="token1Amount">
-              <input
-                id="token1Amount"
-                type="number"
-                step="any"
-                required
-                className={inputClass}
-                value={form.token1Amount}
-                onChange={(e) => set("token1Amount", e.target.value)}
-              />
-            </Field>
-          </div>
-        </Section>
-
-        <Section title="Token 2 Fees">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Token 2 Symbol" htmlFor="token2Symbol">
-              <input
-                id="token2Symbol"
-                required
-                className={inputClass}
-                placeholder="USDC"
-                value={form.token2Symbol}
-                onChange={upper("token2Symbol")}
-              />
-            </Field>
-            <Field label="Token 2 Amount" htmlFor="token2Amount">
-              <input
-                id="token2Amount"
-                type="number"
-                step="any"
-                required
-                className={inputClass}
-                value={form.token2Amount}
-                onChange={(e) => set("token2Amount", e.target.value)}
-              />
-            </Field>
-          </div>
-        </Section>
-
-        <Section title="Conversion (optional)">
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-[var(--muted)]">
-                Converted to Stablecoin?
-              </span>
-              <div
-                role="radiogroup"
-                aria-label="Converted to Stablecoin?"
-                className="inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
-              >
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={form.convertedToStable}
-                  onClick={() => set("convertedToStable", true)}
-                  className={`h-8 px-4 text-xs font-medium transition-colors ${
-                    form.convertedToStable
-                      ? "bg-[var(--accent)] text-white"
-                      : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
-                  }`}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={!form.convertedToStable}
-                  onClick={() => set("convertedToStable", false)}
-                  className={`h-8 px-4 text-xs font-medium border-l border-[var(--border-strong)] transition-colors ${
-                    !form.convertedToStable
-                      ? "bg-[var(--accent)] text-white"
-                      : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
-                  }`}
-                >
-                  No
-                </button>
-              </div>
-            </div>
-
-            {form.convertedToStable && (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Stable Symbol" htmlFor="stableMode">
-                  <div className="space-y-2">
-                    <select
-                      id="stableMode"
-                      value={stableMode}
-                      onChange={onStableModeChange}
-                      className={inputClass}
-                    >
-                      <option value="USDC">USDC</option>
-                      <option value="USDT">USDT</option>
-                      <option value="OTHER">Other…</option>
-                    </select>
-                    {stableMode === "OTHER" && (
-                      <input
-                        aria-label="Custom stable symbol"
-                        className={inputClass}
-                        placeholder="DAI"
-                        value={form.stableSymbol}
-                        onChange={upper("stableSymbol")}
-                      />
-                    )}
-                  </div>
-                </Field>
-                <Field label="Stable Amount" htmlFor="stableAmount">
-                  <input
-                    id="stableAmount"
-                    type="number"
-                    step="any"
-                    required
-                    className={inputClass}
-                    value={form.stableAmount}
-                    onChange={(e) => set("stableAmount", e.target.value)}
-                  />
-                </Field>
-              </div>
-            )}
-          </div>
-        </Section>
-
-        <Section title="Notes">
-          <textarea
-            id="notes"
-            rows={2}
-            className={inputClass}
-            value={form.notes}
-            onChange={upper("notes")}
-          />
-        </Section>
-
-        <FormActions onCancel={onCancel} submitLabel={submitLabel} />
-      </form>
-    </ModalShell>
   );
 }
 
