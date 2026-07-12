@@ -1084,7 +1084,7 @@ function PositionFormModal({
   const depositDriftPct = useMemo(() => {
     if (expectedDeposited <= 0 || depositedNum <= 0) return null;
     const drift = Math.abs(depositedNum - expectedDeposited) / expectedDeposited;
-    return drift > 0.02 ? drift * 100 : null;
+    return drift > 0.01 ? drift * 100 : null;
   }, [expectedDeposited, depositedNum]);
 
   // Auto-fill Deposited (USD) from token counts × entry price until the
@@ -1271,7 +1271,7 @@ function PositionFormModal({
                 />
               </Field>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 sm:col-span-2">
               <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
                 Wide Range %
               </span>
