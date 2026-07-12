@@ -19,6 +19,7 @@ import {
   calcFeeAPR,
   calcPortfolioSummary,
   calcTotalFees,
+  getEffectiveDeposited,
 } from "../../lib/calculations";
 import type { FeeClaim, Position } from "../../lib/types";
 
@@ -50,7 +51,7 @@ function formatPercent(value: number): string {
 function positionFeeAPR(position: Position): number {
   const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
   const totalFees = calcTotalFees(position.claimed, position.newFees);
-  return calcFeeAPR(totalFees, position.deposited, days);
+  return calcFeeAPR(totalFees, getEffectiveDeposited(position), days);
 }
 
 function pad(n: number): string {

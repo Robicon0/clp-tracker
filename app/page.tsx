@@ -11,6 +11,7 @@ import {
   calcPriceDiff,
   calcTotalFees,
   calcWideRangePercent,
+  getEffectiveDeposited,
 } from "../lib/calculations";
 import type { FeeClaim, PortfolioSummary, Position } from "../lib/types";
 
@@ -113,6 +114,7 @@ function SummaryCard({ label, value, valueClass }: SummaryCardProps) {
 
 interface DerivedRow {
   position: Position;
+  deposited: number;
   fees: number;
   days: number;
   apr: number;
@@ -137,13 +139,15 @@ function rangeState(p: Position): "in" | "out" | "unknown" {
 
 function deriveRows(positions: Position[]): DerivedRow[] {
   return positions.map((position) => {
+    const deposited = getEffectiveDeposited(position);
     const fees = calcTotalFees(position.claimed, position.newFees);
     const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
-    const apr = calcFeeAPR(fees, position.deposited, days);
-    const priceDiff = calcPriceDiff(position.currentBalance, position.deposited);
+    const apr = calcFeeAPR(fees, deposited, days);
+    const priceDiff = calcPriceDiff(position.currentBalance, deposited);
     const profit = calcPositionProfit(position, fees, priceDiff);
     return {
       position,
+      deposited,
       fees,
       days,
       apr,
@@ -288,7 +292,7 @@ export default function DashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
                     {activeRows.map(
-                      ({ position, fees, days, apr, profit, rangeState: rs }) => (
+                      ({ position, deposited, fees, days, apr, profit, rangeState: rs }) => (
                         <tr
                           key={position.id}
                           className="transition-colors hover:bg-[var(--surface-2)]/60"
@@ -306,7 +310,7 @@ export default function DashboardPage() {
                             {position.protocol}
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums">
-                            {formatUsd(position.deposited)}
+                            {formatUsd(deposited)}
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums">
                             {formatUsd(position.currentBalance)}

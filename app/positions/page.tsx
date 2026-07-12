@@ -23,6 +23,7 @@ import {
   calcTotalFees,
   calcWideRangePercent,
   computePositionIL,
+  getEffectiveDeposited,
   type ILResult,
 } from "../../lib/calculations";
 import type {
@@ -124,6 +125,19 @@ function computeShortTotal(
   return (gain ?? 0) - (loss ?? 0) + (funding ?? 0);
 }
 
+// Deposited USD is derived, never typed (Invariant #9):
+// (base token count × entry price) + quote token count. Falls back to the
+// carried stored value only for legacy records with missing token counts —
+// mirrors getEffectiveDeposited in lib/calculations.
+function formDeposited(form: PositionFormState): number {
+  const base = num(form.token1Count);
+  const entry = num(form.entryPrice);
+  const quote = num(form.token2Count);
+  const computed =
+    (base > 0 && entry > 0 ? base * entry : 0) + (quote > 0 ? quote : 0);
+  return computed > 0 ? computed : num(form.deposited);
+}
+
 // Parses form strings, then delegates to the shared computePositionIL in
 // lib/calculations (Invariant #6 — one IL source of truth across pages).
 // Form naming: token1 = base token (calcIL token0), token2 = quote token
@@ -133,7 +147,7 @@ function tryComputeIL(
   side: "down" | "up",
 ): ILResult | null {
   if (
-    [form.entryPrice, form.bottomRange, form.topRange, form.deposited].some(
+    [form.entryPrice, form.bottomRange, form.topRange].some(
       (v) => v.trim() === "",
     )
   ) {
@@ -146,7 +160,7 @@ function tryComputeIL(
       entryPrice: Number(form.entryPrice),
       rangeDown,
       rangeUp,
-      deposited: Number(form.deposited),
+      deposited: formDeposited(form),
       token0Count: num(form.token1Count),
       token1Count: num(form.token2Count),
     },
@@ -156,6 +170,7 @@ function tryComputeIL(
 
 interface DerivedRow {
   position: Position;
+  deposited: number;
   fees: number;
   days: number;
   apr: number;
@@ -165,12 +180,13 @@ interface DerivedRow {
 
 function derive(positions: Position[]): DerivedRow[] {
   return positions.map((position) => {
+    const deposited = getEffectiveDeposited(position);
     const fees = calcTotalFees(position.claimed, position.newFees);
     const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
-    const apr = calcFeeAPR(fees, position.deposited, days);
-    const priceDiff = calcPriceDiff(position.currentBalance, position.deposited);
+    const apr = calcFeeAPR(fees, deposited, days);
+    const priceDiff = calcPriceDiff(position.currentBalance, deposited);
     const profit = calcPositionProfit(position, fees, priceDiff);
-    return { position, fees, days, apr, priceDiff, profit };
+    return { position, deposited, fees, days, apr, priceDiff, profit };
   });
 }
 
@@ -206,9 +222,6 @@ interface PositionFormState {
   shortLoss: string;
   shortFundingFees: string;
   shortNotes: string;
-  // While true, Deposited (USD) auto-fills from token counts × entry price.
-  // Flips false the first time the user edits Deposited manually.
-  depositedIsAuto: boolean;
 }
 
 const EMPTY_FORM: PositionFormState = {
@@ -236,7 +249,6 @@ const EMPTY_FORM: PositionFormState = {
   shortLoss: "",
   shortFundingFees: "",
   shortNotes: "",
-  depositedIsAuto: true,
 };
 
 function positionToForm(p: Position): PositionFormState {
@@ -270,7 +282,6 @@ function positionToForm(p: Position): PositionFormState {
     shortLoss: numStr(p.shortLoss),
     shortFundingFees: numStr(p.shortFundingFees),
     shortNotes: p.shortNotes ?? "",
-    depositedIsAuto: false,
   };
 }
 
@@ -295,7 +306,9 @@ function buildRecords(
     ? new Date(form.entryDatetime).toISOString()
     : new Date().toISOString();
 
-  const deposited = num(form.deposited);
+  // Stored deposited is a cache of the derived value — rewritten on every
+  // Add/Edit save so storage stays in sync with the computed truth.
+  const deposited = formDeposited(form);
   const sGain = optionalNum(form.shortGain);
   const sLoss = optionalNum(form.shortLoss);
   const sFunding = optionalNum(form.shortFundingFees);
@@ -680,7 +693,7 @@ function PositionsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
-              {rows.map(({ position, fees, days, apr, priceDiff, profit }) => (
+              {rows.map(({ position, deposited, fees, days, apr, priceDiff, profit }) => (
                 <tr
                   key={position.id}
                   className="transition-colors hover:bg-[var(--surface-2)]/60"
@@ -698,7 +711,7 @@ function PositionsTable({
                     {position.protocol}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {formatUsd(position.deposited)}
+                    {formatUsd(deposited)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {formatUsd(position.currentBalance)}
@@ -1064,49 +1077,25 @@ function PositionFormModal({
     ],
   );
 
-  const depositedNum = useMemo(() => num(form.deposited), [form.deposited]);
+  // Deposited USD is display-only, always derived from the three inputs.
+  const effectiveDeposited = useMemo(
+    () => formDeposited(form),
+    [form.token1Count, form.entryPrice, form.token2Count, form.deposited],
+  );
 
   const wideRangePct = useMemo(
     () => calcWideRangePercent(num(form.bottomRange), num(form.topRange)),
     [form.bottomRange, form.topRange],
   );
 
-  // Quote token is a stablecoin priced at $1 by convention (matches how
-  // calcIL treats p1 = f1 = 1), so expected deposit = base × entry + quote.
-  const expectedDeposited = useMemo(() => {
-    const base = num(form.token1Count);
-    const entry = num(form.entryPrice);
-    const quote = num(form.token2Count);
-    if (base <= 0 || entry <= 0) return quote > 0 ? quote : 0;
-    return base * entry + (quote > 0 ? quote : 0);
-  }, [form.token1Count, form.entryPrice, form.token2Count]);
-
-  const depositDriftPct = useMemo(() => {
-    if (expectedDeposited <= 0 || depositedNum <= 0) return null;
-    const drift = Math.abs(depositedNum - expectedDeposited) / expectedDeposited;
-    return drift > 0.01 ? drift * 100 : null;
-  }, [expectedDeposited, depositedNum]);
-
-  // Auto-fill Deposited (USD) from token counts × entry price until the
-  // user overrides it manually (add mode only — edits start with auto off).
-  const setWithAutoDeposit = (
-    key: "entryPrice" | "token1Count" | "token2Count",
-    value: string,
-  ) =>
-    setForm((prev) => {
-      const next = { ...prev, [key]: value };
-      if (!next.depositedIsAuto) return next;
-      const base = num(next.token1Count);
-      const entry = num(next.entryPrice);
-      if (base > 0 && entry > 0) {
-        const quote = num(next.token2Count);
-        const suggested = base * entry + (quote > 0 ? quote : 0);
-        next.deposited = String(Math.round(suggested * 100) / 100);
-      }
-      return next;
-    });
-  const downsideProfit = downsideIL ? downsideIL.lpValue - depositedNum : null;
-  const upsideProfit = upsideIL ? upsideIL.lpValue - depositedNum : null;
+  const downsideProfit =
+    downsideIL && effectiveDeposited > 0
+      ? downsideIL.lpValue - effectiveDeposited
+      : null;
+  const upsideProfit =
+    upsideIL && effectiveDeposited > 0
+      ? upsideIL.lpValue - effectiveDeposited
+      : null;
 
   const netDownside =
     downsideProfit === null
@@ -1177,32 +1166,6 @@ function PositionFormModal({
               onChange={(v) => set("entryDatetime", v)}
               required
             />
-            <Field label="Deposited (USD)" htmlFor="deposited">
-              <input
-                id="deposited"
-                type="number"
-                step="any"
-                required
-                className={inputClass}
-                placeholder="10000"
-                value={form.deposited}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    deposited: e.target.value,
-                    depositedIsAuto: false,
-                  }))
-                }
-              />
-              {depositDriftPct !== null && (
-                <p className="text-[11px] text-amber-400" aria-live="polite">
-                  ⚠️ Deposited USD doesn&apos;t match Base Token × Entry
-                  Price. Expected {formatUsd(expectedDeposited)}. Difference:{" "}
-                  {depositDriftPct.toFixed(2)}%. Projections will be based on
-                  token counts; P/L will use Deposited.
-                </p>
-              )}
-            </Field>
             {editingStatus === "closed" && (
               <Field
                 label="Scalp (USD)"
@@ -1244,7 +1207,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.entryPrice}
-                onChange={(e) => setWithAutoDeposit("entryPrice", e.target.value)}
+                onChange={(e) => set("entryPrice", e.target.value)}
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
@@ -1271,7 +1234,7 @@ function PositionFormModal({
                 />
               </Field>
             </div>
-            <div className="space-y-1.5 sm:col-span-2">
+            <div className="space-y-1.5">
               <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
                 Wide Range %
               </span>
@@ -1283,6 +1246,20 @@ function PositionFormModal({
               </div>
               <p className="text-[11px] text-[var(--muted)]">
                 Auto: (Range Up − Range Down) / Range Down × 100
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                Deposited (USD)
+              </span>
+              <div
+                className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]"
+                aria-live="polite"
+              >
+                {effectiveDeposited > 0 ? formatUsd(effectiveDeposited) : "—"}
+              </div>
+              <p className="text-[11px] text-[var(--muted)]">
+                Auto: (Base Token Count × Entry Price) + Quote Token Count
               </p>
             </div>
             <Field label="Base Token Symbol" htmlFor="token1Symbol">
@@ -1313,7 +1290,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.token1Count}
-                onChange={(e) => setWithAutoDeposit("token1Count", e.target.value)}
+                onChange={(e) => set("token1Count", e.target.value)}
               />
             </Field>
             <Field label="Quote Token Count" htmlFor="token2Count">
@@ -1324,7 +1301,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.token2Count}
-                onChange={(e) => setWithAutoDeposit("token2Count", e.target.value)}
+                onChange={(e) => set("token2Count", e.target.value)}
               />
             </Field>
           </div>

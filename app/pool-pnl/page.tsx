@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getPositions } from "../../lib/storage";
-import { computePositionIL, type ILResult } from "../../lib/calculations";
+import {
+  computePositionIL,
+  getEffectiveDeposited,
+  type ILResult,
+} from "../../lib/calculations";
 import type { Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -45,6 +49,7 @@ function pnlColor(value: number): string {
 
 interface DerivedPosition {
   position: Position;
+  deposited: number;
   lpProfit: number;
   shortTotal: number | null;
   netPnl: number;
@@ -63,7 +68,7 @@ function computeIL(p: Position, side: "down" | "up"): ILResult | null {
       entryPrice: p.entryPrice,
       rangeDown: p.bottomRange,
       rangeUp: p.topRange,
-      deposited: p.deposited,
+      deposited: getEffectiveDeposited(p),
       token0Count: p.token1Count,
       token1Count: p.token2Count,
     },
@@ -73,7 +78,8 @@ function computeIL(p: Position, side: "down" | "up"): ILResult | null {
 
 function derive(positions: Position[]): DerivedPosition[] {
   return positions.map((position) => {
-    const lpProfit = position.currentBalance - position.deposited;
+    const deposited = getEffectiveDeposited(position);
+    const lpProfit = position.currentBalance - deposited;
     const shortTotal = position.shortTotal;
     const netPnl = lpProfit + (shortTotal ?? 0);
     // Prefer live recomputation; fall back to the stored snapshot (which
@@ -85,11 +91,12 @@ function derive(positions: Position[]): DerivedPosition[] {
       ? downsideIL.lpValue
       : position.outOfRangeDownside;
     const upsideProfit =
-      upsideValue === null ? null : upsideValue - position.deposited;
+      upsideValue === null ? null : upsideValue - deposited;
     const downsideProfit =
-      downsideValue === null ? null : downsideValue - position.deposited;
+      downsideValue === null ? null : downsideValue - deposited;
     return {
       position,
+      deposited,
       lpProfit,
       shortTotal,
       netPnl,
@@ -133,9 +140,10 @@ export default function PoolPnlPage() {
     let lpPnl = 0;
     let shortPnl = 0;
     for (const p of positions) {
-      invested += p.deposited;
+      const deposited = getEffectiveDeposited(p);
+      invested += deposited;
       currentValue += p.currentBalance;
-      lpPnl += p.currentBalance - p.deposited;
+      lpPnl += p.currentBalance - deposited;
       if (p.shortTotal !== null && Number.isFinite(p.shortTotal)) {
         shortPnl += p.shortTotal;
       }
@@ -332,7 +340,7 @@ interface PositionRowProps {
 }
 
 function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
-  const { position, lpProfit, shortTotal, netPnl, upsideIL, downsideIL, upsideProfit, downsideProfit } =
+  const { position, deposited, lpProfit, shortTotal, netPnl, upsideIL, downsideIL, upsideProfit, downsideProfit } =
     row;
   // Live recomputation is the source of truth; the stored snapshot is only
   // a fallback for records the live math can't compute (and may hold stale
@@ -357,7 +365,7 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
         <td className="px-4 py-3 text-[var(--muted)]">{position.chain}</td>
         <td className="px-4 py-3 text-[var(--muted)]">{position.protocol}</td>
         <td className="px-4 py-3 text-right tabular-nums">
-          {formatUsd(position.deposited)}
+          {formatUsd(deposited)}
         </td>
         <td className="px-4 py-3 text-right tabular-nums">
           {formatUsd(position.currentBalance)}

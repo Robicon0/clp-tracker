@@ -264,6 +264,22 @@ export function computePositionIL(
   );
 }
 
+// Deposited USD is a derived value, not a user input (Invariant #9):
+// (base token count × entry price) + quote token count, quote being a $1
+// stablecoin by convention. Every calculation or display that reads
+// position.deposited must go through this helper so legacy records with a
+// mistyped stored value display corrected numbers. Falls back to the
+// stored value only when token counts are missing/zero.
+export function getEffectiveDeposited(position: Position): number {
+  const base = toFinite(position.token1Count);
+  const entry = toFinite(position.entryPrice);
+  const quote = toFinite(position.token2Count);
+  const computed =
+    (base > 0 && entry > 0 ? base * entry : 0) + (quote > 0 ? quote : 0);
+  if (computed > 0) return computed;
+  return toFinite(position.deposited);
+}
+
 export function calcWideRangePercent(
   rangeDown: number,
   rangeUp: number,
@@ -295,13 +311,14 @@ export function calcPortfolioSummary(positions: Position[]): PortfolioSummary {
   let aprWeightDenominator = 0;
 
   for (const p of positions) {
+    const deposited = getEffectiveDeposited(p);
     const fees = calcTotalFees(p.claimed, p.newFees);
     const days = calcDaysActive(p.entryDatetime, p.exitDatetime);
-    const priceDiff = calcPriceDiff(p.currentBalance, p.deposited);
+    const priceDiff = calcPriceDiff(p.currentBalance, deposited);
     const profit = calcPositionProfit(p, fees, priceDiff);
-    const apr = calcFeeAPR(fees, p.deposited, days);
+    const apr = calcFeeAPR(fees, deposited, days);
 
-    summary.totalDeposited += toFinite(p.deposited);
+    summary.totalDeposited += deposited;
     summary.totalCurrentValue += toFinite(p.currentBalance);
     summary.totalFees += fees;
     summary.totalProfit += profit;
@@ -309,9 +326,9 @@ export function calcPortfolioSummary(positions: Position[]): PortfolioSummary {
     if (p.status === "active") summary.activePositions += 1;
     else summary.closedPositions += 1;
 
-    if (p.deposited > 0) {
-      aprWeightedNumerator += apr * p.deposited;
-      aprWeightDenominator += p.deposited;
+    if (deposited > 0) {
+      aprWeightedNumerator += apr * deposited;
+      aprWeightDenominator += deposited;
     }
   }
 

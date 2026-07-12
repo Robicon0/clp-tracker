@@ -9,6 +9,7 @@ import {
   calcPositionProfit,
   calcPriceDiff,
   calcTotalFees,
+  getEffectiveDeposited,
 } from "../../lib/calculations";
 import type { FeeClaim, Position } from "../../lib/types";
 
@@ -92,7 +93,7 @@ function computeTotals(positions: Position[]): PortfolioTotals {
   let totalFees = 0;
   let totalShortPnL = 0;
   for (const p of positions) {
-    totalInvested += p.deposited;
+    totalInvested += getEffectiveDeposited(p);
     totalCurrentValue += p.currentBalance;
     totalFees += calcTotalFees(p.claimed, p.newFees);
     if (p.shortTotal !== null && Number.isFinite(p.shortTotal)) {
@@ -125,18 +126,19 @@ function emptySegment(): SegmentSummary {
 function summarizeSegment(positions: Position[]): SegmentSummary {
   const out = emptySegment();
   for (const p of positions) {
+    const deposited = getEffectiveDeposited(p);
     const fees = calcTotalFees(p.claimed, p.newFees);
     const days = calcDaysActive(p.entryDatetime, p.exitDatetime);
-    const apr = calcFeeAPR(fees, p.deposited, days);
-    const priceDiff = calcPriceDiff(p.currentBalance, p.deposited);
+    const apr = calcFeeAPR(fees, deposited, days);
+    const priceDiff = calcPriceDiff(p.currentBalance, deposited);
     const profit = calcPositionProfit(p, fees, priceDiff);
     out.count += 1;
-    out.invested += p.deposited;
+    out.invested += deposited;
     out.fees += fees;
     out.profit += profit;
-    if (p.deposited > 0) {
-      out.weightedApr += apr * p.deposited;
-      out.weight += p.deposited;
+    if (deposited > 0) {
+      out.weightedApr += apr * deposited;
+      out.weight += deposited;
     }
     if (out.best === null || apr > out.best.apr) {
       out.best = { pair: p.pair, apr };
