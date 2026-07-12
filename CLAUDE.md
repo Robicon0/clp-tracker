@@ -137,6 +137,19 @@ wallet connection, live price feeds, and on-chain reads.
    outOfRangeUpside/Downside are stale-able snapshots; readers must
    prefer live recomputation.
 
+10. [ACTIVE] **Claim → Position Fees Sync** — position.claimed is a
+    derived value, not a user input. All display surfaces read via
+    getEffectiveClaimed(position, allClaims) which sums stableAmount
+    from converted claims linked to that position. Stored
+    position.claimed is legacy fallback only for positions with no
+    logged claims. UpdatePositionModal shows Claimed as read-only
+    display; editing is only possible by adding/editing/deleting
+    claim records. Unconverted claims contribute $0 until Sprint 8
+    introduces claim-time historical pricing. newFees (unclaimed
+    accrued fees) stays manual. Claim persistence goes through
+    persistNewClaim/persistUpdatedClaim in
+    components/ClaimFormModal.tsx — never duplicate per page.
+
 ## Master Formulas (Ground Truth from Google Sheet)
 
 Sheet source: 1fR61R3ZBGLFk8cEWlNC589WsmVZcsu3ZWogdVXnhBR4
@@ -228,6 +241,10 @@ at the plan gate.
 - Sprint 3.1 Part 4: Deposited USD → display-only auto-calculated
   field, moved to LP Range section, existing positions
   auto-corrected on read via getEffectiveDeposited helper [7a8d50c]
+- Sprint 3.2 (investigation-only): claims/positions two-books
+  diagnosis — closed without code changes
+- Sprint 4: Position-Centric Claim UX + auto-sync (all 8 parts)
+  [97bf67f]
 
 ## Known Issues
 
