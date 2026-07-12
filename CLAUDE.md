@@ -124,14 +124,18 @@ wallet connection, live price feeds, and on-chain reads.
 8. [ACTIVE] **Defensive Plausibility Checks** — Boundary checks at
    every route. Never reintroduce a previously fixed bug.
 
-9. [ACTIVE] **IL Projections From Token Amounts** — IL projections
-   must use stored token amounts as primary source, Deposited USD
-   as secondary fallback only. Divergence between Deposited USD and
-   TokenCount × EntryPrice indicates data entry error and must warn
-   the user non-blockingly (>1% drift threshold). All IL math flows
-   through computePositionIL in lib/calculations.ts — never
-   duplicate the wrapper per page. Stored outOfRangeUpside/Downside
-   are stale-able snapshots; readers must prefer live recomputation.
+9. [ACTIVE] **Deposited USD Is Derived, Not Typed** — Deposited USD
+   is a derived value, not a user input. Computed as (Base Token
+   Count × Entry Price) + Quote Token Count. All calculations
+   reading position.deposited must go through the
+   getEffectiveDeposited helper in lib/calculations.ts so existing
+   legacy positions display corrected values (stored value is a
+   fallback cache for records with missing token counts, rewritten
+   on every Add/Edit save). IL projections use token amounts as
+   primary liquidity source. All IL math flows through
+   computePositionIL — never duplicate the wrapper per page. Stored
+   outOfRangeUpside/Downside are stale-able snapshots; readers must
+   prefer live recomputation.
 
 ## Master Formulas (Ground Truth from Google Sheet)
 
@@ -221,6 +225,9 @@ at the plan gate.
   Deposited + drift warning, IL wrapper centralized [3f82052]
 - Sprint 3.1: LP Range layout regression fix, drift warning
   threshold lowered to 1% [4530222]
+- Sprint 3.1 Part 4: Deposited USD → display-only auto-calculated
+  field, moved to LP Range section, existing positions
+  auto-corrected on read via getEffectiveDeposited helper [7a8d50c]
 
 ## Known Issues
 
