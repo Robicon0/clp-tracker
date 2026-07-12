@@ -128,7 +128,7 @@ wallet connection, live price feeds, and on-chain reads.
    must use stored token amounts as primary source, Deposited USD
    as secondary fallback only. Divergence between Deposited USD and
    TokenCount × EntryPrice indicates data entry error and must warn
-   the user non-blockingly (>2% drift threshold). All IL math flows
+   the user non-blockingly (>1% drift threshold). All IL math flows
    through computePositionIL in lib/calculations.ts — never
    duplicate the wrapper per page. Stored outOfRangeUpside/Downside
    are stale-able snapshots; readers must prefer live recomputation.
@@ -219,14 +219,12 @@ at the plan gate.
 - Sprint 3: calcIL formula fixes (token-count liquidity +
   entry-outside-range branch), Wide Range % display, auto-suggest
   Deposited + drift warning, IL wrapper centralized [3f82052]
+- Sprint 3.1: LP Range layout regression fix, drift warning
+  threshold lowered to 1% [4530222]
 
 ## Known Issues
 
-- Drift warning threshold is >2%, so Osho's reference SOL/USDC
-  case (Deposited $2,839.97 vs token-implied $2,786.77 = 1.91%
-  drift) does not trigger the warning. Projections are still
-  correct (token counts win). Lowering the threshold needs a plan
-  gate decision.
+[Empty — to be populated as issues are identified]
 
 ## Architecture Notes
 
