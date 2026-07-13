@@ -140,15 +140,23 @@ wallet connection, live price feeds, and on-chain reads.
 10. [ACTIVE] **Claim → Position Fees Sync** — position.claimed is a
     derived value, not a user input. All display surfaces read via
     getEffectiveClaimed(position, allClaims) which sums stableAmount
-    from converted claims linked to that position. Stored
-    position.claimed is legacy fallback only for positions with no
-    logged claims. UpdatePositionModal shows Claimed as read-only
-    display; editing is only possible by adding/editing/deleting
-    claim records. Unconverted claims contribute $0 until Sprint 8
-    introduces claim-time historical pricing. newFees (unclaimed
+    from ALL claims linked to that position (regardless of
+    conversion status — stableAmount means USD value of claim, not
+    amount cashed out). Stored position.claimed is legacy fallback
+    only for positions with no valued claims logged.
+    UpdatePositionModal shows Claimed as read-only display; editing
+    is only possible by adding/editing/deleting claim records. The
+    convertedToStable boolean is purely informational (tracks
+    whether user cashed out to stable). One metric intentionally
+    stays conversion-gated: Total P&L per-token "stable contributed"
+    tracks actual cash-outs and differs from claim USD value. Legacy
+    claims saved without a USD value hold null and contribute $0
+    until Sprint 8 claim-time historical pricing. newFees (unclaimed
     accrued fees) stays manual. Claim persistence goes through
     persistNewClaim/persistUpdatedClaim in
-    components/ClaimFormModal.tsx — never duplicate per page.
+    components/ClaimFormModal.tsx — never duplicate per page. The
+    Close flow creates its claim BEFORE closing the position (safer
+    failure ordering).
 
 ## Master Formulas (Ground Truth from Google Sheet)
 
@@ -245,6 +253,8 @@ at the plan gate.
   diagnosis — closed without code changes
 - Sprint 4: Position-Centric Claim UX + auto-sync (all 8 parts)
   [97bf67f]
+- Sprint 5: Claim USD value always captured (converted or not),
+  Close modal integrates optional fees-at-close section [3fd0805]
 
 ## Known Issues
 
