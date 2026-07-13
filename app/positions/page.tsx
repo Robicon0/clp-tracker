@@ -510,8 +510,40 @@ export default function PositionsPage() {
       exitDatetime: string;
       currentBalance: number;
       scalp: number | null;
+      feeClaim?: {
+        token1Amount: number;
+        token2Amount: number;
+        stableAmount: number | null;
+        convertedToStable: boolean;
+        stableSymbol: string | null;
+        txId: string | null;
+      };
     },
   ) => {
+    // Claim is created BEFORE the position is closed: if anything throws
+    // between the two writes, the position stays open with a logged claim
+    // (harmless, retryable) rather than closed with silently lost fees.
+    if (next.feeClaim) {
+      persistNewClaim({
+        id: newId(),
+        positionId: target.id,
+        date: next.exitDatetime,
+        pair: target.pair,
+        platform: target.protocol,
+        chain: target.chain,
+        token1Symbol: target.token1Symbol,
+        token1Amount: next.feeClaim.token1Amount,
+        token2Symbol: target.token2Symbol,
+        token2Amount: next.feeClaim.token2Amount,
+        convertedToStable: next.feeClaim.convertedToStable,
+        stableSymbol: next.feeClaim.stableSymbol,
+        stableAmount: next.feeClaim.stableAmount,
+        currentPositionValue: null,
+        txId: next.feeClaim.txId,
+        notes: "",
+      });
+    }
+
     const updated = getPositions().map((p) =>
       p.id === target.id
         ? {
@@ -1615,6 +1647,14 @@ interface ClosePositionModalProps {
     exitDatetime: string;
     currentBalance: number;
     scalp: number | null;
+    feeClaim?: {
+      token1Amount: number;
+      token2Amount: number;
+      stableAmount: number | null;
+      convertedToStable: boolean;
+      stableSymbol: string | null;
+      txId: string | null;
+    };
   }) => void;
 }
 
@@ -1628,6 +1668,16 @@ function ClosePositionModal({
   const [currentBalance, setCurrentBalance] = useState(
     String(position.currentBalance ?? 0),
   );
+  const [claimSectionOpen, setClaimSectionOpen] = useState(false);
+  const [claimTokens1, setClaimTokens1] = useState("");
+  const [claimTokens2, setClaimTokens2] = useState("");
+  const [claimUsdValue, setClaimUsdValue] = useState("");
+  const [claimConverted, setClaimConverted] = useState(false);
+  const [claimStableSymbol, setClaimStableSymbol] = useState("USDC");
+  const [claimTxId, setClaimTxId] = useState("");
+
+  const shouldCreateClaim =
+    num(claimTokens1) > 0 || num(claimTokens2) > 0 || num(claimUsdValue) > 0;
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1635,6 +1685,18 @@ function ClosePositionModal({
       exitDatetime: new Date(exitDatetime).toISOString(),
       currentBalance: num(currentBalance),
       scalp: optionalNum(scalp),
+      feeClaim: shouldCreateClaim
+        ? {
+            token1Amount: num(claimTokens1),
+            token2Amount: num(claimTokens2),
+            stableAmount: optionalNum(claimUsdValue),
+            convertedToStable: claimConverted,
+            stableSymbol: claimConverted
+              ? claimStableSymbol.trim().toUpperCase() || null
+              : null,
+            txId: claimTxId.trim() === "" ? null : claimTxId.trim(),
+          }
+        : undefined,
     });
   };
 
@@ -1686,6 +1748,122 @@ function ClosePositionModal({
               />
             </Field>
           </div>
+        </Section>
+        <Section title="Claim Fees at Close (Optional)">
+          <button
+            type="button"
+            onClick={() => setClaimSectionOpen((v) => !v)}
+            aria-expanded={claimSectionOpen}
+            className="text-sm font-medium text-[var(--accent)] hover:opacity-80"
+          >
+            {claimSectionOpen ? "−" : "+"} Claim fees earned at close?
+          </button>
+          {claimSectionOpen && (
+            <div className="mt-4 space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
+                  label={`${position.token1Symbol || "Token 1"} Amount`}
+                  htmlFor="c_claimTokens1"
+                >
+                  <input
+                    id="c_claimTokens1"
+                    type="number"
+                    step="any"
+                    placeholder="0.00"
+                    className={inputClass}
+                    value={claimTokens1}
+                    onChange={(e) => setClaimTokens1(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label={`${position.token2Symbol || "Token 2"} Amount`}
+                  htmlFor="c_claimTokens2"
+                >
+                  <input
+                    id="c_claimTokens2"
+                    type="number"
+                    step="any"
+                    placeholder="0.00"
+                    className={inputClass}
+                    value={claimTokens2}
+                    onChange={(e) => setClaimTokens2(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Claim USD Value"
+                  htmlFor="c_claimUsd"
+                  hint="USD value of these fees at close time"
+                >
+                  <input
+                    id="c_claimUsd"
+                    type="number"
+                    step="any"
+                    placeholder="0.00"
+                    className={inputClass}
+                    value={claimUsdValue}
+                    onChange={(e) => setClaimUsdValue(e.target.value)}
+                  />
+                </Field>
+                <Field label="Transaction ID (Optional)" htmlFor="c_claimTx">
+                  <input
+                    id="c_claimTx"
+                    className={inputClass}
+                    placeholder="Paste tx hash or explorer URL"
+                    value={claimTxId}
+                    onChange={(e) => setClaimTxId(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm text-[var(--muted)]">
+                  Converted to Stablecoin?
+                </span>
+                <div
+                  role="radiogroup"
+                  aria-label="Converted to Stablecoin?"
+                  className="inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
+                >
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={claimConverted}
+                    onClick={() => setClaimConverted(true)}
+                    className={`h-8 px-4 text-xs font-medium transition-colors ${
+                      claimConverted
+                        ? "bg-[var(--accent)] text-white"
+                        : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
+                    }`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!claimConverted}
+                    onClick={() => setClaimConverted(false)}
+                    className={`h-8 px-4 text-xs font-medium border-l border-[var(--border-strong)] transition-colors ${
+                      !claimConverted
+                        ? "bg-[var(--accent)] text-white"
+                        : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
+                    }`}
+                  >
+                    No
+                  </button>
+                </div>
+                {claimConverted && (
+                  <input
+                    aria-label="Stable symbol"
+                    className={`${inputClass} w-28`}
+                    placeholder="USDC"
+                    value={claimStableSymbol}
+                    onChange={(e) =>
+                      setClaimStableSymbol(e.target.value.toUpperCase())
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          )}
         </Section>
         <FormActions
           onCancel={onCancel}

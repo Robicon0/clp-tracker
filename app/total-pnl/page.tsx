@@ -232,7 +232,8 @@ function buildMonthRows(claims: FeeClaim[], positions: Position[]): MonthRow[] {
       buckets.set(key, bucket);
     }
     bucket.claimCount += 1;
-    if (c.convertedToStable && c.stableAmount !== null && Number.isFinite(c.stableAmount)) {
+    // USD value counts regardless of conversion status (Invariant #10)
+    if (c.stableAmount !== null && Number.isFinite(c.stableAmount)) {
       bucket.feesUsd += c.stableAmount;
     }
   }

@@ -55,7 +55,7 @@ function optionalNum(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function newId(): string {
+export function newId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
@@ -140,12 +140,13 @@ function buildClaim(id: string, form: ClaimFormState): FeeClaim {
     token2Symbol: form.token2Symbol.trim().toUpperCase(),
     token2Amount: num(form.token2Amount),
     convertedToStable: form.convertedToStable,
+    // stableSymbol only populated when converted (tracks which stable was
+    // cashed out to); stableAmount is always captured — it is the USD value
+    // of the claim regardless of conversion status (Invariant #10).
     stableSymbol: form.convertedToStable
       ? form.stableSymbol.trim().toUpperCase() || null
       : null,
-    stableAmount: form.convertedToStable
-      ? optionalNum(form.stableAmount)
-      : null,
+    stableAmount: optionalNum(form.stableAmount),
     currentPositionValue: optionalNum(form.currentPositionValue),
     txId: form.txId.trim() === "" ? null : form.txId.trim(),
     notes: form.notes.trim().toUpperCase(),
@@ -334,6 +335,7 @@ export function ClaimFormModal({
     initialForm(mode, claim, lockedPositionId, positions),
   );
   const [positionError, setPositionError] = useState<string | null>(null);
+  const [valueError, setValueError] = useState<string | null>(null);
 
   const title = mode === "add" ? "Add Claim" : "Edit Claim";
   const submitLabel = mode === "add" ? "Add Claim" : "Save Changes";
@@ -380,11 +382,28 @@ export function ClaimFormModal({
     else set("stableSymbol", v);
   };
 
+  // Soft warning: token amounts without a USD value save fine but
+  // contribute $0 to Fee APR — surface that before the user saves.
+  const usdValueMissing =
+    (num(form.token1Amount) > 0 || num(form.token2Amount) > 0) &&
+    form.stableAmount.trim() === "";
+
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     // No orphan claims — every claim must link to a position (Invariant #10).
     if (!form.positionId) {
       setPositionError("Please select which position this claim is for");
+      return;
+    }
+    // Hard block only when there is nothing to record at all.
+    if (
+      num(form.token1Amount) <= 0 &&
+      num(form.token2Amount) <= 0 &&
+      num(form.stableAmount) <= 0
+    ) {
+      setValueError(
+        "Nothing to record — enter a token amount or a Claim USD Value",
+      );
       return;
     }
     onSubmit(buildClaim(claim?.id ?? newId(), form));
@@ -554,8 +573,44 @@ export function ClaimFormModal({
           </div>
         </Section>
 
-        <Section title="Conversion (optional)">
+        <Section title="Claim USD Value">
+          <Field
+            label="Claim USD Value"
+            htmlFor="stableAmount"
+            hint="USD value of this claim. Required if any token amount is entered."
+          >
+            <input
+              id="stableAmount"
+              type="number"
+              step="any"
+              placeholder="0.00"
+              className={inputClass}
+              value={form.stableAmount}
+              onChange={(e) => {
+                setValueError(null);
+                set("stableAmount", e.target.value);
+              }}
+            />
+            {usdValueMissing && (
+              <p className="text-[11px] text-amber-400" aria-live="polite">
+                ⚠️ No USD value entered — this claim will contribute $0 to
+                Total Fees and Fee APR until a value is added.
+              </p>
+            )}
+            {valueError && (
+              <p className="text-[11px] text-amber-400" aria-live="polite">
+                ⚠️ {valueError}
+              </p>
+            )}
+          </Field>
+        </Section>
+
+        <Section title="Conversion (optional — for tracking cash-outs)">
           <div className="space-y-4">
+            <p className="text-[11px] text-[var(--muted)]">
+              Tracks whether you cashed out fees to a stablecoin. USD value
+              above is captured either way.
+            </p>
             <div className="flex items-center gap-3">
               <span className="text-sm text-[var(--muted)]">
                 Converted to Stablecoin?
@@ -618,17 +673,6 @@ export function ClaimFormModal({
                       />
                     )}
                   </div>
-                </Field>
-                <Field label="Stable Amount" htmlFor="stableAmount">
-                  <input
-                    id="stableAmount"
-                    type="number"
-                    step="any"
-                    required
-                    className={inputClass}
-                    value={form.stableAmount}
-                    onChange={(e) => set("stableAmount", e.target.value)}
-                  />
                 </Field>
               </div>
             )}

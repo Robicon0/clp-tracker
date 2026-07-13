@@ -265,19 +265,18 @@ export function computePositionIL(
 }
 
 // position.claimed is a derived value, not a user input (Invariant #10):
-// the sum of stableAmount across converted claims linked to the position.
-// Unconverted claims contribute $0 for now — they have no USD value until
-// claim-time historical pricing lands (Sprint 8 / Invariant #2). Falls back
-// to the stored value only for legacy positions with no logged claims.
+// the sum of stableAmount across ALL claims linked to the position —
+// stableAmount means "USD value of the claim" regardless of conversion
+// status (Sprint 5). Legacy claims saved without a USD value hold null and
+// contribute $0 until claim-time historical pricing lands (Sprint 8 /
+// Invariant #2). Falls back to the stored value only for positions with no
+// valued claims logged.
 export function getEffectiveClaimed(
   position: Position,
   allClaims: FeeClaim[],
 ): number {
   const relatedClaims = allClaims.filter(
-    (c) =>
-      c.positionId === position.id &&
-      c.convertedToStable &&
-      c.stableAmount !== null,
+    (c) => c.positionId === position.id && c.stableAmount !== null,
   );
   if (relatedClaims.length > 0) {
     return relatedClaims.reduce((sum, c) => sum + toFinite(c.stableAmount), 0);

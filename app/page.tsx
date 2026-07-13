@@ -391,7 +391,7 @@ export default function DashboardPage() {
                         Converted to Stable
                       </th>
                       <th className="px-4 py-3 text-right font-medium">
-                        Stable Amount
+                        USD Value
                       </th>
                     </tr>
                   </thead>
@@ -423,8 +423,8 @@ export default function DashboardPage() {
                           {claim.convertedToStable ? "Yes" : "No"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">
-                          {claim.convertedToStable && claim.stableAmount !== null
-                            ? `${formatTokenAmount(claim.stableAmount)} ${claim.stableSymbol ?? ""}`.trim()
+                          {claim.stableAmount !== null
+                            ? formatUsd(claim.stableAmount)
                             : "—"}
                         </td>
                       </tr>

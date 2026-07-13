@@ -128,11 +128,10 @@ export default function ClaimsPage() {
     let convertedCount = 0;
     let stableSum = 0;
     for (const c of claims) {
-      if (c.convertedToStable) {
-        convertedCount += 1;
-        if (c.stableAmount !== null && Number.isFinite(c.stableAmount)) {
-          stableSum += c.stableAmount;
-        }
+      if (c.convertedToStable) convertedCount += 1;
+      // USD value counts regardless of conversion status (Invariant #10)
+      if (c.stableAmount !== null && Number.isFinite(c.stableAmount)) {
+        stableSum += c.stableAmount;
       }
     }
     return {
@@ -295,7 +294,7 @@ export default function ClaimsPage() {
                   <th className="px-4 py-3 text-right font-medium">Token 2</th>
                   <th className="px-4 py-3 text-left font-medium">Converted</th>
                   <th className="px-4 py-3 text-right font-medium">
-                    Stable Amount
+                    USD Value
                   </th>
                   <th className="px-4 py-3 text-left font-medium">Tx</th>
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
@@ -345,8 +344,8 @@ export default function ClaimsPage() {
                         : "No"}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
-                      {claim.convertedToStable && claim.stableAmount !== null
-                        ? `${formatToken(claim.stableAmount)} ${claim.stableSymbol ?? ""}`.trim()
+                      {claim.stableAmount !== null
+                        ? formatUsd(claim.stableAmount)
                         : "—"}
                     </td>
                     <td className="px-4 py-3 text-[var(--muted)]">
