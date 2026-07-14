@@ -407,6 +407,7 @@ function PortfolioSummarySection({ totals }: PortfolioSummarySectionProps) {
           label="LP P&L"
           value={formatUsd(totals.lpPnL)}
           valueClass={pnlColor(totals.lpPnL)}
+          hint="Sum of (current value − deposited) across all positions. Price movement only, before fees."
         />
         <NetPnlCard value={totals.netPnL} />
       </div>
@@ -418,9 +419,10 @@ interface BigStatProps {
   label: string;
   value: string;
   valueClass?: string;
+  hint?: string;
 }
 
-function BigStat({ label, value, valueClass }: BigStatProps) {
+function BigStat({ label, value, valueClass, hint }: BigStatProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
@@ -431,6 +433,7 @@ function BigStat({ label, value, valueClass }: BigStatProps) {
       >
         {value}
       </div>
+      {hint && <p className="mt-2 text-[11px] text-[var(--muted)]">{hint}</p>}
     </div>
   );
 }

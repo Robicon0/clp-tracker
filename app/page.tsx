@@ -95,9 +95,10 @@ interface SummaryCardProps {
   label: string;
   value: string;
   valueClass?: string;
+  hint?: string;
 }
 
-function SummaryCard({ label, value, valueClass }: SummaryCardProps) {
+function SummaryCard({ label, value, valueClass, hint }: SummaryCardProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
@@ -108,6 +109,7 @@ function SummaryCard({ label, value, valueClass }: SummaryCardProps) {
       >
         {value}
       </div>
+      {hint && <p className="mt-2 text-[11px] text-[var(--muted)]">{hint}</p>}
     </div>
   );
 }
@@ -233,6 +235,7 @@ export default function DashboardPage() {
               label="Total Profit"
               value={formatUsd(summary.totalProfit)}
               valueClass={pnlColor(summary.totalProfit)}
+              hint="Active: price change + fees. Closed: scalp + fees."
             />
             <SummaryCard
               label="Average Fee APR"

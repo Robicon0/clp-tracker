@@ -593,6 +593,7 @@ export default function PositionsPage() {
         rows={closed}
         open={showClosed}
         onToggle={() => setShowClosed((v) => !v)}
+        onEdit={(p) => setModal({ kind: "edit", position: p })}
         onClaim={(p) => setModal({ kind: "claim", position: p })}
       />
 
@@ -836,23 +837,21 @@ function PositionsTable({
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onEdit?.(position)}
+                        className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                      >
+                        Edit
+                      </button>
                       {variant === "active" && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => onEdit?.(position)}
-                            className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onUpdate?.(position)}
-                            className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
-                          >
-                            Update
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          onClick={() => onUpdate?.(position)}
+                          className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                        >
+                          Update
+                        </button>
                       )}
                       <button
                         type="button"
@@ -886,10 +885,17 @@ interface ClosedSectionProps {
   rows: DerivedRow[];
   open: boolean;
   onToggle: () => void;
+  onEdit?: (p: Position) => void;
   onClaim?: (p: Position) => void;
 }
 
-function ClosedSection({ rows, open, onToggle, onClaim }: ClosedSectionProps) {
+function ClosedSection({
+  rows,
+  open,
+  onToggle,
+  onEdit,
+  onClaim,
+}: ClosedSectionProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
       <button
@@ -916,6 +922,7 @@ function ClosedSection({ rows, open, onToggle, onClaim }: ClosedSectionProps) {
             title=""
             rows={rows}
             variant="closed"
+            onEdit={onEdit}
             onClaim={onClaim}
             emptyText=""
           />
