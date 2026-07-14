@@ -255,6 +255,9 @@ at the plan gate.
   [97bf67f]
 - Sprint 5: Claim USD value always captured (converted or not),
   Close modal integrates optional fees-at-close section [3fd0805]
+- Pre-Sprint 6 patch [ca378e7]: Edit button added to closed
+  positions; info text added to Dashboard Total Profit and
+  Total P&L LP P&L cards.
 
 ## Known Issues
 
