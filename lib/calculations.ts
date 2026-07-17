@@ -309,6 +309,66 @@ export function getEffectiveDeposited(position: Position): number {
   return toFinite(position.deposited);
 }
 
+export interface TokenPnLRow {
+  token: string;
+  activeCount: number;
+  closedCount: number;
+  unrealized: number;
+  realized: number;
+  shortPnl: number;
+  fees: number;
+  netPnl: number;
+}
+
+// Sprint 6: per-token P&L books, mirroring the Google Sheet's Pool P&L 0
+// tab. Positions group by base token symbol (token1Symbol). Realized =
+// closed positions' (final balance − deposited); Unrealized = active
+// positions' (current balance − deposited); Short P&L sums shortTotal.
+// Net = realized + unrealized + short. Fee income is informational only
+// and stays OUT of netPnl — the sheet keeps fees out of the token books
+// (per-token fee income lives in Total P&L's Fee Income Breakdown).
+export function calcTokenPnL(
+  positions: Position[],
+  allClaims: FeeClaim[],
+): TokenPnLRow[] {
+  const map = new Map<string, TokenPnLRow>();
+  for (const p of positions) {
+    const token = (p.token1Symbol || "").trim().toUpperCase() || "—";
+    let row = map.get(token);
+    if (!row) {
+      row = {
+        token,
+        activeCount: 0,
+        closedCount: 0,
+        unrealized: 0,
+        realized: 0,
+        shortPnl: 0,
+        fees: 0,
+        netPnl: 0,
+      };
+      map.set(token, row);
+    }
+    const principalDiff = toFinite(p.currentBalance) - getEffectiveDeposited(p);
+    if (p.status === "closed") {
+      row.closedCount += 1;
+      row.realized += principalDiff;
+    } else {
+      row.activeCount += 1;
+      row.unrealized += principalDiff;
+    }
+    if (p.shortTotal !== null && Number.isFinite(p.shortTotal)) {
+      row.shortPnl += p.shortTotal;
+    }
+    row.fees += getEffectiveTotalFees(p, allClaims);
+  }
+  const rows = Array.from(map.values());
+  for (const row of rows) {
+    row.netPnl = row.realized + row.unrealized + row.shortPnl;
+  }
+  rows.sort((a, b) => b.netPnl - a.netPnl);
+  return rows;
+}
+
 export function calcWideRangePercent(
   rangeDown: number,
   rangeUp: number,

@@ -228,7 +228,6 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
-- Sprint 6: Realized + Unrealized P&L per Token (Pool P&L rebuild)
 - Sprint 7: Business P&L Page (new)
 - Sprint 8: Unconverted Token Holdings + Current Value
 - Sprint 9: Extended Transfers Page
@@ -288,6 +287,21 @@ at the plan gate.
   across Dashboard, Claims, Pool P&L, Total P&L, and Sidebar.
   Zero console errors. Seed entries removed afterward; user data
   untouched. Sprint 6 Phase A deferred by Osho at the gate.
+- Sprint 6: Realized + Unrealized P&L per Token (Pool P&L
+  rebuild). Phase A read Pool P&L 0 in the Google Sheet directly
+  (per-token books: pairs block with withdraw − initial principal
+  P&L excluding fees, short block, per-token net summary). Gate
+  approved by Osho. Shipped: calcTokenPnL helper in
+  lib/calculations.ts groups positions by base token
+  (token1Symbol) — Unrealized = active (current − effective
+  deposited), Realized = closed (final − effective deposited),
+  Short P&L = Σ shortTotal, Net = realized + unrealized + short;
+  fee income shown as separate info column, excluded from Net
+  (mirrors the sheet). New "By Token" table on Pool P&L page
+  above By Position with totals row. Verified on localhost
+  against a mirror of Osho's live data — every cell matched hand
+  calculations; token totals agree with the summary cards
+  (Invariant #6).
 
 ## Known Issues
 

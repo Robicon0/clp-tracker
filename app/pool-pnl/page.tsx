@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { getPositions } from "../../lib/storage";
+import { getClaims, getPositions } from "../../lib/storage";
 import {
+  calcTokenPnL,
   computePositionIL,
   getEffectiveDeposited,
   type ILResult,
+  type TokenPnLRow,
 } from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
-import type { Position } from "../../lib/types";
+import type { FeeClaim, Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -113,12 +115,19 @@ type StatusFilter = "all" | "active" | "closed";
 
 export default function PoolPnlPage() {
   const [positions, setPositions] = useState<Position[]>([]);
+  const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
+    setClaims(getClaims());
   });
+
+  const tokenRows = useMemo(
+    () => (hydrated ? calcTokenPnL(positions, claims) : []),
+    [hydrated, positions, claims],
+  );
 
   const rows = useMemo(() => {
     if (!hydrated) return [];
@@ -197,6 +206,46 @@ export default function PoolPnlPage() {
         />
       </div>
 
+      {tokenRows.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+          <div className="border-b border-[var(--border)] px-5 py-4">
+            <h2 className="text-sm font-semibold tracking-tight">By Token</h2>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">
+              Positions grouped by base token. Realized = closed positions,
+              Unrealized = active positions — price movement only. Fees are
+              shown separately and not included in Net P&amp;L.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+              <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium">Token</th>
+                  <th className="px-4 py-3 text-right font-medium">Positions</th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    Unrealized P&L
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    Realized P&L
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium">Short P&L</th>
+                  <th className="px-4 py-3 text-right font-medium">Net P&L</th>
+                  <th className="px-4 py-3 text-right font-medium">Fees (info)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {tokenRows.map((row) => (
+                  <TokenRow key={row.token} row={row} />
+                ))}
+              </tbody>
+              <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
+                <TokenTotalsRow rows={tokenRows} />
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
         <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-sm font-semibold tracking-tight">By Position</h2>
@@ -266,6 +315,104 @@ export default function PoolPnlPage() {
         )}
       </div>
     </section>
+  );
+}
+
+interface TokenRowProps {
+  row: TokenPnLRow;
+}
+
+function TokenRow({ row }: TokenRowProps) {
+  const positionsLabel = [
+    row.activeCount > 0 ? `${row.activeCount} active` : null,
+    row.closedCount > 0 ? `${row.closedCount} closed` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <tr>
+      <td className="px-4 py-3 font-medium text-[var(--foreground)]">
+        {row.token}
+      </td>
+      <td className="px-4 py-3 text-right text-[var(--muted)]">
+        {positionsLabel || "—"}
+      </td>
+      <td
+        className={`px-4 py-3 text-right tabular-nums ${
+          row.activeCount === 0 ? "text-[var(--muted)]" : pnlColor(row.unrealized)
+        }`}
+      >
+        {row.activeCount === 0 ? "—" : formatUsd(row.unrealized)}
+      </td>
+      <td
+        className={`px-4 py-3 text-right tabular-nums ${
+          row.closedCount === 0 ? "text-[var(--muted)]" : pnlColor(row.realized)
+        }`}
+      >
+        {row.closedCount === 0 ? "—" : formatUsd(row.realized)}
+      </td>
+      <td
+        className={`px-4 py-3 text-right tabular-nums ${
+          row.shortPnl === 0 ? "text-[var(--muted)]" : pnlColor(row.shortPnl)
+        }`}
+      >
+        {row.shortPnl === 0 ? "—" : formatUsd(row.shortPnl)}
+      </td>
+      <td
+        className={`px-4 py-3 text-right tabular-nums font-semibold ${pnlColor(row.netPnl)}`}
+      >
+        {formatUsd(row.netPnl)}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
+        {formatUsd(row.fees)}
+      </td>
+    </tr>
+  );
+}
+
+interface TokenTotalsRowProps {
+  rows: TokenPnLRow[];
+}
+
+function TokenTotalsRow({ rows }: TokenTotalsRowProps) {
+  let active = 0;
+  let closed = 0;
+  let unrealized = 0;
+  let realized = 0;
+  let shortPnl = 0;
+  let netPnl = 0;
+  let fees = 0;
+  for (const r of rows) {
+    active += r.activeCount;
+    closed += r.closedCount;
+    unrealized += r.unrealized;
+    realized += r.realized;
+    shortPnl += r.shortPnl;
+    netPnl += r.netPnl;
+    fees += r.fees;
+  }
+  return (
+    <tr className="text-sm font-semibold">
+      <td className="px-4 py-3 text-[var(--foreground)]">Total</td>
+      <td className="px-4 py-3 text-right text-[var(--muted)]">
+        {active} active · {closed} closed
+      </td>
+      <td className={`px-4 py-3 text-right tabular-nums ${pnlColor(unrealized)}`}>
+        {formatUsd(unrealized)}
+      </td>
+      <td className={`px-4 py-3 text-right tabular-nums ${pnlColor(realized)}`}>
+        {formatUsd(realized)}
+      </td>
+      <td className={`px-4 py-3 text-right tabular-nums ${pnlColor(shortPnl)}`}>
+        {formatUsd(shortPnl)}
+      </td>
+      <td className={`px-4 py-3 text-right tabular-nums ${pnlColor(netPnl)}`}>
+        {formatUsd(netPnl)}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
+        {formatUsd(fees)}
+      </td>
+    </tr>
   );
 }
 
