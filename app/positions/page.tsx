@@ -33,6 +33,7 @@ import {
   ClaimFormModal,
   persistNewClaim,
 } from "../../components/ClaimFormModal";
+import { useHydrated } from "../../lib/useHydrated";
 import type { FeeClaim } from "../../lib/types";
 import type {
   LPRange,
@@ -136,41 +137,49 @@ function computeShortTotal(
 // Deposited USD is derived, never typed (Invariant #9):
 // (base token count × entry price) + quote token count. Falls back to the
 // carried stored value only for legacy records with missing token counts —
-// mirrors getEffectiveDeposited in lib/calculations.
-function formDeposited(form: PositionFormState): number {
-  const base = num(form.token1Count);
-  const entry = num(form.entryPrice);
-  const quote = num(form.token2Count);
+// mirrors getEffectiveDeposited in lib/calculations. Takes primitive fields
+// rather than the whole form so memoized callers can declare exact deps.
+function formDeposited(
+  token1Count: string,
+  entryPrice: string,
+  token2Count: string,
+  deposited: string,
+): number {
+  const base = num(token1Count);
+  const entry = num(entryPrice);
+  const quote = num(token2Count);
   const computed =
     (base > 0 && entry > 0 ? base * entry : 0) + (quote > 0 ? quote : 0);
-  return computed > 0 ? computed : num(form.deposited);
+  return computed > 0 ? computed : num(deposited);
 }
 
 // Parses form strings, then delegates to the shared computePositionIL in
 // lib/calculations (Invariant #6 — one IL source of truth across pages).
 // Form naming: token1 = base token (calcIL token0), token2 = quote token
-// (calcIL token1, priced at $1 by convention).
+// (calcIL token1, priced at $1 by convention). Takes primitive fields rather
+// than the whole form so memoized callers can declare exact deps.
 function tryComputeIL(
-  form: PositionFormState,
+  entryPrice: string,
+  bottomRange: string,
+  topRange: string,
+  token1Count: string,
+  token2Count: string,
+  deposited: string,
   side: "down" | "up",
 ): ILResult | null {
-  if (
-    [form.entryPrice, form.bottomRange, form.topRange].some(
-      (v) => v.trim() === "",
-    )
-  ) {
+  if ([entryPrice, bottomRange, topRange].some((v) => v.trim() === "")) {
     return null;
   }
-  const rangeDown = Number(form.bottomRange);
-  const rangeUp = Number(form.topRange);
+  const rangeDown = Number(bottomRange);
+  const rangeUp = Number(topRange);
   return computePositionIL(
     {
-      entryPrice: Number(form.entryPrice),
+      entryPrice: Number(entryPrice),
       rangeDown,
       rangeUp,
-      deposited: formDeposited(form),
-      token0Count: num(form.token1Count),
-      token1Count: num(form.token2Count),
+      deposited: formDeposited(token1Count, entryPrice, token2Count, deposited),
+      token0Count: num(token1Count),
+      token1Count: num(token2Count),
     },
     side === "down" ? rangeDown : rangeUp,
   );
@@ -319,7 +328,12 @@ function buildRecords(
 
   // Stored deposited is a cache of the derived value — rewritten on every
   // Add/Edit save so storage stays in sync with the computed truth.
-  const deposited = formDeposited(form);
+  const deposited = formDeposited(
+    form.token1Count,
+    form.entryPrice,
+    form.token2Count,
+    form.deposited,
+  );
   const sGain = optionalNum(form.shortGain);
   const sLoss = optionalNum(form.shortLoss);
   const sFunding = optionalNum(form.shortFundingFees);
@@ -328,8 +342,24 @@ function buildRecords(
   // stale — readers must always prefer live recomputation via
   // computePositionIL and only fall back to these on corrupt/incomplete
   // records.
-  const upIL = tryComputeIL(form, "up");
-  const downIL = tryComputeIL(form, "down");
+  const upIL = tryComputeIL(
+    form.entryPrice,
+    form.bottomRange,
+    form.topRange,
+    form.token1Count,
+    form.token2Count,
+    form.deposited,
+    "up",
+  );
+  const downIL = tryComputeIL(
+    form.entryPrice,
+    form.bottomRange,
+    form.topRange,
+    form.token1Count,
+    form.token2Count,
+    form.deposited,
+    "down",
+  );
   const ooUp = upIL ? upIL.lpValue : null;
   const ooDown = downIL ? downIL.lpValue : null;
 
@@ -410,7 +440,6 @@ function buildRecords(
 }
 
 export default function PositionsPage() {
-  const [hydrated, setHydrated] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
@@ -421,10 +450,7 @@ export default function PositionsPage() {
     setClaims(getClaims());
   };
 
-  useEffect(() => {
-    refresh();
-    setHydrated(true);
-  }, []);
+  const hydrated = useHydrated(refresh);
 
   const active = hydrated
     ? derive(positions.filter((p) => p.status === "active"), claims)
@@ -1141,7 +1167,16 @@ function PositionFormModal({
   );
 
   const downsideIL = useMemo(
-    () => tryComputeIL(form, "down"),
+    () =>
+      tryComputeIL(
+        form.entryPrice,
+        form.bottomRange,
+        form.topRange,
+        form.token1Count,
+        form.token2Count,
+        form.deposited,
+        "down",
+      ),
     [
       form.entryPrice,
       form.bottomRange,
@@ -1152,7 +1187,16 @@ function PositionFormModal({
     ],
   );
   const upsideIL = useMemo(
-    () => tryComputeIL(form, "up"),
+    () =>
+      tryComputeIL(
+        form.entryPrice,
+        form.bottomRange,
+        form.topRange,
+        form.token1Count,
+        form.token2Count,
+        form.deposited,
+        "up",
+      ),
     [
       form.entryPrice,
       form.bottomRange,
@@ -1165,7 +1209,13 @@ function PositionFormModal({
 
   // Deposited USD is display-only, always derived from the three inputs.
   const effectiveDeposited = useMemo(
-    () => formDeposited(form),
+    () =>
+      formDeposited(
+        form.token1Count,
+        form.entryPrice,
+        form.token2Count,
+        form.deposited,
+      ),
     [form.token1Count, form.entryPrice, form.token2Count, form.deposited],
   );
 

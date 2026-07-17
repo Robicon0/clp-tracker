@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { getClaims, getPositions } from "../lib/storage";
+import { useHydrated } from "../lib/useHydrated";
 import {
   calcDaysActive,
   calcFeeAPR,
@@ -175,15 +176,13 @@ function recentClaims(claims: FeeClaim[]): FeeClaim[] {
 }
 
 export default function DashboardPage() {
-  const [hydrated, setHydrated] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
 
-  useEffect(() => {
+  const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
-    setHydrated(true);
-  }, []);
+  });
 
   const summary = hydrated
     ? calcPortfolioSummary(positions, claims)

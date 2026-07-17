@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { getPositions } from "../../lib/storage";
 import {
   computePositionIL,
   getEffectiveDeposited,
   type ILResult,
 } from "../../lib/calculations";
+import { useHydrated } from "../../lib/useHydrated";
 import type { Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -111,15 +112,13 @@ function derive(positions: Position[]): DerivedPosition[] {
 type StatusFilter = "all" | "active" | "closed";
 
 export default function PoolPnlPage() {
-  const [hydrated, setHydrated] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  const hydrated = useHydrated(() => {
     setPositions(getPositions());
-    setHydrated(true);
-  }, []);
+  });
 
   const rows = useMemo(() => {
     if (!hydrated) return [];

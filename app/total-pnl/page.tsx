@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { getClaims, getPositions } from "../../lib/storage";
 import {
   calcDaysActive,
@@ -11,6 +11,7 @@ import {
   getEffectiveDeposited,
   getEffectiveTotalFees,
 } from "../../lib/calculations";
+import { useHydrated } from "../../lib/useHydrated";
 import type { FeeClaim, Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -263,15 +264,13 @@ function buildMonthRows(claims: FeeClaim[], positions: Position[]): MonthRow[] {
 }
 
 export default function TotalPnlPage() {
-  const [hydrated, setHydrated] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
 
-  useEffect(() => {
+  const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
-    setHydrated(true);
-  }, []);
+  });
 
   const totals = useMemo(
     () =>

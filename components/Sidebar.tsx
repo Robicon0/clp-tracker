@@ -8,7 +8,8 @@ import {
   getPositions,
   getTransfers,
 } from "../lib/storage";
-import { calcTotalFees } from "../lib/calculations";
+import { getEffectiveDeposited, getEffectiveTotalFees } from "../lib/calculations";
+import { useHydrated } from "../lib/useHydrated";
 import type { FeeClaim, Position, Transfer } from "../lib/types";
 
 interface NavItem {
@@ -38,14 +39,17 @@ interface PortfolioStatus {
   hasData: boolean;
 }
 
-function computePortfolioStatus(positions: Position[]): PortfolioStatus {
+function computePortfolioStatus(
+  positions: Position[],
+  allClaims: FeeClaim[],
+): PortfolioStatus {
   if (positions.length === 0) {
     return { state: "neutral", netPnl: 0, hasData: false };
   }
   let netPnl = 0;
   for (const p of positions) {
-    netPnl += p.currentBalance - p.deposited;
-    netPnl += calcTotalFees(p.claimed, p.newFees);
+    netPnl += p.currentBalance - getEffectiveDeposited(p);
+    netPnl += getEffectiveTotalFees(p, allClaims);
     if (p.shortTotal !== null && Number.isFinite(p.shortTotal)) {
       netPnl += p.shortTotal;
     }
@@ -68,19 +72,19 @@ function formatUsd(value: number): string {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [hydrated, setHydrated] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
 
+  const load = () => {
+    setPositions(getPositions());
+    setClaims(getClaims());
+    setTransfers(getTransfers());
+  };
+
+  const hydrated = useHydrated(load);
+
   useEffect(() => {
-    const load = () => {
-      setPositions(getPositions());
-      setClaims(getClaims());
-      setTransfers(getTransfers());
-    };
-    load();
-    setHydrated(true);
     const onStorage = (e: StorageEvent) => {
       if (
         e.key === null ||
@@ -95,9 +99,12 @@ export function Sidebar() {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Re-read on navigation so same-tab saves are reflected.
+  // Re-read on navigation so same-tab saves are reflected. Reads localStorage
+  // (an external system) in response to a changed prop, the same "sync with
+  // an external store" case the lint rule can't distinguish from a cascade.
   useEffect(() => {
     if (!hydrated) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
@@ -113,8 +120,8 @@ export function Sidebar() {
   );
 
   const status = useMemo(
-    () => (hydrated ? computePortfolioStatus(positions) : null),
-    [hydrated, positions],
+    () => (hydrated ? computePortfolioStatus(positions, claims) : null),
+    [hydrated, positions, claims],
   );
 
   return (

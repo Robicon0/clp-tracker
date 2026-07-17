@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { getClaims, getPositions, saveClaims } from "../../lib/storage";
+import { useHydrated } from "../../lib/useHydrated";
 import {
   calcDaysActive,
   calcFeeAPR,
@@ -78,7 +79,6 @@ const EMPTY_FILTERS: FilterState = {
 };
 
 export default function ClaimsPage() {
-  const [hydrated, setHydrated] = useState(false);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
@@ -90,10 +90,7 @@ export default function ClaimsPage() {
     setPositions(getPositions());
   };
 
-  useEffect(() => {
-    refresh();
-    setHydrated(true);
-  }, []);
+  const hydrated = useHydrated(refresh);
 
   const platformOptions = useMemo(() => {
     const set = new Set<string>();

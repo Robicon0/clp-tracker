@@ -15,6 +15,7 @@ import {
   getTransfers,
   saveTransfers,
 } from "../../lib/storage";
+import { useHydrated } from "../../lib/useHydrated";
 import type { AppSettings, Position, Transfer } from "../../lib/types";
 
 type TransferType = Transfer["transferType"];
@@ -139,7 +140,6 @@ type ModalState =
 type TypeFilter = "all" | TransferType;
 
 export default function TransfersPage() {
-  const [hydrated, setHydrated] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -153,10 +153,7 @@ export default function TransfersPage() {
     setPositions(getPositions());
   };
 
-  useEffect(() => {
-    refresh();
-    setHydrated(true);
-  }, []);
+  const hydrated = useHydrated(refresh);
 
   const positionPairById = useMemo(() => {
     const map = new Map<string, string>();

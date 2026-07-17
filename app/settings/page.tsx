@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, useRef, useState } from "react";
 import {
   getClaims,
   getPositions,
@@ -10,6 +10,12 @@ import {
   saveSettings,
 } from "../../lib/storage";
 import { exportCSV, parseCSV } from "../../lib/csv";
+import {
+  calcTotalFees,
+  getEffectiveClaimed,
+  getEffectiveDeposited,
+} from "../../lib/calculations";
+import { useHydrated } from "../../lib/useHydrated";
 import type { AppSettings, FeeClaim, Position, Transfer } from "../../lib/types";
 
 const STORAGE_KEYS = [
@@ -66,19 +72,24 @@ function splitPair(combined: string): { pair: string; feeTier: string } {
   return { pair: combined, feeTier: "" };
 }
 
-function positionToCsvRow(p: Position): Record<string, string | number | null> {
+function positionToCsvRow(
+  p: Position,
+  allClaims: FeeClaim[],
+): Record<string, string | number | null> {
   const { pair, feeTier } = splitPair(p.pair);
+  const deposited = getEffectiveDeposited(p);
+  const claimed = getEffectiveClaimed(p, allClaims);
   return {
     Pair: pair,
     "Fee Tier": feeTier,
     Chain: p.chain,
     Protocol: p.protocol,
     "Entry Date": p.entryDatetime,
-    "Deposited (USD)": p.deposited,
+    "Deposited (USD)": deposited,
     "Current Balance": p.currentBalance,
     "New Fees": p.newFees,
-    Claimed: p.claimed,
-    "Total Fees": p.totalFees,
+    Claimed: claimed,
+    "Total Fees": calcTotalFees(claimed, p.newFees),
     "Entry Price": p.entryPrice,
     "Range Down": p.bottomRange,
     "Range Up": p.topRange,
@@ -227,7 +238,6 @@ function readKey(key: string): unknown {
 }
 
 export default function SettingsPage() {
-  const [hydrated, setHydrated] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [importState, setImportState] = useState<ImportState>({ kind: "idle" });
   const [csvImportState, setCsvImportState] = useState<CsvImportState>({
@@ -237,10 +247,9 @@ export default function SettingsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  const hydrated = useHydrated(() => {
     setSettings(getSettings());
-    setHydrated(true);
-  }, []);
+  });
 
   const updateTransfersEnabled = (next: boolean) => {
     const updated: AppSettings = { ...settings, transfersEnabled: next };
@@ -306,7 +315,8 @@ export default function SettingsPage() {
   };
 
   const handleExportPositionsCsv = () => {
-    const rows = getPositions().map(positionToCsvRow);
+    const allClaims = getClaims();
+    const rows = getPositions().map((p) => positionToCsvRow(p, allClaims));
     exportCSV(`clp-positions-${todayDate()}.csv`, rows);
   };
 
