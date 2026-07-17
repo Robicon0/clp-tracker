@@ -276,10 +276,29 @@ at the plan gate.
   Google Sheet ID). tsc/build/lint all clean; Sidebar + CSV export
   fixes verified live in-browser with a seeded position/claim pair
   whose stored vs. derived values deliberately diverged.
+- Live-site formula verification session (2026-07-17, no code
+  changes): exercised Add Position, Claim, and Close-with-fees
+  flows end-to-end on production (clp-tracker-two.vercel.app)
+  with temporary seed entries, verified every displayed metric
+  against hand calculations — Deposited derivation, Wide Range %,
+  Fee APR (active + closed), active profit (price diff + fees),
+  closed profit (scalp + fees), IL/out-of-range projections
+  (exact CLMM math), claim → position sync on both seed and real
+  positions, and cross-page consistency of fees/LP P&L/Net P&L
+  across Dashboard, Claims, Pool P&L, Total P&L, and Sidebar.
+  Zero console errors. Seed entries removed afterward; user data
+  untouched. Sprint 6 Phase A deferred by Osho at the gate.
 
 ## Known Issues
 
-[Empty — to be populated as issues are identified]
+- Exit-before-entry dates accepted: the position form does not
+  warn when exit datetime is earlier than entry datetime. The app
+  clamps Days Active to 0 (so APR shows 0% instead of breaking),
+  but the bad dates persist silently. Seen on a real closed
+  SOL/USDC position (entry 2026-07-11, exit 2026-07-04).
+  Candidate fix: plausibility warning in Add/Edit/Close forms
+  (Invariant #8). Any user worldwide who mistypes a date hits
+  this.
 
 ## Architecture Notes
 
