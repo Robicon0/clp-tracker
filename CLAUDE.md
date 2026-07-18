@@ -303,7 +303,7 @@ at the plan gate.
   calculations; token totals agree with the summary cards
   (Invariant #6).
 
-- Out of Range Projection Accuracy fix (Phase B) [44aa138]:
+- Out of Range Projection Accuracy fix (Phase B) [79a2d1f]:
   Fixed Out of Range projection accuracy bug — liquidity (L) now
   derived from both token amounts (quadratic method) when position
   is two-sided and in-range, eliminating entry-price-drift
