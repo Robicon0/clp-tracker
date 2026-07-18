@@ -67,6 +67,18 @@ export interface Transfer {
   notes: string;
 }
 
+// Money taken OUT of the business for personal/other use (Sprint 10).
+// Distinct from Transfer (which moves money between protocols/destinations
+// but keeps it in the business). Withdrawals draw down Available Balance;
+// Lifetime Earned (Σ transfers) is never reduced by them.
+export interface Withdrawal {
+  id: string;
+  date: string;
+  amount: number;
+  method: string;
+  notes: string;
+}
+
 export interface LPRange {
   id: string;
   positionId: string;

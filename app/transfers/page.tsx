@@ -13,10 +13,17 @@ import {
   getPositions,
   getSettings,
   getTransfers,
+  getWithdrawals,
   saveTransfers,
+  saveWithdrawals,
 } from "../../lib/storage";
 import { useHydrated } from "../../lib/useHydrated";
-import type { AppSettings, Position, Transfer } from "../../lib/types";
+import type {
+  AppSettings,
+  Position,
+  Transfer,
+  Withdrawal,
+} from "../../lib/types";
 
 type TransferType = Transfer["transferType"];
 
@@ -139,21 +146,61 @@ function buildTransfer(id: string, form: TransferFormState): Transfer {
 type ModalState =
   | { kind: "none" }
   | { kind: "add" }
-  | { kind: "edit"; transfer: Transfer };
+  | { kind: "edit"; transfer: Transfer }
+  | { kind: "addWithdrawal" }
+  | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
 type TypeFilter = "all" | TransferType;
+
+interface WithdrawalFormState {
+  date: string;
+  amount: string;
+  method: string;
+  notes: string;
+}
+
+const EMPTY_WITHDRAWAL_FORM: WithdrawalFormState = {
+  date: "",
+  amount: "",
+  method: "",
+  notes: "",
+};
+
+function withdrawalToForm(w: Withdrawal): WithdrawalFormState {
+  return {
+    date: w.date.slice(0, 10),
+    amount: String(w.amount),
+    method: w.method,
+    notes: w.notes,
+  };
+}
+
+function buildWithdrawal(id: string, form: WithdrawalFormState): Withdrawal {
+  return {
+    id,
+    date: form.date,
+    amount: num(form.amount),
+    method: form.method.trim().toUpperCase(),
+    notes: form.notes.trim().toUpperCase(),
+  };
+}
 
 export default function TransfersPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingWithdrawalDelete, setPendingWithdrawalDelete] = useState<
+    string | null
+  >(null);
 
   const refresh = () => {
     setSettings(getSettings());
     setTransfers(getTransfers());
+    setWithdrawals(getWithdrawals());
     setPositions(getPositions());
   };
 
@@ -243,6 +290,54 @@ export default function TransfersPage() {
     setPendingDelete(null);
   };
 
+  // Balance ledger (Money Flow invariant): Lifetime Earned = Σ transfers
+  // (every fee moved to a destination), Withdrawn = Σ withdrawals taken out
+  // for personal use, Available Balance = the difference. Withdrawals never
+  // reduce Lifetime Earned — only what's still available.
+  const balance = useMemo(() => {
+    const lifetimeEarned = transfers.reduce((sum, t) => sum + t.amount, 0);
+    const withdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
+    return {
+      lifetimeEarned,
+      withdrawn,
+      available: lifetimeEarned - withdrawn,
+    };
+  }, [transfers, withdrawals]);
+
+  const sortedWithdrawals = useMemo(
+    () =>
+      [...withdrawals].sort((a, b) => {
+        const ta = new Date(a.date).getTime();
+        const tb = new Date(b.date).getTime();
+        return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+      }),
+    [withdrawals],
+  );
+
+  const handleAddWithdrawal = (form: WithdrawalFormState) => {
+    saveWithdrawals([...getWithdrawals(), buildWithdrawal(newId(), form)]);
+    refresh();
+    setModal({ kind: "none" });
+  };
+
+  const handleEditWithdrawal = (
+    target: Withdrawal,
+    form: WithdrawalFormState,
+  ) => {
+    const updated = buildWithdrawal(target.id, form);
+    saveWithdrawals(
+      getWithdrawals().map((w) => (w.id === target.id ? updated : w)),
+    );
+    refresh();
+    setModal({ kind: "none" });
+  };
+
+  const handleDeleteWithdrawal = (id: string) => {
+    saveWithdrawals(getWithdrawals().filter((w) => w.id !== id));
+    refresh();
+    setPendingWithdrawalDelete(null);
+  };
+
   const transfersEnabled = !hydrated ? true : settings?.transfersEnabled !== false;
 
   return (
@@ -269,7 +364,14 @@ export default function TransfersPage() {
         </div>
       ) : (
         <>
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setModal({ kind: "addWithdrawal" })}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)]"
+            >
+              Record Withdrawal
+            </button>
             <button
               type="button"
               onClick={() => setModal({ kind: "add" })}
@@ -277,6 +379,25 @@ export default function TransfersPage() {
             >
               Add Transfer
             </button>
+          </div>
+
+          {/* Money Flow ledger: earned (grows forever) − withdrawn = available now. */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <SummaryStat
+              label="Lifetime Earned (USD)"
+              value={formatUsd(balance.lifetimeEarned)}
+              hint="Everything ever moved to a destination — never decreases."
+            />
+            <SummaryStat
+              label="Withdrawn (USD)"
+              value={formatUsd(balance.withdrawn)}
+              hint="Money taken out for personal / other use."
+            />
+            <SummaryStat
+              label="Available Balance (USD)"
+              value={formatUsd(balance.available)}
+              hint="Lifetime Earned − Withdrawn = what you have now."
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -456,6 +577,111 @@ export default function TransfersPage() {
             )}
           </div>
 
+          {withdrawals.length > 0 && (
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+              <div className="border-b border-[var(--border)] px-5 py-4">
+                <h2 className="text-sm font-semibold tracking-tight">
+                  Withdrawals
+                </h2>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  Money taken out of the business for personal or other use.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+                  <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-medium">Date</th>
+                      <th className="px-4 py-3 text-right font-medium">
+                        Amount
+                      </th>
+                      <th className="px-4 py-3 text-left font-medium">Method</th>
+                      <th className="px-4 py-3 text-left font-medium">Notes</th>
+                      <th className="px-4 py-3 text-right font-medium">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {sortedWithdrawals.map((w) => (
+                      <tr
+                        key={w.id}
+                        className="transition-colors hover:bg-[var(--surface-2)]/60"
+                      >
+                        <td className="px-4 py-3 text-[var(--muted)] tabular-nums">
+                          {formatDateDDMMYYYY(w.date)}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {formatUsd(w.amount)}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--foreground)]">
+                          {w.method || "—"}
+                        </td>
+                        <td className="px-4 py-3 max-w-xs truncate text-[var(--muted)]">
+                          {w.notes || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {pendingWithdrawalDelete === w.id ? (
+                            <div className="inline-flex items-center gap-2">
+                              <span className="text-xs text-[var(--muted)]">
+                                Delete this withdrawal?
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteWithdrawal(w.id)}
+                                className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingWithdrawalDelete(null)}
+                                className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setModal({
+                                    kind: "editWithdrawal",
+                                    withdrawal: w,
+                                  })
+                                }
+                                className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingWithdrawalDelete(w.id)}
+                                className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
+                    <tr className="font-semibold">
+                      <td className="px-4 py-3">Total Withdrawn</td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {formatUsd(balance.withdrawn)}
+                      </td>
+                      <td className="px-4 py-3" colSpan={3} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
           {modal.kind === "add" && (
             <TransferFormModal
               title="Add Transfer"
@@ -474,6 +700,24 @@ export default function TransfersPage() {
               positions={positions}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(form) => handleEdit(modal.transfer, form)}
+            />
+          )}
+          {modal.kind === "addWithdrawal" && (
+            <WithdrawalFormModal
+              title="Record Withdrawal"
+              submitLabel="Record Withdrawal"
+              initial={{ ...EMPTY_WITHDRAWAL_FORM, date: todayDateInput() }}
+              onCancel={() => setModal({ kind: "none" })}
+              onSubmit={handleAddWithdrawal}
+            />
+          )}
+          {modal.kind === "editWithdrawal" && (
+            <WithdrawalFormModal
+              title="Edit Withdrawal"
+              submitLabel="Save Changes"
+              initial={withdrawalToForm(modal.withdrawal)}
+              onCancel={() => setModal({ kind: "none" })}
+              onSubmit={(form) => handleEditWithdrawal(modal.withdrawal, form)}
             />
           )}
         </>
@@ -550,9 +794,10 @@ function GroupTable({
 interface SummaryStatProps {
   label: string;
   value: string;
+  hint?: string;
 }
 
-function SummaryStat({ label, value }: SummaryStatProps) {
+function SummaryStat({ label, value, hint }: SummaryStatProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
@@ -561,6 +806,7 @@ function SummaryStat({ label, value }: SummaryStatProps) {
       <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
         {value}
       </div>
+      {hint && <div className="mt-1 text-xs text-[var(--muted)]">{hint}</div>}
     </div>
   );
 }
@@ -890,6 +1136,93 @@ function TransferFormModal({
                 className={inputClass}
                 value={form.notes}
                 onChange={upper("notes")}
+              />
+            </Field>
+          </div>
+        </Section>
+        <FormActions onCancel={onCancel} submitLabel={submitLabel} />
+      </form>
+    </ModalShell>
+  );
+}
+
+interface WithdrawalFormModalProps {
+  title: string;
+  submitLabel: string;
+  initial: WithdrawalFormState;
+  onCancel: () => void;
+  onSubmit: (form: WithdrawalFormState) => void;
+}
+
+function WithdrawalFormModal({
+  title,
+  submitLabel,
+  initial,
+  onCancel,
+  onSubmit,
+}: WithdrawalFormModalProps) {
+  const [form, setForm] = useState<WithdrawalFormState>(initial);
+
+  const set = <K extends keyof WithdrawalFormState>(
+    key: K,
+    value: WithdrawalFormState[K],
+  ) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    onSubmit(form);
+  };
+
+  return (
+    <ModalShell title={title} onCancel={onCancel}>
+      <form onSubmit={submit} className="divide-y divide-[var(--border)]">
+        <Section title="Withdrawal Details">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Date" htmlFor="w_date">
+              <input
+                id="w_date"
+                type="date"
+                required
+                className={inputClass}
+                style={{ colorScheme: "dark" }}
+                value={form.date}
+                onChange={(e) => set("date", e.target.value)}
+              />
+            </Field>
+            <Field label="Amount (USD)" htmlFor="w_amount">
+              <input
+                id="w_amount"
+                type="number"
+                step="any"
+                required
+                className={inputClass}
+                placeholder="0.00"
+                value={form.amount}
+                onChange={(e) => set("amount", e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Method"
+              htmlFor="w_method"
+              hint="Where it went — Bank, Personal Wallet, etc."
+            >
+              <input
+                id="w_method"
+                className={inputClass}
+                placeholder="BANK"
+                value={form.method}
+                onChange={(e) => set("method", e.target.value.toUpperCase())}
+              />
+            </Field>
+          </div>
+          <div className="mt-4">
+            <Field label="Notes" htmlFor="w_notes">
+              <textarea
+                id="w_notes"
+                rows={2}
+                className={inputClass}
+                value={form.notes}
+                onChange={(e) => set("notes", e.target.value.toUpperCase())}
               />
             </Field>
           </div>

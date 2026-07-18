@@ -228,7 +228,6 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
-- Sprint 10: Withdrawals Page (new)
 - Sprint 11: Predictive Out-of-Range Display
 
 ## Recent Shipped Sprints
@@ -370,6 +369,29 @@ at the plan gate.
   shows current $225 but basis/P&L "—" (not an inflated +$75),
   totals 625/420/-20, warning banner rendered; zero console
   errors; seeds removed. tsc/lint/build clean.
+- Sprint 10: Withdrawals + Available Balance on Transfers page
+  (2026-07-18). Phase A: no Withdrawals sheet exists — Osho
+  clarified their real model lives IN the Transfers sheet: per
+  token, NET TOTAL (SUM incl. the pink period-subtotal row) =
+  lifetime earned (never decreases), TOTAL (SUM of fresh rows
+  only) = what's available now, and the pink subtotal rows =
+  money "used"/taken out; difference = withdrawn. Confirmed model
+  with Osho then gate-approved: Lifetime Earned − Withdrawn =
+  Available Balance, fields date/amount/method/notes, placed on
+  the Transfers page (not a separate page). Shipped: Withdrawal
+  type (lib/types.ts) + clp_withdrawals storage (get/save,
+  included in Settings JSON backup keys); Transfers page — three
+  balance cards (Lifetime Earned = Σ transfers / Withdrawn = Σ
+  withdrawals / Available = difference), "Record Withdrawal"
+  button + WithdrawalFormModal (date/amount/method/notes), a
+  Withdrawals table with Total Withdrawn footer and edit/delete
+  (separate pendingWithdrawalDelete confirm state). Withdrawals
+  never reduce Lifetime Earned — only Available (Money Flow
+  invariant #2). Verified on localhost:3001: transfers
+  100/50/200 → Lifetime Earned 350; a 120 withdrawal → Withdrawn
+  120, Available 230; recording a further 30 via the modal →
+  Withdrawn 150, Available 200, Lifetime Earned stayed 350;
+  zero console errors; seeds removed. tsc/lint/build clean.
 - Sprint 9: Extended Transfers Page (2026-07-18). Phase A read
   the Transfers sheet directly: per-token blocks (BTC/ETH-BTC/
   SOL/SUI…) with columns Fees(amount)/DATE/Platform(source)/

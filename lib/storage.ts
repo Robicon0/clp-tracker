@@ -5,6 +5,7 @@ import type {
   PoolPnLEntry,
   Position,
   Transfer,
+  Withdrawal,
 } from "./types";
 
 const KEYS = {
@@ -16,6 +17,7 @@ const KEYS = {
   poolPnl: "clp_pool_pnl",
   businessPnl: "clp_business_pnl",
   priceCache: "clp_price_cache",
+  withdrawals: "clp_withdrawals",
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -74,6 +76,14 @@ export function getTransfers(): Transfer[] {
 
 export function saveTransfers(transfers: Transfer[]): void {
   writeValue(KEYS.transfers, transfers);
+}
+
+export function getWithdrawals(): Withdrawal[] {
+  return readArray<Withdrawal>(KEYS.withdrawals);
+}
+
+export function saveWithdrawals(withdrawals: Withdrawal[]): void {
+  writeValue(KEYS.withdrawals, withdrawals);
 }
 
 export function getSettings(): AppSettings {

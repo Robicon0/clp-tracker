@@ -25,6 +25,7 @@ const STORAGE_KEYS = [
   "clp_ranges",
   "clp_pool_pnl",
   "clp_business_pnl",
+  "clp_withdrawals",
 ] as const;
 
 const APP_VERSION = "v1.0.0";
