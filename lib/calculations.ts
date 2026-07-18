@@ -155,11 +155,25 @@ export function calcIL(
   const t0 = toFinite(token0Count);
   const t1 = toFinite(token1Count);
   let L: number;
-  if (t1 > 0 && t1pL > 0) {
+  if (t0 > 0 && t1 > 0 && t0pL > 0 && t1pL > 0) {
+    // Case 1 — two-sided position with entry price inside the range.
+    // Solve for L using BOTH token amounts simultaneously (quadratic
+    // method), removing the single-side entry-price sensitivity that
+    // amplified out-of-range projections when Deposited USD / entry
+    // price drifted from the actual on-chain valuation.
+    //   A·L² − B·L − C = 0, positive root only.
+    const A = 1 - spa / spb;
+    const B = t0 * spa + t1 / spb;
+    const C = t0 * t1;
+    L = A > 0 ? (B + Math.sqrt(B * B + 4 * A * C)) / (2 * A) : 0;
+  } else if (t1 > 0 && t1pL > 0) {
+    // Case 2 — single-sided (quote only) or entry outside range.
     L = t1 / t1pL;
   } else if (t0 > 0 && t0pL > 0) {
+    // Case 2 — single-sided (base only) or entry outside range.
     L = t0 / t0pL;
   } else {
+    // Case 3 — legacy records with no token counts: value-based fallback.
     L = vpL > 0 ? inv / vpL : 0;
   }
   const it0 = L * t0pL;

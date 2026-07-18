@@ -303,6 +303,24 @@ at the plan gate.
   calculations; token totals agree with the summary cards
   (Invariant #6).
 
+- Out of Range Projection Accuracy fix (Phase B) [44aa138]:
+  Fixed Out of Range projection accuracy bug — liquidity (L) now
+  derived from both token amounts (quadratic method) when position
+  is two-sided and in-range, eliminating entry-price-drift
+  amplification. Single-sided and out-of-range cases unchanged.
+  In lib/calculations.ts calcIL, the L-derivation now has three
+  cases: Case 1 (both token counts > 0 AND entry inside range)
+  solves A·L² − B·L − C = 0 with A = 1 − √rangeDown/√rangeUp,
+  B = amount0·√rangeDown + amount1/√rangeUp, C = amount0·amount1,
+  positive root only; Case 2 (single-sided or entry outside range)
+  keeps the Sprint 3 quote-first / base-second logic; Case 3
+  (legacy, no token counts) keeps the inv/vpL fallback. Verified
+  live: ZEC/USDC (entry 462.9, range 420–503.35, ZEC 4.2725565,
+  USDC 2188.56) now shows OOR Upside $4,248.90 (was $4,160.97);
+  single-sided cases numerically unchanged. computePositionIL
+  output shape unchanged — Add/Edit modal, Net Coverage, Pool P&L
+  OOR columns unaffected. tsc/build clean.
+
 ## Known Issues
 
 - Exit-before-entry dates accepted: the position form does not
