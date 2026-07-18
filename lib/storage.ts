@@ -65,7 +65,11 @@ export function saveClaims(claims: FeeClaim[]): void {
 }
 
 export function getTransfers(): Transfer[] {
-  return readArray<Transfer>(KEYS.transfers);
+  // Backfill destination for legacy records saved before Sprint 9.
+  return readArray<Transfer>(KEYS.transfers).map((t) => ({
+    ...t,
+    destination: typeof t.destination === "string" ? t.destination : "",
+  }));
 }
 
 export function saveTransfers(transfers: Transfer[]): void {

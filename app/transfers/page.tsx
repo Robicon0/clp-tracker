@@ -93,6 +93,7 @@ interface TransferFormState {
   token: string;
   amount: string;
   platform: string;
+  destination: string;
   transferType: TransferType;
   notes: string;
 }
@@ -103,6 +104,7 @@ const EMPTY_FORM: TransferFormState = {
   token: "",
   amount: "",
   platform: "",
+  destination: "",
   transferType: "fees",
   notes: "",
 };
@@ -114,6 +116,7 @@ function transferToForm(t: Transfer): TransferFormState {
     token: t.token,
     amount: String(t.amount),
     platform: t.platform,
+    destination: t.destination,
     transferType: t.transferType,
     notes: t.notes,
   };
@@ -127,6 +130,7 @@ function buildTransfer(id: string, form: TransferFormState): Transfer {
     token: form.token.trim().toUpperCase(),
     amount: num(form.amount),
     platform: form.platform.trim().toUpperCase(),
+    destination: form.destination.trim().toUpperCase(),
     transferType: form.transferType,
     notes: form.notes.trim().toUpperCase(),
   };
@@ -185,6 +189,37 @@ export default function TransfersPage() {
       breakdown[t.transferType] += 1;
     }
     return { count: transfers.length, amount, breakdown };
+  }, [transfers]);
+
+  // Per-token NET TOTAL (Σ amount moved out of that token), mirroring the
+  // sheet's per-token blocks. Sorted by amount so the biggest movers lead.
+  const byToken = useMemo(() => {
+    const map = new Map<string, { token: string; count: number; amount: number }>();
+    for (const t of transfers) {
+      const token = t.token || "—";
+      const row = map.get(token) ?? { token, count: 0, amount: 0 };
+      row.count += 1;
+      row.amount += t.amount;
+      map.set(token, row);
+    }
+    return [...map.values()].sort((a, b) => b.amount - a.amount);
+  }, [transfers]);
+
+  // Per-destination breakdown (where the money went — RAKA, AAVE, …).
+  // Transfers with no destination yet are grouped under "Unspecified".
+  const byDestination = useMemo(() => {
+    const map = new Map<
+      string,
+      { destination: string; count: number; amount: number }
+    >();
+    for (const t of transfers) {
+      const destination = t.destination || "Unspecified";
+      const row = map.get(destination) ?? { destination, count: 0, amount: 0 };
+      row.count += 1;
+      row.amount += t.amount;
+      map.set(destination, row);
+    }
+    return [...map.values()].sort((a, b) => b.amount - a.amount);
   }, [transfers]);
 
   const handleAdd = (form: TransferFormState) => {
@@ -247,11 +282,40 @@ export default function TransfersPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <SummaryStat label="Total Transfers" value={String(totals.count)} />
             <SummaryStat
-              label="Total Amount Transferred (USD)"
+              label="Transfers Net Total (USD)"
               value={formatUsd(totals.amount)}
             />
             <BreakdownStat breakdown={totals.breakdown} />
           </div>
+
+          {byToken.length > 0 && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <GroupTable
+                title="By Token"
+                subtitle="Net total moved out per token."
+                columnLabel="Token"
+                rows={byToken.map((r) => ({
+                  key: r.token,
+                  label: r.token,
+                  count: r.count,
+                  amount: r.amount,
+                }))}
+                total={totals.amount}
+              />
+              <GroupTable
+                title="By Destination"
+                subtitle="Where the money went."
+                columnLabel="Destination"
+                rows={byDestination.map((r) => ({
+                  key: r.destination,
+                  label: r.destination,
+                  count: r.count,
+                  amount: r.amount,
+                }))}
+                total={totals.amount}
+              />
+            </div>
+          )}
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
             <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -301,6 +365,9 @@ export default function TransfersPage() {
                         Platform
                       </th>
                       <th className="px-4 py-3 text-left font-medium">
+                        Destination
+                      </th>
+                      <th className="px-4 py-3 text-left font-medium">
                         Transfer Type
                       </th>
                       <th className="px-4 py-3 text-left font-medium">Notes</th>
@@ -329,6 +396,9 @@ export default function TransfersPage() {
                         </td>
                         <td className="px-4 py-3 text-[var(--muted)]">
                           {t.platform}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-[var(--foreground)]">
+                          {t.destination || "—"}
                         </td>
                         <td className="px-4 py-3">
                           <TypePill type={t.transferType} />
@@ -409,6 +479,71 @@ export default function TransfersPage() {
         </>
       )}
     </section>
+  );
+}
+
+interface GroupRow {
+  key: string;
+  label: string;
+  count: number;
+  amount: number;
+}
+
+interface GroupTableProps {
+  title: string;
+  subtitle: string;
+  columnLabel: string;
+  rows: GroupRow[];
+  total: number;
+}
+
+function GroupTable({
+  title,
+  subtitle,
+  columnLabel,
+  rows,
+  total,
+}: GroupTableProps) {
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+      <div className="border-b border-[var(--border)] px-5 py-4">
+        <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+        <p className="mt-0.5 text-xs text-[var(--muted)]">{subtitle}</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+          <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
+            <tr>
+              <th className="px-4 py-3 text-left font-medium">{columnLabel}</th>
+              <th className="px-4 py-3 text-right font-medium">Transfers</th>
+              <th className="px-4 py-3 text-right font-medium">Net Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+            {rows.map((row) => (
+              <tr key={row.key}>
+                <td className="px-4 py-3 font-medium">{row.label}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
+                  {row.count}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums">
+                  {formatUsd(row.amount)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
+            <tr className="font-semibold">
+              <td className="px-4 py-3">Net Total</td>
+              <td className="px-4 py-3" />
+              <td className="px-4 py-3 text-right tabular-nums">
+                {formatUsd(total)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -713,7 +848,11 @@ function TransferFormModal({
                 onChange={(e) => set("amount", e.target.value)}
               />
             </Field>
-            <Field label="Platform" htmlFor="platform">
+            <Field
+              label="Platform (from)"
+              htmlFor="platform"
+              hint="Where the money came from."
+            >
               <input
                 id="platform"
                 required
@@ -721,6 +860,19 @@ function TransferFormModal({
                 placeholder="AAVE"
                 value={form.platform}
                 onChange={upper("platform")}
+              />
+            </Field>
+            <Field
+              label="Destination (to)"
+              htmlFor="destination"
+              hint="Where you moved it — optional."
+            >
+              <input
+                id="destination"
+                className={inputClass}
+                placeholder="RAKA"
+                value={form.destination}
+                onChange={upper("destination")}
               />
             </Field>
             <Field label="Transfer Type" htmlFor="transferType">

@@ -60,6 +60,9 @@ export interface Transfer {
   token: string;
   amount: number;
   platform: string;
+  // Where the money was moved TO (the sheet's TRANSFER column, e.g.
+  // "RAKA TEZ", "AAVE BASE"). Optional — legacy records default to "".
+  destination: string;
   transferType: "fees" | "undeployed" | "outOfRangeUpside";
   notes: string;
 }

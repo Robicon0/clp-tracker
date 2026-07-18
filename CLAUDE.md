@@ -228,7 +228,6 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
-- Sprint 9: Extended Transfers Page
 - Sprint 10: Withdrawals Page (new)
 - Sprint 11: Predictive Out-of-Range Display
 
@@ -371,6 +370,35 @@ at the plan gate.
   shows current $225 but basis/P&L "—" (not an inflated +$75),
   totals 625/420/-20, warning banner rendered; zero console
   errors; seeds removed. tsc/lint/build clean.
+- Sprint 9: Extended Transfers Page (2026-07-18). Phase A read
+  the Transfers sheet directly: per-token blocks (BTC/ETH-BTC/
+  SOL/SUI…) with columns Fees(amount)/DATE/Platform(source)/
+  TRANSFER(destination, e.g. RAKA TEZ, AAVE BASE), each block's
+  NET TOTAL = SUM(period-subtotal-row : end) = full sum of that
+  token's money moved out, plus a separate "LP Spare Money"
+  section (maps to transferType "undeployed"). The app's Transfer
+  model tracked platform (source) but NOT destination, and the
+  page only grouped by type with a flat total. Gate approved by
+  Osho: full scope (add destination + group by token with net
+  totals + per-destination breakdown + overall Transfers Net
+  Total card), existing transfers left blank/editable. Shipped:
+  added destination:string to Transfer type (lib/types.ts);
+  getTransfers backfills destination:"" for legacy records
+  (lib/storage.ts); transfers page — byToken and byDestination
+  useMemos (Σ amount + count, sorted desc; missing destination →
+  "Unspecified"), two GroupTable cards (By Token / By
+  Destination each with a Net Total footer), summary card renamed
+  to "Transfers Net Total" (= Σ all amounts, the Money Flow
+  invariant), Destination column in the All Transfers table
+  ("—" when blank), and Platform(from)/Destination(to) fields in
+  the add/edit form (destination optional). Settings CSV transfer
+  export gained a Destination column. Verified on localhost:3001
+  with seeded transfers incl. one legacy record lacking the
+  destination field: Net Total 675, By Token SUI 300/SOL 200/
+  ETH 175, By Destination RAKA 350/AAVE BASE 300/Unspecified 25,
+  legacy row shows "—" and groups under Unspecified; form shows
+  both fields; zero console errors; seeds removed. tsc/lint/build
+  clean.
 - Sprint 8.5: Auto-Fetch Token Prices (2026-07-18). First time
   CLP Tracker reaches the network. Gate approved by Osho: curated
   symbol→ID map + manual fallback, fetch on page load + manual

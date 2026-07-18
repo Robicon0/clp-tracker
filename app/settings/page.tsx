@@ -145,6 +145,7 @@ function transferToCsvRow(
     Token: t.token,
     Amount: t.amount,
     Platform: t.platform,
+    Destination: t.destination,
     "Transfer Type": t.transferType,
     Notes: t.notes,
   };
