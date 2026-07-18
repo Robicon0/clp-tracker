@@ -3,6 +3,7 @@
 import {
   type FormEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -11,9 +12,11 @@ import {
   getClaims,
   getPoolPnL,
   getPositions,
+  getPositionPrices,
   getRanges,
   savePoolPnL,
   savePositions,
+  savePositionPrices,
   saveRanges,
 } from "../../lib/storage";
 import {
@@ -21,6 +24,7 @@ import {
   calcFeeAPR,
   calcPositionProfit,
   calcPriceDiff,
+  calcRangeHealth,
   calcTotalFees,
   calcWideRangePercent,
   computePositionIL,
@@ -28,6 +32,7 @@ import {
   getEffectiveDeposited,
   getEffectiveTotalFees,
   type ILResult,
+  type RangeHealth,
 } from "../../lib/calculations";
 import {
   ClaimFormModal,
@@ -72,6 +77,17 @@ function nowDatetimeLocal(): string {
   const d = new Date();
   const off = d.getTimezoneOffset();
   return new Date(d.getTime() - off * 60_000).toISOString().slice(0, 16);
+}
+
+function formatUpdatedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "just now";
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function isoToDatetimeLocal(iso: string): string {
@@ -444,13 +460,117 @@ export default function PositionsPage() {
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [showClosed, setShowClosed] = useState(false);
+  const [fetchedPrices, setFetchedPrices] = useState<Record<string, number>>(
+    {},
+  );
+  const [positionPrices, setPositionPrices] = useState<Record<string, number>>(
+    {},
+  );
+  const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | null>(null);
+  const [priceLoading, setPriceLoading] = useState(false);
 
   const refresh = () => {
     setPositions(getPositions());
     setClaims(getClaims());
+    setPositionPrices(getPositionPrices());
   };
 
-  const hydrated = useHydrated(refresh);
+  // Fetch live USD prices for every token used by active positions, reusing
+  // the Sprint 8.5 /api/prices route. A pair's current price is then
+  // usd(base) / usd(quote), computed in currentPriceById below.
+  const refreshPrices = useCallback(async (allPositions: Position[]) => {
+    const symbols = new Set<string>();
+    for (const p of allPositions) {
+      if (p.status !== "active") continue;
+      const b = p.token1Symbol.trim().toUpperCase();
+      const q = p.token2Symbol.trim().toUpperCase();
+      if (b) symbols.add(b);
+      if (q) symbols.add(q);
+    }
+    if (symbols.size === 0) return;
+    setPriceLoading(true);
+    try {
+      const res = await fetch(
+        `/api/prices?symbols=${encodeURIComponent([...symbols].join(","))}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as {
+        prices: Record<string, number>;
+        updatedAt: string;
+      };
+      setFetchedPrices(data.prices ?? {});
+      setPriceUpdatedAt(data.updatedAt ?? new Date().toISOString());
+    } catch {
+      // Leave prices empty; positions fall back to manual current price.
+    } finally {
+      setPriceLoading(false);
+    }
+  }, []);
+
+  const hydrated = useHydrated(() => {
+    const loaded = getPositions();
+    setPositions(loaded);
+    setClaims(getClaims());
+    setPositionPrices(getPositionPrices());
+    void refreshPrices(loaded);
+  });
+
+  // Current pair price per position: manual override wins, else fetched
+  // base/quote ratio (stablecoin quote → base price directly). null = unknown.
+  const currentPriceById = useMemo(() => {
+    const STABLES = new Set(["USDC", "USDT", "DAI", "USD"]);
+    const map = new Map<string, number | null>();
+    for (const p of positions) {
+      const manual = positionPrices[p.id];
+      if (Number.isFinite(manual) && manual > 0) {
+        map.set(p.id, manual);
+        continue;
+      }
+      const base = p.token1Symbol.trim().toUpperCase();
+      const quote = p.token2Symbol.trim().toUpperCase();
+      const basePrice = fetchedPrices[base];
+      const quotePrice = STABLES.has(quote) ? 1 : fetchedPrices[quote];
+      if (
+        Number.isFinite(basePrice) &&
+        basePrice > 0 &&
+        Number.isFinite(quotePrice) &&
+        quotePrice > 0
+      ) {
+        map.set(p.id, basePrice / quotePrice);
+      } else {
+        map.set(p.id, null);
+      }
+    }
+    return map;
+  }, [positions, positionPrices, fetchedPrices]);
+
+  const healthById = useMemo(() => {
+    const map = new Map<string, RangeHealth>();
+    for (const p of positions) {
+      map.set(
+        p.id,
+        calcRangeHealth(
+          currentPriceById.get(p.id) ?? null,
+          p.bottomRange,
+          p.topRange,
+        ),
+      );
+    }
+    return map;
+  }, [positions, currentPriceById]);
+
+  const setPositionPrice = (positionId: string, raw: string) => {
+    const next = { ...positionPrices };
+    const value = Number(raw);
+    if (raw.trim() === "" || !Number.isFinite(value) || value <= 0) {
+      delete next[positionId];
+    } else {
+      next[positionId] = value;
+    }
+    setPositionPrices(next);
+    savePositionPrices(next);
+  };
 
   const active = hydrated
     ? derive(positions.filter((p) => p.status === "active"), claims)
@@ -604,10 +724,22 @@ export default function PositionsPage() {
         </button>
       </header>
 
+      {active.length > 0 && (
+        <RangeHealthSummary
+          rows={active}
+          healthById={healthById}
+          priceLoading={priceLoading}
+          priceUpdatedAt={priceUpdatedAt}
+          onRefresh={() => void refreshPrices(positions)}
+        />
+      )}
+
       <PositionsTable
         title="Active Positions"
         rows={active}
         variant="active"
+        healthById={healthById}
+        onSetPrice={setPositionPrice}
         onEdit={(p) => setModal({ kind: "edit", position: p })}
         onUpdate={(p) => setModal({ kind: "update", position: p })}
         onClose={(p) => setModal({ kind: "close", position: p })}
@@ -718,10 +850,222 @@ function TxLinkBadge({ value }: TxLinkBadgeProps) {
   );
 }
 
+function rangeStatusMeta(status: RangeHealth["status"]): {
+  label: string;
+  cls: string;
+} {
+  switch (status) {
+    case "safe":
+      return {
+        label: "In Range",
+        cls: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30",
+      };
+    case "close":
+      return {
+        label: "Getting Close",
+        cls: "bg-amber-500/10 text-amber-300 ring-amber-500/30",
+      };
+    case "out":
+      return {
+        label: "Out of Range",
+        cls: "bg-rose-500/10 text-rose-300 ring-rose-500/30",
+      };
+    default:
+      return {
+        label: "Price needed",
+        cls: "bg-[var(--surface-2)] text-[var(--muted)] ring-[var(--border-strong)]",
+      };
+  }
+}
+
+function rangeHealthDetail(health: RangeHealth): string {
+  if (health.status === "out") {
+    return health.distanceToLowerPct !== null && health.distanceToLowerPct < 0
+      ? "below range"
+      : "above range";
+  }
+  if (health.nearestEdgePct === null) return "";
+  return `${health.nearestEdgePct.toFixed(1)}% to edge`;
+}
+
+function RangeBadge({ status }: { status: RangeHealth["status"] }) {
+  const meta = rangeStatusMeta(status);
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ring-1 ring-inset whitespace-nowrap ${meta.cls}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
+interface RangeHealthCellProps {
+  health?: RangeHealth;
+  onSetPrice?: (raw: string) => void;
+}
+
+function RangeHealthCell({ health, onSetPrice }: RangeHealthCellProps) {
+  // Price can't be resolved automatically — let the user type it in.
+  if (!health || health.status === "unknown") {
+    return (
+      <input
+        type="number"
+        step="any"
+        min="0"
+        placeholder="current price"
+        aria-label="Current price"
+        className={`${inputClass} w-28 text-right`}
+        onBlur={(e) => onSetPrice?.(e.target.value)}
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <RangeBadge status={health.status} />
+      <span className="text-[11px] text-[var(--muted)]">
+        {rangeHealthDetail(health)}
+      </span>
+    </div>
+  );
+}
+
+interface RangeHealthSummaryProps {
+  rows: DerivedRow[];
+  healthById: Map<string, RangeHealth>;
+  priceLoading: boolean;
+  priceUpdatedAt: string | null;
+  onRefresh: () => void;
+}
+
+function RangeHealthSummary({
+  rows,
+  healthById,
+  priceLoading,
+  priceUpdatedAt,
+  onRefresh,
+}: RangeHealthSummaryProps) {
+  let out = 0;
+  let close = 0;
+  let safe = 0;
+  let unknown = 0;
+  const atRisk: Array<{ position: Position; health: RangeHealth }> = [];
+  for (const { position } of rows) {
+    const health = healthById.get(position.id);
+    if (!health || health.status === "unknown") {
+      unknown += 1;
+      continue;
+    }
+    if (health.status === "out") {
+      out += 1;
+      atRisk.push({ position, health });
+    } else if (health.status === "close") {
+      close += 1;
+      atRisk.push({ position, health });
+    } else {
+      safe += 1;
+    }
+  }
+  atRisk.sort(
+    (a, b) => (a.health.nearestEdgePct ?? 0) - (b.health.nearestEdgePct ?? 0),
+  );
+
+  const updatedLabel = priceLoading
+    ? "Updating prices…"
+    : priceUpdatedAt
+      ? `Prices updated ${formatUpdatedAt(priceUpdatedAt)}`
+      : "Prices not fetched yet";
+
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+      <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight">Range Health</h2>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
+            How close each active position is to going out of its range
+            (auto-priced; type a price where none is available).
+          </p>
+        </div>
+        <div className="flex items-center gap-3 whitespace-nowrap">
+          <span className="text-xs text-[var(--muted)]">{updatedLabel}</span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={priceLoading}
+            className="inline-flex h-8 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 text-xs font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)] disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 px-5 py-4 sm:grid-cols-4">
+        <RangeCount label="Out of Range" value={out} tone="rose" />
+        <RangeCount label="Getting Close" value={close} tone="amber" />
+        <RangeCount label="In Range" value={safe} tone="emerald" />
+        <RangeCount label="Price Needed" value={unknown} tone="muted" />
+      </div>
+      {atRisk.length > 0 && (
+        <div className="border-t border-[var(--border)] px-5 py-3">
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+            Needs attention (closest to the edge first)
+          </p>
+          <ul className="space-y-1.5">
+            {atRisk.map(({ position, health }) => (
+              <li
+                key={position.id}
+                className="flex items-center justify-between gap-3 text-sm"
+              >
+                <span className="flex items-center gap-2">
+                  <RangeBadge status={health.status} />
+                  <span className="font-medium">{position.pair}</span>
+                  <span className="text-[var(--muted)]">
+                    ({position.chain})
+                  </span>
+                </span>
+                <span className="text-xs text-[var(--muted)] tabular-nums">
+                  {rangeHealthDetail(health)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RangeCount({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "rose" | "amber" | "emerald" | "muted";
+}) {
+  const toneCls: Record<typeof tone, string> = {
+    rose: "text-rose-300",
+    amber: "text-amber-300",
+    emerald: "text-emerald-300",
+    muted: "text-[var(--muted)]",
+  };
+  return (
+    <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)]/40 px-3 py-2.5 text-center">
+      <div className={`text-2xl font-semibold tabular-nums ${toneCls[tone]}`}>
+        {value}
+      </div>
+      <div className="mt-0.5 text-[11px] uppercase tracking-wider text-[var(--muted)]">
+        {label}
+      </div>
+    </div>
+  );
+}
+
 interface PositionsTableProps {
   title: string;
   rows: DerivedRow[];
   variant: "active" | "closed";
+  healthById?: Map<string, RangeHealth>;
+  onSetPrice?: (positionId: string, raw: string) => void;
   onEdit?: (p: Position) => void;
   onUpdate?: (p: Position) => void;
   onClose?: (p: Position) => void;
@@ -733,6 +1077,8 @@ function PositionsTable({
   title,
   rows,
   variant,
+  healthById,
+  onSetPrice,
   onEdit,
   onUpdate,
   onClose,
@@ -771,6 +1117,11 @@ function PositionsTable({
                 <th className="px-4 py-3 text-right font-medium">Total Fees</th>
                 <th className="px-4 py-3 text-right font-medium">Fee APR</th>
                 <th className="px-4 py-3 text-right font-medium">Range %</th>
+                {variant === "active" && (
+                  <th className="px-4 py-3 text-left font-medium">
+                    Range Health
+                  </th>
+                )}
                 {variant === "active" ? (
                   <th className="px-4 py-3 text-right font-medium">
                     Days Active
@@ -831,6 +1182,18 @@ function PositionsTable({
                       return wr > 0 ? formatPercent(wr) : "—";
                     })()}
                   </td>
+                  {variant === "active" && (
+                    <td className="px-4 py-3">
+                      <RangeHealthCell
+                        health={healthById?.get(position.id)}
+                        onSetPrice={
+                          onSetPrice
+                            ? (raw) => onSetPrice(position.id, raw)
+                            : undefined
+                        }
+                      />
+                    </td>
+                  )}
                   {variant === "active" ? (
                     <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
                       {days.toFixed(1)}

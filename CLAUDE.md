@@ -210,7 +210,9 @@ Osho prefers:
   Osho's second language)
 - Honest framing of what's complete vs incomplete
 
-## Sprint Queue (Defined — Methodology Sprints)
+## Sprint Queue (all defined sprints shipped as of 2026-07-18)
+
+## Sprint Queue History (Defined — Methodology Sprints)
 
 These are the sprints planned based on the Google Sheet ground
 truth mapping. Order is recommendation only — Osho approves each
@@ -228,7 +230,7 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
-- Sprint 11: Predictive Out-of-Range Display
+- Sprint 11: Predictive Out-of-Range Display (SHIPPED — see below)
 
 ## Recent Shipped Sprints
 
@@ -369,6 +371,39 @@ at the plan gate.
   shows current $225 but basis/P&L "—" (not an inflated +$75),
   totals 625/420/-20, warning banner rendered; zero console
   errors; seeds removed. tsc/lint/build clean.
+- Sprint 11: Predictive Out-of-Range Display (2026-07-18). Phase
+  A: Position stores entryPrice/bottomRange/topRange but NO
+  current price, and status (active/closed) is manual, not
+  price-derived — so the app couldn't warn before a position
+  drifts out of range. entryPrice and the range bounds share
+  units (quote per base), so current pair price =
+  usd(baseToken)/usd(quoteToken) via the Sprint 8.5 /api/prices
+  route (stable quote → base price directly). Gate approved by
+  Osho: auto-fetch + manual fallback, badge on each active row
+  PLUS a Range Health summary, "Getting Close" threshold 5% of an
+  edge. Shipped: calcRangeHealth in lib/calculations.ts (status
+  safe/close/out/unknown, bandPosition, distance-to-lower/upper %,
+  nearestEdgePct; "close" when within thresholdPct, default 5, of
+  either edge; "out" when price ≤ down or ≥ up); per-position
+  manual price overrides in clp_position_prices
+  (get/savePositionPrices, in Settings backup keys). Positions
+  page: on hydrate fetches USD prices for all active-position
+  base+quote symbols, currentPriceById = manual override else
+  fetched base/quote ratio (null when unresolved), healthById via
+  calcRangeHealth; new "Range Health" summary card (Out/Close/
+  In-Range/Price-Needed counts + a needs-attention list sorted by
+  nearestEdgePct, Refresh button + last-updated), a "Range Health"
+  column in the Active Positions table showing a colored badge +
+  "X% to edge" (or a current-price input when unresolved).
+  Reuses Sprint 8.5 infra; ships CURRENT-price warnings, not
+  historical. Verified live on localhost:3001 with seeded active
+  positions and real CoinGecko prices: ZEC/USDC (range 400–500,
+  live ~542) → Out of Range "above range"; SOL/USDC (50–100, ~75)
+  → In Range 33.2% to edge; ETH/USDC (1800–1940, ~1844) → Getting
+  Close 2.4% to edge; FOOBAR/USDC (unresolved) → price input, and
+  typing 15 (range 10–20) flipped it to In Range 33.3% and updated
+  the summary counts; zero console errors; seeds removed.
+  tsc/lint/build clean.
 - Sprint 10: Withdrawals + Available Balance on Transfers page
   (2026-07-18). Phase A: no Withdrawals sheet exists — Osho
   clarified their real model lives IN the Transfers sheet: per

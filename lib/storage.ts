@@ -18,6 +18,7 @@ const KEYS = {
   businessPnl: "clp_business_pnl",
   priceCache: "clp_price_cache",
   withdrawals: "clp_withdrawals",
+  positionPrices: "clp_position_prices",
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -172,4 +173,24 @@ export function getPriceCache(): PriceCache {
 
 export function savePriceCache(cache: PriceCache): void {
   writeValue(KEYS.priceCache, cache);
+}
+
+// Manual current-price overrides per position (Sprint 11), used when a
+// pair's live price can't be auto-fetched. Keyed by position id.
+export function getPositionPrices(): Record<string, number> {
+  if (!isBrowser()) return {};
+  try {
+    const raw = window.localStorage.getItem(KEYS.positionPrices);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, number>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+export function savePositionPrices(prices: Record<string, number>): void {
+  writeValue(KEYS.positionPrices, prices);
 }

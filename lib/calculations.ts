@@ -603,6 +603,69 @@ export function calcUnconvertedHoldings(
   };
 }
 
+// Range Health (Sprint 11): how close a position's current price is to
+// falling out of its range. currentPrice, rangeDown, rangeUp share the same
+// units (quote per base). "close" fires within thresholdPct of either edge.
+export type RangeStatus = "safe" | "close" | "out" | "unknown";
+
+export interface RangeHealth {
+  status: RangeStatus;
+  currentPrice: number | null;
+  bandPosition: number | null; // 0 = at bottom edge, 1 = at top edge
+  distanceToLowerPct: number | null; // (P − down)/P·100; negative if below
+  distanceToUpperPct: number | null; // (up − P)/P·100; negative if above
+  nearestEdgePct: number | null; // smaller of the two distances, in %
+}
+
+export function calcRangeHealth(
+  currentPrice: number | null,
+  rangeDown: number,
+  rangeUp: number,
+  thresholdPct = 5,
+): RangeHealth {
+  const unknown: RangeHealth = {
+    status: "unknown",
+    currentPrice: null,
+    bandPosition: null,
+    distanceToLowerPct: null,
+    distanceToUpperPct: null,
+    nearestEdgePct: null,
+  };
+  if (
+    currentPrice === null ||
+    !Number.isFinite(currentPrice) ||
+    currentPrice <= 0 ||
+    !Number.isFinite(rangeDown) ||
+    !Number.isFinite(rangeUp) ||
+    rangeUp <= rangeDown
+  ) {
+    return unknown;
+  }
+
+  const distanceToLowerPct = ((currentPrice - rangeDown) / currentPrice) * 100;
+  const distanceToUpperPct = ((rangeUp - currentPrice) / currentPrice) * 100;
+  const bandPosition = (currentPrice - rangeDown) / (rangeUp - rangeDown);
+  const nearestEdgePct = Math.min(distanceToLowerPct, distanceToUpperPct);
+
+  let status: RangeStatus;
+  if (currentPrice <= rangeDown || currentPrice >= rangeUp) {
+    status = "out";
+  } else if (nearestEdgePct <= thresholdPct) {
+    status = "close";
+  } else {
+    status = "safe";
+  }
+
+  return {
+    status,
+    currentPrice,
+    bandPosition,
+    distanceToLowerPct,
+    distanceToUpperPct,
+    nearestEdgePct,
+  };
+}
+
 export function calcWideRangePercent(
   rangeDown: number,
   rangeUp: number,
