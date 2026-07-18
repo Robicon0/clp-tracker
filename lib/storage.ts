@@ -14,6 +14,7 @@ const KEYS = {
   settings: "clp_settings",
   ranges: "clp_ranges",
   poolPnl: "clp_pool_pnl",
+  businessPnl: "clp_business_pnl",
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -100,4 +101,31 @@ export function getPoolPnL(): PoolPnLEntry[] {
 
 export function savePoolPnL(entries: PoolPnLEntry[]): void {
   writeValue(KEYS.poolPnl, entries);
+}
+
+export interface BusinessPnLSettings {
+  prices: Record<string, number>;
+  checkpoints: string[];
+}
+
+export function getBusinessPnLSettings(): BusinessPnLSettings {
+  if (!isBrowser()) return { prices: {}, checkpoints: [] };
+  try {
+    const raw = window.localStorage.getItem(KEYS.businessPnl);
+    if (!raw) return { prices: {}, checkpoints: [] };
+    const parsed = JSON.parse(raw) as Partial<BusinessPnLSettings>;
+    return {
+      prices:
+        parsed.prices && typeof parsed.prices === "object"
+          ? parsed.prices
+          : {},
+      checkpoints: Array.isArray(parsed.checkpoints) ? parsed.checkpoints : [],
+    };
+  } catch {
+    return { prices: {}, checkpoints: [] };
+  }
+}
+
+export function saveBusinessPnLSettings(settings: BusinessPnLSettings): void {
+  writeValue(KEYS.businessPnl, settings);
 }

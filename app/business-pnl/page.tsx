@@ -1,0 +1,437 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import {
+  getBusinessPnLSettings,
+  getClaims,
+  saveBusinessPnLSettings,
+  type BusinessPnLSettings,
+} from "../../lib/storage";
+import { calcBusinessPnL, calcYieldAfter } from "../../lib/calculations";
+import { useHydrated } from "../../lib/useHydrated";
+import type { FeeClaim } from "../../lib/types";
+
+const usdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const tokenFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+});
+
+function formatUsd(value: number): string {
+  return usdFormatter.format(Number.isFinite(value) ? value : 0);
+}
+
+function formatToken(value: number): string {
+  return tokenFormatter.format(Number.isFinite(value) ? value : 0);
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+function pnlColor(value: number): string {
+  if (value > 0) return "text-emerald-400";
+  if (value < 0) return "text-rose-400";
+  return "text-[var(--foreground)]";
+}
+
+const inputClass =
+  "block w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 [color-scheme:dark] caret-[var(--accent)] focus:border-[var(--accent)] focus:bg-[var(--surface-2)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]";
+
+function claimStatus(claim: FeeClaim): string {
+  if (claim.convertedToStable) {
+    return `Converted${claim.stableSymbol ? ` → ${claim.stableSymbol}` : ""}`;
+  }
+  if (claim.token1Amount > 0 && claim.token1Symbol.trim() !== "") {
+    return `Still in ${claim.token1Symbol.trim().toUpperCase()}`;
+  }
+  return "Unconverted";
+}
+
+export default function BusinessPnlPage() {
+  const [claims, setClaims] = useState<FeeClaim[]>([]);
+  const [settings, setSettings] = useState<BusinessPnLSettings>({
+    prices: {},
+    checkpoints: [],
+  });
+  const [newCheckpoint, setNewCheckpoint] = useState("");
+
+  const hydrated = useHydrated(() => {
+    setClaims(getClaims());
+    setSettings(getBusinessPnLSettings());
+  });
+
+  const persist = (next: BusinessPnLSettings) => {
+    setSettings(next);
+    saveBusinessPnLSettings(next);
+  };
+
+  const setPrice = (token: string, raw: string) => {
+    const prices = { ...settings.prices };
+    const value = Number(raw);
+    if (raw.trim() === "" || !Number.isFinite(value) || value <= 0) {
+      delete prices[token];
+    } else {
+      prices[token] = value;
+    }
+    persist({ ...settings, prices });
+  };
+
+  const addCheckpoint = () => {
+    if (newCheckpoint.trim() === "") return;
+    if (settings.checkpoints.includes(newCheckpoint)) return;
+    const checkpoints = [...settings.checkpoints, newCheckpoint].sort();
+    persist({ ...settings, checkpoints });
+    setNewCheckpoint("");
+  };
+
+  const removeCheckpoint = (date: string) => {
+    persist({
+      ...settings,
+      checkpoints: settings.checkpoints.filter((c) => c !== date),
+    });
+  };
+
+  const business = useMemo(
+    () => calcBusinessPnL(claims, settings.prices),
+    [claims, settings.prices],
+  );
+
+  const checkpointRows = useMemo(
+    () =>
+      settings.checkpoints.map((date) => ({
+        date,
+        accumulated: calcYieldAfter(claims, date),
+      })),
+    [claims, settings.checkpoints],
+  );
+
+  // Ledger blocks mirror the sheet's PAIRS blocks, grouped by chain.
+  const ledgerBlocks = useMemo(() => {
+    const byChain = new Map<string, FeeClaim[]>();
+    for (const claim of claims) {
+      const chain = claim.chain.trim().toUpperCase() || "OTHER";
+      const list = byChain.get(chain);
+      if (list) list.push(claim);
+      else byChain.set(chain, [claim]);
+    }
+    const blocks = [...byChain.entries()].map(([chain, list]) => {
+      const sorted = [...list].sort((a, b) => {
+        const ta = new Date(a.date).getTime();
+        const tb = new Date(b.date).getTime();
+        return (Number.isFinite(ta) ? ta : 0) - (Number.isFinite(tb) ? tb : 0);
+      });
+      let usdTotal = 0;
+      for (const claim of sorted) {
+        if (claim.stableAmount !== null && Number.isFinite(claim.stableAmount)) {
+          usdTotal += claim.stableAmount;
+        }
+      }
+      return { chain, claims: sorted, usdTotal };
+    });
+    blocks.sort((a, b) => b.usdTotal - a.usdTotal);
+    return blocks;
+  }, [claims]);
+
+  if (!hydrated) return null;
+
+  return (
+    <section className="space-y-8">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Business P&amp;L
+        </h1>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Fee income by reward token — lifetime quantities, current value, and
+          claim-time USD value.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <SummaryStat
+          label="All Total (Current Value)"
+          value={formatUsd(business.allTotal)}
+          hint="Reward tokens × current price"
+        />
+        <SummaryStat
+          label="Usdc Converted (Claim-Time Value)"
+          value={formatUsd(business.usdcConverted)}
+          hint="Σ USD value of all claims when claimed"
+        />
+        <SummaryStat
+          label="P&L (Converted − Current)"
+          value={formatUsd(business.pnl)}
+          valueClass={pnlColor(business.pnl)}
+          hint="Positive = claim-time value ahead of holding in kind"
+        />
+      </div>
+
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+        <div className="border-b border-[var(--border)] px-5 py-4">
+          <h2 className="text-sm font-semibold tracking-tight">Total Tokens</h2>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
+            Lifetime reward quantities from all claims. Enter today&apos;s
+            price per token — stablecoins default to $1. Prices are saved on
+            this device.
+          </p>
+        </div>
+        {business.tokenRows.length === 0 ? (
+          <div className="px-6 py-14 text-center">
+            <h3 className="text-base font-semibold tracking-tight">
+              No claims yet
+            </h3>
+            <p className="mx-auto mt-1.5 max-w-sm text-sm text-[var(--muted)]">
+              Log fee claims to see your business P&amp;L breakdown.
+            </p>
+            <Link
+              href="/claims"
+              className="mt-4 inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90"
+            >
+              Go to Fee Claims
+            </Link>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+              <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium">Token</th>
+                  <th className="px-4 py-3 text-right font-medium">Quantity</th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    Current Price (USD)
+                  </th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    USDC Amount
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {business.tokenRows.map((row) => (
+                  <tr key={row.token}>
+                    <td className="px-4 py-3 font-medium">{row.token}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {formatToken(row.quantity)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        aria-label={`Current price for ${row.token}`}
+                        className={`${inputClass} ml-auto w-32 text-right`}
+                        placeholder="price"
+                        defaultValue={row.price ?? ""}
+                        onBlur={(e) => setPrice(row.token, e.target.value)}
+                      />
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {row.usdValue === null ? (
+                        <span className="text-[var(--muted)]">
+                          — enter price
+                        </span>
+                      ) : (
+                        formatUsd(row.usdValue)
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
+                <tr className="font-semibold">
+                  <td className="px-4 py-3">All Total</td>
+                  <td className="px-4 py-3" />
+                  <td className="px-4 py-3" />
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatUsd(business.allTotal)}
+                    {business.unpricedTokens.length > 0 && (
+                      <span className="ml-2 text-xs font-normal text-amber-400">
+                        excludes {business.unpricedTokens.join(", ")}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+        <div className="border-b border-[var(--border)] px-5 py-4">
+          <h2 className="text-sm font-semibold tracking-tight">
+            Yield Checkpoints
+          </h2>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
+            Each checkpoint shows the claim USD value accumulated after that
+            date — derived from claim dates, nothing hardcoded.
+          </p>
+        </div>
+        <div className="space-y-3 px-5 py-4">
+          {checkpointRows.length === 0 && (
+            <p className="text-sm text-[var(--muted)]">
+              No checkpoints yet. Add a date below to track per-period yield.
+            </p>
+          )}
+          {checkpointRows.map((row) => (
+            <div
+              key={row.date}
+              className="flex items-center justify-between gap-4 rounded-md border border-[var(--border)] bg-[var(--surface-2)]/40 px-4 py-3"
+            >
+              <span className="text-sm">
+                Accumulated after{" "}
+                <span className="font-medium">{formatDate(row.date)}</span>
+              </span>
+              <span className="flex items-center gap-4">
+                <span className="text-sm font-semibold tabular-nums">
+                  {formatUsd(row.accumulated)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeCheckpoint(row.date)}
+                  className="text-xs text-[var(--muted)] hover:text-rose-400"
+                >
+                  Remove
+                </button>
+              </span>
+            </div>
+          ))}
+          <div className="flex items-center gap-3 pt-1">
+            <input
+              type="date"
+              aria-label="New checkpoint date"
+              className={`${inputClass} w-44`}
+              value={newCheckpoint}
+              onChange={(e) => setNewCheckpoint(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={addCheckpoint}
+              className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:opacity-50"
+              disabled={newCheckpoint.trim() === ""}
+            >
+              Add Checkpoint
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {ledgerBlocks.length > 0 && (
+        <div className="space-y-6">
+          {ledgerBlocks.map((block) => (
+            <div
+              key={block.chain}
+              className="rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+            >
+              <div className="border-b border-[var(--border)] px-5 py-4">
+                <h2 className="text-sm font-semibold tracking-tight">
+                  {block.chain} Claims
+                </h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+                  <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-medium">Date</th>
+                      <th className="px-4 py-3 text-left font-medium">Pair</th>
+                      <th className="px-4 py-3 text-left font-medium">
+                        Platform
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium">
+                        Token Rewards
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium">
+                        Quote Rewards
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium">
+                        USD Value
+                      </th>
+                      <th className="px-4 py-3 text-left font-medium">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {block.claims.map((claim) => (
+                      <tr key={claim.id}>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {formatDate(claim.date)}
+                        </td>
+                        <td className="px-4 py-3">{claim.pair}</td>
+                        <td className="px-4 py-3">{claim.platform}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {claim.token1Amount > 0
+                            ? `${formatToken(claim.token1Amount)} ${claim.token1Symbol}`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {claim.token2Amount > 0
+                            ? `${formatToken(claim.token2Amount)} ${claim.token2Symbol}`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {claim.stableAmount === null
+                            ? "—"
+                            : formatUsd(claim.stableAmount)}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-[var(--muted)]">
+                          {claimStatus(claim)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
+                    <tr className="font-semibold">
+                      <td className="px-4 py-3">TOTAL</td>
+                      <td className="px-4 py-3" colSpan={4} />
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {formatUsd(block.usdTotal)}
+                      </td>
+                      <td className="px-4 py-3" />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface SummaryStatProps {
+  label: string;
+  value: string;
+  valueClass?: string;
+  hint?: string;
+}
+
+function SummaryStat({ label, value, valueClass, hint }: SummaryStatProps) {
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-5 py-4">
+      <p className="text-[11px] uppercase tracking-wider text-[var(--muted)]">
+        {label}
+      </p>
+      <p
+        className={`mt-1 text-xl font-semibold tabular-nums ${valueClass ?? ""}`}
+      >
+        {value}
+      </p>
+      {hint && <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p>}
+    </div>
+  );
+}

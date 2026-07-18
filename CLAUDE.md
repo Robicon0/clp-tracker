@@ -228,7 +228,6 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
-- Sprint 7: Business P&L Page (new)
 - Sprint 8: Unconverted Token Holdings + Current Value
 - Sprint 9: Extended Transfers Page
 - Sprint 10: Withdrawals Page (new)
@@ -321,6 +320,31 @@ at the plan gate.
   output shape unchanged — Add/Edit modal, Net Coverage, Pool P&L
   OOR columns unaffected. tsc/build clean.
 
+- Sprint 7: Business P&L page (2026-07-18). Phase A read the
+  Business P&L sheet directly: five PAIRS blocks (ETH/BTC/SOL/
+  SUI/HYPE) logging per-claim token + USDC rewards and claim-time
+  USD value ("Usdc Coverted"), a Total Tokens summary (lifetime
+  qty × manually-typed current price), All Total = SUM of current
+  values, Usdc Converted = Σ block claim-time totals, P&L =
+  Converted − All Total, plus hardcoded period checkpoints
+  ("Accumulate the yield after 25/02/2026" = −1836, after
+  25/05/2026 = −3108). Gate approved by Osho: full scope, manual
+  price inputs, checkpoints derived from claim dates (not
+  hardcoded). Shipped: calcBusinessPnL + calcYieldAfter in
+  lib/calculations.ts (quantities summed per reward token from
+  claim token1/token2 amounts; stables USDC/USDT/DAI default $1;
+  unpriced tokens excluded from All Total and flagged);
+  BusinessPnLSettings {prices, checkpoints} persisted under new
+  clp_business_pnl key in lib/storage.ts (included in Settings
+  JSON export/import); new /business-pnl page — 3 summary cards,
+  Total Tokens table with editable price column, Yield
+  Checkpoints (add/remove date, accumulated = Σ stableAmount of
+  claims after date), claims ledger grouped by chain with block
+  totals and Converted/"Still in X" status; Sidebar nav entry.
+  Verified on localhost:3001 with seeded claims — every number
+  matched hand calculations (All Total 750, Converted 770, P&L
+  +20, checkpoint 570); persistence across reload confirmed;
+  zero console errors; seeds removed. tsc/lint/build clean.
 - Exit-before-entry date warning (2026-07-18): DateOrderWarning
   component in app/positions/page.tsx shows a non-blocking amber
   plausibility warning (Invariant #8) when exit datetime is

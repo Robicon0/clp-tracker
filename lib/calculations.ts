@@ -383,6 +383,89 @@ export function calcTokenPnL(
   return rows;
 }
 
+// Business P&L (mirrors the Business P&L sheet): lifetime reward-token
+// quantities from claim records, valued at user-entered current prices.
+// "Usdc Converted" is the claim-time USD value (stableAmount); the sheet's
+// P&L is the gap between claim-time value and today's value if held in kind.
+export interface BusinessTokenRow {
+  token: string;
+  quantity: number;
+  price: number | null;
+  usdValue: number | null;
+}
+
+export interface BusinessPnL {
+  tokenRows: BusinessTokenRow[];
+  allTotal: number;
+  unpricedTokens: string[];
+  usdcConverted: number;
+  pnl: number;
+}
+
+const STABLE_SYMBOLS = new Set(["USDC", "USDT", "DAI", "USD"]);
+
+export function calcBusinessPnL(
+  claims: FeeClaim[],
+  prices: Record<string, number>,
+): BusinessPnL {
+  const quantities = new Map<string, number>();
+  let usdcConverted = 0;
+
+  const add = (symbol: string, amount: number) => {
+    const token = symbol.trim().toUpperCase();
+    if (token === "" || !Number.isFinite(amount) || amount === 0) return;
+    quantities.set(token, (quantities.get(token) ?? 0) + amount);
+  };
+
+  for (const claim of claims) {
+    add(claim.token1Symbol, claim.token1Amount);
+    add(claim.token2Symbol, claim.token2Amount);
+    if (claim.stableAmount !== null && Number.isFinite(claim.stableAmount)) {
+      usdcConverted += claim.stableAmount;
+    }
+  }
+
+  const tokenRows: BusinessTokenRow[] = [];
+  const unpricedTokens: string[] = [];
+  let allTotal = 0;
+
+  for (const [token, quantity] of quantities) {
+    let price: number | null = Number.isFinite(prices[token])
+      ? prices[token]
+      : null;
+    if (price === null && STABLE_SYMBOLS.has(token)) price = 1;
+    const usdValue = price === null ? null : quantity * price;
+    if (usdValue === null) unpricedTokens.push(token);
+    else allTotal += usdValue;
+    tokenRows.push({ token, quantity, price, usdValue });
+  }
+
+  tokenRows.sort((a, b) => (b.usdValue ?? 0) - (a.usdValue ?? 0));
+  return {
+    tokenRows,
+    allTotal,
+    unpricedTokens,
+    usdcConverted,
+    pnl: usdcConverted - allTotal,
+  };
+}
+
+// Yield accumulated strictly after a checkpoint date — the sheet's
+// "Accumulate the yield after <date>" rows, derived instead of hardcoded.
+export function calcYieldAfter(claims: FeeClaim[], dateIso: string): number {
+  const cutoff = new Date(dateIso).getTime();
+  if (!Number.isFinite(cutoff)) return 0;
+  let total = 0;
+  for (const claim of claims) {
+    if (claim.stableAmount === null || !Number.isFinite(claim.stableAmount)) {
+      continue;
+    }
+    const t = new Date(claim.date).getTime();
+    if (Number.isFinite(t) && t > cutoff) total += claim.stableAmount;
+  }
+  return total;
+}
+
 export function calcWideRangePercent(
   rangeDown: number,
   rangeUp: number,

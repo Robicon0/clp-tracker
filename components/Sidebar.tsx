@@ -23,6 +23,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/positions", label: "Positions", badgeKey: "active" },
   { href: "/claims", label: "Fee Claims", badgeKey: "claims" },
   { href: "/pool-pnl", label: "Pool P&L" },
+  { href: "/business-pnl", label: "Business P&L" },
   { href: "/transfers", label: "Transfers", badgeKey: "transfers" },
   { href: "/total-pnl", label: "Total P&L" },
   { href: "/settings", label: "Settings" },
