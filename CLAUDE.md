@@ -321,16 +321,22 @@ at the plan gate.
   output shape unchanged — Add/Edit modal, Net Coverage, Pool P&L
   OOR columns unaffected. tsc/build clean.
 
+- Exit-before-entry date warning (2026-07-18): DateOrderWarning
+  component in app/positions/page.tsx shows a non-blocking amber
+  plausibility warning (Invariant #8) when exit datetime is
+  earlier than entry datetime. Renders in two places: the Close
+  modal (live as the user picks the exit date) and the Edit form
+  for closed positions (PositionFormModal now receives the
+  position's exitDatetime, so moving entry past exit warns too).
+  Warning-only — nothing blocks save, no stored values change.
+  Verified on localhost:3001 with seeded positions (warning
+  appears on bad dates in both modals, disappears when dates are
+  fixed); seeds removed after. tsc/build clean.
+
 ## Known Issues
 
-- Exit-before-entry dates accepted: the position form does not
-  warn when exit datetime is earlier than entry datetime. The app
-  clamps Days Active to 0 (so APR shows 0% instead of breaking),
-  but the bad dates persist silently. Seen on a real closed
-  SOL/USDC position (entry 2026-07-11, exit 2026-07-04).
-  Candidate fix: plausibility warning in Add/Edit/Close forms
-  (Invariant #8). Any user worldwide who mistypes a date hits
-  this.
+- None currently tracked. (Exit-before-entry date warning shipped
+  2026-07-18 — see Recent Shipped Sprints.)
 
 ## Architecture Notes
 

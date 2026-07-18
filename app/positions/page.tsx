@@ -638,6 +638,7 @@ export default function PositionsPage() {
           submitLabel="Save Changes"
           initial={positionToForm(modal.position)}
           editingStatus={modal.position.status}
+          exitDatetime={modal.position.exitDatetime}
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={(form) => handleEdit(modal.position, form)}
         />
@@ -1125,6 +1126,29 @@ function Field({ label, htmlFor, children, hint }: FieldProps) {
   );
 }
 
+// Plausibility warning (Invariant #8): exit before entry is impossible but
+// was silently accepted — Days Active clamps to 0 and APR reads 0%. Warns
+// without blocking so users can still correct whichever date is wrong.
+function DateOrderWarning({
+  entry,
+  exit,
+}: {
+  entry: string;
+  exit: string | null | undefined;
+}) {
+  if (!entry || !exit) return null;
+  const entryMs = new Date(entry).getTime();
+  const exitMs = new Date(exit).getTime();
+  if (!Number.isFinite(entryMs) || !Number.isFinite(exitMs)) return null;
+  if (exitMs >= entryMs) return null;
+  return (
+    <p className="text-xs font-medium text-amber-400 sm:col-span-2">
+      ⚠ Exit date is earlier than entry date — Days Active will count as 0 and
+      Fee APR will show 0%. Please check the dates.
+    </p>
+  );
+}
+
 const inputClass =
   "block w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 [color-scheme:dark] caret-[var(--accent)] focus:border-[var(--accent)] focus:bg-[var(--surface-2)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]";
 
@@ -1133,6 +1157,7 @@ interface PositionFormModalProps {
   submitLabel: string;
   initial: PositionFormState;
   editingStatus?: Position["status"];
+  exitDatetime?: string | null;
   onCancel: () => void;
   onSubmit: (form: PositionFormState) => void;
 }
@@ -1142,6 +1167,7 @@ function PositionFormModal({
   submitLabel,
   initial,
   editingStatus,
+  exitDatetime,
   onCancel,
   onSubmit,
 }: PositionFormModalProps) {
@@ -1302,6 +1328,7 @@ function PositionFormModal({
               onChange={(v) => set("entryDatetime", v)}
               required
             />
+            <DateOrderWarning entry={form.entryDatetime} exit={exitDatetime} />
             {editingStatus === "closed" && (
               <Field
                 label="Scalp (USD)"
@@ -1777,6 +1804,10 @@ function ClosePositionModal({
               value={exitDatetime}
               onChange={setExitDatetime}
               required
+            />
+            <DateOrderWarning
+              entry={position.entryDatetime}
+              exit={exitDatetime}
             />
             <Field
               label="Scalp (USD)"
