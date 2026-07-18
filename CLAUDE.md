@@ -228,6 +228,18 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
+- Sprint 8.5: Auto-Fetch Token Prices (NEW — PRIORITIZED by
+  Osho 2026-07-18). Replace the manual price inputs on the
+  Business P&L page (Total Tokens + Unconverted Holdings) with
+  automatically fetched current prices, so users never type
+  SOL/ZEC/ETH prices by hand. Activates Invariant #2 (Claim-Time
+  Historical Pricing) and #3 (Persistent Price Cache): price
+  cascade hardcoded stablecoin anchor ($1) → CoinGecko → DeFiLlama
+  → pending; keep manual entry as an override/fallback when a
+  token can't be resolved. Phase A must map token symbols → price
+  API IDs (CoinGecko coin IDs differ from ticker symbols) and
+  decide the fetch/refresh + caching strategy before any code.
+  Runs before Sprint 9.
 - Sprint 9: Extended Transfers Page
 - Sprint 10: Withdrawals Page (new)
 - Sprint 11: Predictive Out-of-Range Display
