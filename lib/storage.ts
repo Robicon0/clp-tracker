@@ -15,6 +15,7 @@ const KEYS = {
   ranges: "clp_ranges",
   poolPnl: "clp_pool_pnl",
   businessPnl: "clp_business_pnl",
+  priceCache: "clp_price_cache",
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -128,4 +129,33 @@ export function getBusinessPnLSettings(): BusinessPnLSettings {
 
 export function saveBusinessPnLSettings(settings: BusinessPnLSettings): void {
   writeValue(KEYS.businessPnl, settings);
+}
+
+// Last successfully fetched auto-prices, so the page can show known values
+// instantly on load before the network round-trip completes.
+export interface PriceCache {
+  prices: Record<string, number>;
+  updatedAt: string | null;
+}
+
+export function getPriceCache(): PriceCache {
+  if (!isBrowser()) return { prices: {}, updatedAt: null };
+  try {
+    const raw = window.localStorage.getItem(KEYS.priceCache);
+    if (!raw) return { prices: {}, updatedAt: null };
+    const parsed = JSON.parse(raw) as Partial<PriceCache>;
+    return {
+      prices:
+        parsed.prices && typeof parsed.prices === "object"
+          ? parsed.prices
+          : {},
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : null,
+    };
+  } catch {
+    return { prices: {}, updatedAt: null };
+  }
+}
+
+export function savePriceCache(cache: PriceCache): void {
+  writeValue(KEYS.priceCache, cache);
 }

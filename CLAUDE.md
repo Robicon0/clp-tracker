@@ -228,18 +228,6 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
-- Sprint 8.5: Auto-Fetch Token Prices (NEW — PRIORITIZED by
-  Osho 2026-07-18). Replace the manual price inputs on the
-  Business P&L page (Total Tokens + Unconverted Holdings) with
-  automatically fetched current prices, so users never type
-  SOL/ZEC/ETH prices by hand. Activates Invariant #2 (Claim-Time
-  Historical Pricing) and #3 (Persistent Price Cache): price
-  cascade hardcoded stablecoin anchor ($1) → CoinGecko → DeFiLlama
-  → pending; keep manual entry as an override/fallback when a
-  token can't be resolved. Phase A must map token symbols → price
-  API IDs (CoinGecko coin IDs differ from ticker symbols) and
-  decide the fetch/refresh + caching strategy before any code.
-  Runs before Sprint 9.
 - Sprint 9: Extended Transfers Page
 - Sprint 10: Withdrawals Page (new)
 - Sprint 11: Predictive Out-of-Range Display
@@ -382,6 +370,41 @@ at the plan gate.
   250/270/-20, USDC flat, SOL with a null-basis claim correctly
   shows current $225 but basis/P&L "—" (not an inflated +$75),
   totals 625/420/-20, warning banner rendered; zero console
+  errors; seeds removed. tsc/lint/build clean.
+- Sprint 8.5: Auto-Fetch Token Prices (2026-07-18). First time
+  CLP Tracker reaches the network. Gate approved by Osho: curated
+  symbol→ID map + manual fallback, fetch on page load + manual
+  Refresh button, CoinGecko primary / DeFiLlama backup. Shipped:
+  lib/tokenIds.ts curated UPPERCASE-symbol → CoinGecko-ID map
+  (BTC/ETH/WETH/WBTC/CBBTC/SOL/SUI/HYPE/ZEC/ARB/OP/AERO/ORCA +
+  USDC/USDT/DAI) — anything unlisted stays on manual entry, never
+  guessed; app/api/prices/route.ts Route Handler (uses
+  request.nextUrl.searchParams — SYNCHRONOUS in Next 16 route
+  handlers; the async searchParams form is Page-props only, and
+  the posttooluse-validate hook's "add await" note is a false
+  positive here, verified against node_modules/next docs
+  route.md) proxies CoinGecko simple/price then DeFiLlama
+  coins.llama.fi for any IDs CoinGecko misses, returns
+  {prices,unresolved,updatedAt,sources,error?}; PriceCache in
+  lib/storage.ts (clp_price_cache) shows last-known prices
+  instantly on load. Business P&L page: on hydrate loads cache +
+  fires refreshPrices(claims); effectivePrices merges
+  settings.prices (manual overrides) OVER fetchedPrices so a
+  manual value always wins; setPrice drops an override that
+  equals the fetched price (and clearing reverts to auto), so
+  overrides never freeze against future refreshes; AUTO/MANUAL
+  tags per row, "Updated Xm ago" + Refresh button, amber error
+  banner when the price service is unreachable (falls back to
+  cached/manual). NOTE: this ships CURRENT prices only — Invariant
+  #2 (claim-time HISTORICAL pricing) and #3 (persistent cache)
+  are only partially advanced; historical per-claim valuation
+  remains future work. Verified live on localhost:3001: /api/
+  prices returned real CoinGecko values (ETH 1844.30, SOL 74.97,
+  ZEC 542.24, USDC ~1, FOOBAR unresolved); page auto-filled all
+  three tokens with AUTO tags, All Total 571.05 and Unconverted
+  Holdings fully valued (ZEC +1.12, totals 571.05/570/+1.05,
+  matched hand math against live prices); manual override →
+  MANUAL tag + recompute, clearing → revert to AUTO; zero console
   errors; seeds removed. tsc/lint/build clean.
 - Exit-before-entry date warning (2026-07-18): DateOrderWarning
   component in app/positions/page.tsx shows a non-blocking amber

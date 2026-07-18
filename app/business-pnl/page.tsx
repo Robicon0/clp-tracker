@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   getBusinessPnLSettings,
   getClaims,
+  getPriceCache,
   saveBusinessPnLSettings,
+  savePriceCache,
   type BusinessPnLSettings,
 } from "../../lib/storage";
 import {
@@ -53,6 +55,18 @@ function pnlColor(value: number): string {
   return "text-[var(--foreground)]";
 }
 
+function formatUpdatedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "just now";
+  const diffMs = Date.now() - d.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const inputClass =
   "block w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 [color-scheme:dark] caret-[var(--accent)] focus:border-[var(--accent)] focus:bg-[var(--surface-2)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]";
 
@@ -73,10 +87,62 @@ export default function BusinessPnlPage() {
     checkpoints: [],
   });
   const [newCheckpoint, setNewCheckpoint] = useState("");
+  const [fetchedPrices, setFetchedPrices] = useState<Record<string, number>>(
+    {},
+  );
+  const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | null>(null);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+
+  // Auto-fetch current prices for every token symbol seen in claims, then
+  // cache them. Manual entries in settings.prices always override a fetched
+  // price (see effectivePrices below), so this never clobbers a user value.
+  const refreshPrices = useCallback(async (allClaims: FeeClaim[]) => {
+    const symbols = new Set<string>();
+    for (const c of allClaims) {
+      const t1 = c.token1Symbol.trim().toUpperCase();
+      const t2 = c.token2Symbol.trim().toUpperCase();
+      if (t1) symbols.add(t1);
+      if (t2) symbols.add(t2);
+    }
+    if (symbols.size === 0) return;
+    setPriceLoading(true);
+    setPriceError(null);
+    try {
+      const res = await fetch(
+        `/api/prices?symbols=${encodeURIComponent([...symbols].join(","))}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error(`Price service returned ${res.status}`);
+      const data = (await res.json()) as {
+        prices: Record<string, number>;
+        updatedAt: string;
+        error?: string;
+      };
+      setFetchedPrices(data.prices ?? {});
+      setPriceUpdatedAt(data.updatedAt ?? new Date().toISOString());
+      savePriceCache({
+        prices: data.prices ?? {},
+        updatedAt: data.updatedAt ?? new Date().toISOString(),
+      });
+      if (data.error) setPriceError(data.error);
+    } catch (err) {
+      setPriceError(
+        err instanceof Error ? err.message : "Could not reach price service.",
+      );
+    } finally {
+      setPriceLoading(false);
+    }
+  }, []);
 
   const hydrated = useHydrated(() => {
-    setClaims(getClaims());
+    const loadedClaims = getClaims();
+    setClaims(loadedClaims);
     setSettings(getBusinessPnLSettings());
+    const cache = getPriceCache();
+    setFetchedPrices(cache.prices);
+    setPriceUpdatedAt(cache.updatedAt);
+    void refreshPrices(loadedClaims);
   });
 
   const persist = (next: BusinessPnLSettings) => {
@@ -84,16 +150,33 @@ export default function BusinessPnlPage() {
     saveBusinessPnLSettings(next);
   };
 
+  // Manual overrides win over fetched prices. Storing a manual value equal to
+  // the fetched price is pointless (and would freeze it against future
+  // refreshes), so we drop it — clearing the field also reverts to auto.
   const setPrice = (token: string, raw: string) => {
     const prices = { ...settings.prices };
     const value = Number(raw);
+    const fetched = fetchedPrices[token];
+    const matchesFetched =
+      Number.isFinite(fetched) && Math.abs(value - fetched) < 1e-9;
     if (raw.trim() === "" || !Number.isFinite(value) || value <= 0) {
+      delete prices[token];
+    } else if (matchesFetched) {
       delete prices[token];
     } else {
       prices[token] = value;
     }
     persist({ ...settings, prices });
   };
+
+  // What every calculation and input uses: manual override, else fetched.
+  const effectivePrices = useMemo(() => {
+    const merged: Record<string, number> = { ...fetchedPrices };
+    for (const [token, price] of Object.entries(settings.prices)) {
+      merged[token] = price;
+    }
+    return merged;
+  }, [fetchedPrices, settings.prices]);
 
   const addCheckpoint = () => {
     if (newCheckpoint.trim() === "") return;
@@ -111,13 +194,13 @@ export default function BusinessPnlPage() {
   };
 
   const business = useMemo(
-    () => calcBusinessPnL(claims, settings.prices),
-    [claims, settings.prices],
+    () => calcBusinessPnL(claims, effectivePrices),
+    [claims, effectivePrices],
   );
 
   const holdings = useMemo(
-    () => calcUnconvertedHoldings(claims, settings.prices),
-    [claims, settings.prices],
+    () => calcUnconvertedHoldings(claims, effectivePrices),
+    [claims, effectivePrices],
   );
 
   const checkpointRows = useMemo(
@@ -190,14 +273,41 @@ export default function BusinessPnlPage() {
       </div>
 
       <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-        <div className="border-b border-[var(--border)] px-5 py-4">
-          <h2 className="text-sm font-semibold tracking-tight">Total Tokens</h2>
-          <p className="mt-0.5 text-xs text-[var(--muted)]">
-            Lifetime reward quantities from all claims. Enter today&apos;s
-            price per token — stablecoins default to $1. Prices are saved on
-            this device.
-          </p>
+        <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight">
+              Total Tokens
+            </h2>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">
+              Lifetime reward quantities from all claims. Prices are fetched
+              automatically — stablecoins are $1. Type a price to override a
+              token manually; clear it to return to the auto price.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 whitespace-nowrap">
+            <span className="text-xs text-[var(--muted)]">
+              {priceLoading
+                ? "Updating prices…"
+                : priceUpdatedAt
+                  ? `Updated ${formatUpdatedAt(priceUpdatedAt)}`
+                  : "Prices not fetched yet"}
+            </span>
+            <button
+              type="button"
+              onClick={() => void refreshPrices(claims)}
+              disabled={priceLoading}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 text-xs font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)] disabled:opacity-50"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
+        {priceError && (
+          <p className="border-b border-[var(--border)] px-5 py-2 text-xs text-amber-400">
+            ⚠ {priceError} Showing last known / manual prices; you can still
+            enter prices by hand.
+          </p>
+        )}
         {business.tokenRows.length === 0 ? (
           <div className="px-6 py-14 text-center">
             <h3 className="text-base font-semibold tracking-tight">
@@ -235,17 +345,29 @@ export default function BusinessPnlPage() {
                     <td className="px-4 py-3 text-right tabular-nums">
                       {formatToken(row.quantity)}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        aria-label={`Current price for ${row.token}`}
-                        className={`${inputClass} ml-auto w-32 text-right`}
-                        placeholder="price"
-                        defaultValue={row.price ?? ""}
-                        onBlur={(e) => setPrice(row.token, e.target.value)}
-                      />
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        {row.token in settings.prices ? (
+                          <span className="text-[10px] uppercase tracking-wide text-[var(--accent)]">
+                            manual
+                          </span>
+                        ) : row.token in fetchedPrices ? (
+                          <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                            auto
+                          </span>
+                        ) : null}
+                        <input
+                          key={`${row.token}-${row.price ?? "na"}`}
+                          type="number"
+                          step="any"
+                          min="0"
+                          aria-label={`Current price for ${row.token}`}
+                          className={`${inputClass} w-32 text-right`}
+                          placeholder="price"
+                          defaultValue={row.price ?? ""}
+                          onBlur={(e) => setPrice(row.token, e.target.value)}
+                        />
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {row.usdValue === null ? (
