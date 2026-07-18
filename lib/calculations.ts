@@ -466,6 +466,143 @@ export function calcYieldAfter(claims: FeeClaim[], dateIso: string): number {
   return total;
 }
 
+// Unconverted holdings: reward tokens from claims NOT cashed out to stable
+// (the sheet's "Still in X" rows). Only these are still price-exposed; a
+// converted claim's tokens were already sold. Cost basis per claim side:
+// stablecoin sides count at face value, and the remaining stableAmount is
+// attributed to the volatile side(s). Claims with no stableAmount have
+// unknown cost basis and are flagged (excluded from cost basis / P&L only).
+export interface HoldingRow {
+  token: string;
+  quantity: number;
+  price: number | null;
+  currentValue: number | null;
+  costBasis: number | null;
+  pnl: number | null;
+}
+
+export interface UnconvertedHoldings {
+  rows: HoldingRow[];
+  totalCurrentValue: number;
+  totalCostBasis: number;
+  totalPnl: number;
+  unpricedTokens: string[];
+  hasUnknownCostBasis: boolean;
+}
+
+export function calcUnconvertedHoldings(
+  claims: FeeClaim[],
+  prices: Record<string, number>,
+): UnconvertedHoldings {
+  const quantities = new Map<string, number>();
+  const costBasis = new Map<string, number>();
+  // Tokens where at least one contributing claim lacks a claim-time value.
+  // Their cost basis is only partial, so we refuse to show a P&L for them
+  // rather than report a misleadingly inflated gain (North Star: auditable).
+  const unknownBasisTokens = new Set<string>();
+  let hasUnknownCostBasis = false;
+
+  const addQty = (symbol: string, amount: number): string | null => {
+    const token = symbol.trim().toUpperCase();
+    if (token === "" || !Number.isFinite(amount) || amount === 0) return null;
+    quantities.set(token, (quantities.get(token) ?? 0) + amount);
+    return token;
+  };
+
+  const addCost = (token: string, value: number) => {
+    if (!Number.isFinite(value)) return;
+    costBasis.set(token, (costBasis.get(token) ?? 0) + value);
+  };
+
+  for (const claim of claims) {
+    if (claim.convertedToStable) continue;
+
+    // Collect this claim's held sides (token + amount), skipping empties.
+    const sides: Array<{ token: string; amount: number }> = [];
+    const t1 = addQty(claim.token1Symbol, claim.token1Amount);
+    if (t1) sides.push({ token: t1, amount: claim.token1Amount });
+    const t2 = addQty(claim.token2Symbol, claim.token2Amount);
+    if (t2) sides.push({ token: t2, amount: claim.token2Amount });
+    if (sides.length === 0) continue;
+
+    // Cost basis needs the claim-time USD value; without it, mark every side
+    // as unknown-basis and flag globally.
+    if (claim.stableAmount === null || !Number.isFinite(claim.stableAmount)) {
+      hasUnknownCostBasis = true;
+      for (const s of sides) unknownBasisTokens.add(s.token);
+      continue;
+    }
+
+    // Stable sides count at face value; volatile side(s) split the remainder.
+    const stableSides = sides.filter((s) => STABLE_SYMBOLS.has(s.token));
+    const volatileSides = sides.filter((s) => !STABLE_SYMBOLS.has(s.token));
+    let stableFace = 0;
+    for (const s of stableSides) {
+      addCost(s.token, s.amount);
+      stableFace += s.amount;
+    }
+    const residual = claim.stableAmount - stableFace;
+    if (volatileSides.length === 0) continue;
+    if (volatileSides.length === 1) {
+      addCost(volatileSides[0].token, residual);
+    } else {
+      // Rare multi-volatile claim: split residual by current price weight,
+      // falling back to equal split when prices are missing.
+      let weightTotal = 0;
+      const weights = volatileSides.map((s) => {
+        const p = Number.isFinite(prices[s.token]) ? prices[s.token] : 0;
+        const w = p > 0 ? s.amount * p : 0;
+        weightTotal += w;
+        return w;
+      });
+      volatileSides.forEach((s, i) => {
+        const share =
+          weightTotal > 0 ? weights[i] / weightTotal : 1 / volatileSides.length;
+        addCost(s.token, residual * share);
+      });
+    }
+  }
+
+  const rows: HoldingRow[] = [];
+  const unpricedTokens: string[] = [];
+  let totalCurrentValue = 0;
+  let totalCostBasis = 0;
+  let totalPnl = 0;
+
+  for (const [token, quantity] of quantities) {
+    let price: number | null = Number.isFinite(prices[token])
+      ? prices[token]
+      : null;
+    if (price === null && STABLE_SYMBOLS.has(token)) price = 1;
+    const currentValue = price === null ? null : quantity * price;
+    // A token with any unknown-basis contribution has no trustworthy cost
+    // basis or P&L — show "—" instead of a partial (inflated) figure.
+    const basis =
+      unknownBasisTokens.has(token) || !costBasis.has(token)
+        ? null
+        : (costBasis.get(token) as number);
+    const pnl =
+      currentValue === null || basis === null ? null : currentValue - basis;
+
+    if (currentValue === null) unpricedTokens.push(token);
+    else totalCurrentValue += currentValue;
+    if (basis !== null) totalCostBasis += basis;
+    if (pnl !== null) totalPnl += pnl;
+
+    rows.push({ token, quantity, price, currentValue, costBasis: basis, pnl });
+  }
+
+  rows.sort((a, b) => (b.currentValue ?? 0) - (a.currentValue ?? 0));
+  return {
+    rows,
+    totalCurrentValue,
+    totalCostBasis,
+    totalPnl,
+    unpricedTokens,
+    hasUnknownCostBasis,
+  };
+}
+
 export function calcWideRangePercent(
   rangeDown: number,
   rangeUp: number,

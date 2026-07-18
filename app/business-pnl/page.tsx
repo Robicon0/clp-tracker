@@ -8,7 +8,11 @@ import {
   saveBusinessPnLSettings,
   type BusinessPnLSettings,
 } from "../../lib/storage";
-import { calcBusinessPnL, calcYieldAfter } from "../../lib/calculations";
+import {
+  calcBusinessPnL,
+  calcUnconvertedHoldings,
+  calcYieldAfter,
+} from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
 import type { FeeClaim } from "../../lib/types";
 
@@ -108,6 +112,11 @@ export default function BusinessPnlPage() {
 
   const business = useMemo(
     () => calcBusinessPnL(claims, settings.prices),
+    [claims, settings.prices],
+  );
+
+  const holdings = useMemo(
+    () => calcUnconvertedHoldings(claims, settings.prices),
     [claims, settings.prices],
   );
 
@@ -267,6 +276,127 @@ export default function BusinessPnlPage() {
               </tfoot>
             </table>
           </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+        <div className="border-b border-[var(--border)] px-5 py-4">
+          <h2 className="text-sm font-semibold tracking-tight">
+            Unconverted Holdings
+          </h2>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
+            Reward tokens you claimed but have not cashed out to stablecoin —
+            still exposed to price. Cost basis is the claim-time USD value;
+            P&amp;L is what you&apos;ve gained or lost by holding instead of
+            converting. Uses the same prices entered above.
+          </p>
+        </div>
+        {holdings.rows.length === 0 ? (
+          <div className="px-6 py-10 text-center text-sm text-[var(--muted)]">
+            No unconverted holdings — every claim has been cashed out to
+            stablecoin.
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-4 border-b border-[var(--border)] px-5 py-4 sm:grid-cols-3">
+              <SummaryStat
+                label="Current Value"
+                value={formatUsd(holdings.totalCurrentValue)}
+              />
+              <SummaryStat
+                label="Cost Basis (Claim-Time)"
+                value={formatUsd(holdings.totalCostBasis)}
+              />
+              <SummaryStat
+                label="Unrealized P&L"
+                value={formatUsd(holdings.totalPnl)}
+                valueClass={pnlColor(holdings.totalPnl)}
+              />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+                <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Token</th>
+                    <th className="px-4 py-3 text-right font-medium">
+                      Quantity Held
+                    </th>
+                    <th className="px-4 py-3 text-right font-medium">
+                      Current Value
+                    </th>
+                    <th className="px-4 py-3 text-right font-medium">
+                      Cost Basis
+                    </th>
+                    <th className="px-4 py-3 text-right font-medium">
+                      Unrealized P&L
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {holdings.rows.map((row) => (
+                    <tr key={row.token}>
+                      <td className="px-4 py-3 font-medium">{row.token}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {formatToken(row.quantity)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {row.currentValue === null ? (
+                          <span className="text-[var(--muted)]">
+                            — enter price
+                          </span>
+                        ) : (
+                          formatUsd(row.currentValue)
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {row.costBasis === null ? (
+                          <span className="text-[var(--muted)]">—</span>
+                        ) : (
+                          formatUsd(row.costBasis)
+                        )}
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-right tabular-nums ${
+                          row.pnl === null ? "" : pnlColor(row.pnl)
+                        }`}
+                      >
+                        {row.pnl === null ? (
+                          <span className="text-[var(--muted)]">—</span>
+                        ) : (
+                          formatUsd(row.pnl)
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
+                  <tr className="font-semibold">
+                    <td className="px-4 py-3">Total</td>
+                    <td className="px-4 py-3" />
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {formatUsd(holdings.totalCurrentValue)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {formatUsd(holdings.totalCostBasis)}
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-right tabular-nums ${pnlColor(
+                        holdings.totalPnl,
+                      )}`}
+                    >
+                      {formatUsd(holdings.totalPnl)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            {holdings.hasUnknownCostBasis && (
+              <p className="border-t border-[var(--border)] px-5 py-3 text-xs text-amber-400">
+                ⚠ Some unconverted claims have no recorded USD value, so their
+                cost basis is unknown and excluded from the totals above.
+              </p>
+            )}
+          </>
         )}
       </div>
 

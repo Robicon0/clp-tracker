@@ -228,7 +228,6 @@ at the plan gate.
   positions only, deposit-weighted), Combined APR (all
   positions ever, deposit-weighted). Approved by Osho during
   Sprint 2 plan gate.
-- Sprint 8: Unconverted Token Holdings + Current Value
 - Sprint 9: Extended Transfers Page
 - Sprint 10: Withdrawals Page (new)
 - Sprint 11: Predictive Out-of-Range Display
@@ -345,6 +344,33 @@ at the plan gate.
   matched hand calculations (All Total 750, Converted 770, P&L
   +20, checkpoint 570); persistence across reload confirmed;
   zero console errors; seeds removed. tsc/lint/build clean.
+- Sprint 8: Unconverted Token Holdings + Current Value
+  (2026-07-18). Phase A: every FeeClaim has convertedToStable;
+  when false the reward tokens are still held ("Still in X" rows
+  in the sheet). Business P&L's All Total sums ALL reward tokens
+  (converted + unconverted) and never isolated the still-held,
+  price-exposed subset. Gate approved by Osho: full scope (qty +
+  current value + cost basis + P&L per token), placed as a
+  section on the existing /business-pnl page reusing the same
+  clp_business_pnl prices (no duplicate price entry). Shipped:
+  calcUnconvertedHoldings in lib/calculations.ts — sums token
+  amounts only from claims where convertedToStable === false;
+  per-claim cost basis allocation attributes stablecoin sides at
+  face value and the residual stableAmount to the volatile
+  side(s) (multi-volatile claims split residual by current-price
+  weight). Correctness guard: if ANY of a token's unconverted
+  claims lacks a claim-time USD value (stableAmount null), that
+  token's cost basis and P&L render "—" instead of a partial
+  (inflated) figure, and an amber banner flags it — quantity and
+  current value still show since those are known. "Unconverted
+  Holdings" section on /business-pnl: 3 summary cards (Current
+  Value, Cost Basis, Unrealized P&L) + per-token table with
+  totals row. Verified on localhost with seeded converted +
+  unconverted + null-basis claims: converted ETH excluded, ZEC
+  250/270/-20, USDC flat, SOL with a null-basis claim correctly
+  shows current $225 but basis/P&L "—" (not an inflated +$75),
+  totals 625/420/-20, warning banner rendered; zero console
+  errors; seeds removed. tsc/lint/build clean.
 - Exit-before-entry date warning (2026-07-18): DateOrderWarning
   component in app/positions/page.tsx shows a non-blocking amber
   plausibility warning (Invariant #8) when exit datetime is
