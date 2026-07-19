@@ -31,6 +31,7 @@ import {
   getEffectiveClaimed,
   getEffectiveDeposited,
   getEffectiveTotalFees,
+  splitDepositedIntoTokens,
   type ILResult,
   type RangeHealth,
 } from "../../lib/calculations";
@@ -169,6 +170,21 @@ function formDeposited(
   return computed > 0 ? computed : num(deposited);
 }
 
+// Token counts and Deposited are written back into number inputs when the
+// other side is edited, so they need trimming — a raw String(2.4000000000004)
+// is a legal but unreadable field value.
+function formatAmountInput(value: number, decimals: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  return String(Number(value.toFixed(decimals)));
+}
+
+// The token counts an auto-split replaced, kept only to show them back to
+// the user in the amber note.
+interface TokenSplitWarning {
+  base: string;
+  quote: string;
+}
+
 // Parses form strings, then delegates to the shared computePositionIL in
 // lib/calculations (Invariant #6 — one IL source of truth across pages).
 // Form naming: token1 = base token (calcIL token0), token2 = quote token
@@ -299,7 +315,11 @@ function positionToForm(p: Position): PositionFormState {
     chain: p.chain,
     protocol: p.protocol,
     entryDatetime: isoToDatetimeLocal(p.entryDatetime),
-    deposited: String(p.deposited),
+    // Seed the (now editable) Deposited input from the derived value, not
+    // the raw stored one, so legacy records open showing corrected money.
+    // Trimmed to cents — the derivation leaves float noise the field would
+    // otherwise show as 10927.460001309999.
+    deposited: formatAmountInput(getEffectiveDeposited(p), 2),
     scalp: numStr(p.scalp),
     notes: p.notes,
     entryPrice: String(p.entryPrice),
@@ -1535,11 +1555,72 @@ function PositionFormModal({
   onSubmit,
 }: PositionFormModalProps) {
   const [form, setForm] = useState<PositionFormState>(initial);
+  // Tracks whether the user hand-typed a token count. Auto-split still wins
+  // (it must, or Deposited and the token counts could disagree), but when it
+  // overwrites hand-typed amounts we say so instead of changing them silently.
+  const [tokensTouched, setTokensTouched] = useState(false);
+  const [splitWarning, setSplitWarning] = useState<TokenSplitWarning | null>(
+    null,
+  );
 
   const set = <K extends keyof PositionFormState>(
     key: K,
     value: PositionFormState[K],
   ) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  // Deposited USD is the anchor: editing it, the entry price, or either
+  // range bound keeps the money fixed and re-splits it into the token
+  // counts the AMM would actually give you at that price (Invariant #9 —
+  // Deposited stays (base × entry) + quote, just solved from the other end).
+  const setAnchor = (
+    key: "deposited" | "entryPrice" | "bottomRange" | "topRange",
+    value: string,
+  ) => {
+    const next: PositionFormState = { ...form, [key]: value };
+    const split = splitDepositedIntoTokens(
+      num(next.deposited),
+      num(next.entryPrice),
+      num(next.bottomRange),
+      num(next.topRange),
+    );
+    if (split) {
+      const baseCount = formatAmountInput(split.baseCount, 8);
+      const quoteCount = formatAmountInput(split.quoteCount, 8);
+      const replacesTyped =
+        tokensTouched &&
+        (baseCount !== form.token1Count || quoteCount !== form.token2Count);
+      if (replacesTyped) {
+        setSplitWarning({
+          base: form.token1Count,
+          quote: form.token2Count,
+        });
+        setTokensTouched(false);
+      }
+      next.token1Count = baseCount;
+      next.token2Count = quoteCount;
+    }
+    setForm(next);
+  };
+
+  // Typing a token count directly hands control back to the user: Deposited
+  // recomputes from the tokens (the original one-way flow) and auto-split
+  // stops overwriting until the anchor fields move again.
+  const setTokenCount = (
+    key: "token1Count" | "token2Count",
+    value: string,
+  ) => {
+    const next: PositionFormState = { ...form, [key]: value };
+    const computed = formDeposited(
+      next.token1Count,
+      next.entryPrice,
+      next.token2Count,
+      next.deposited,
+    );
+    next.deposited = computed > 0 ? formatAmountInput(computed, 2) : "";
+    setTokensTouched(true);
+    setSplitWarning(null);
+    setForm(next);
+  };
 
   const upper = (key: keyof PositionFormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -1596,7 +1677,9 @@ function PositionFormModal({
     ],
   );
 
-  // Deposited USD is display-only, always derived from the three inputs.
+  // Deposited USD stays the derived audit value even though it is now
+  // typeable — setAnchor keeps the token counts consistent with whatever is
+  // in the field, so this recomputation agrees with it (Invariant #9).
   const effectiveDeposited = useMemo(
     () =>
       formDeposited(
@@ -1733,7 +1816,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.entryPrice}
-                onChange={(e) => set("entryPrice", e.target.value)}
+                onChange={(e) => setAnchor("entryPrice", e.target.value)}
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
@@ -1745,7 +1828,7 @@ function PositionFormModal({
                   required
                   className={inputClass}
                   value={form.bottomRange}
-                  onChange={(e) => set("bottomRange", e.target.value)}
+                  onChange={(e) => setAnchor("bottomRange", e.target.value)}
                 />
               </Field>
               <Field label="Range Up" htmlFor="topRange">
@@ -1756,7 +1839,7 @@ function PositionFormModal({
                   required
                   className={inputClass}
                   value={form.topRange}
-                  onChange={(e) => set("topRange", e.target.value)}
+                  onChange={(e) => setAnchor("topRange", e.target.value)}
                 />
               </Field>
             </div>
@@ -1774,20 +1857,21 @@ function PositionFormModal({
                 Auto: (Range Up − Range Down) / Range Down × 100
               </p>
             </div>
-            <div className="space-y-1.5">
-              <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                Deposited (USD)
-              </span>
-              <div
-                className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]"
-                aria-live="polite"
-              >
-                {effectiveDeposited > 0 ? formatUsd(effectiveDeposited) : "—"}
-              </div>
-              <p className="text-[11px] text-[var(--muted)]">
-                Auto: (Base Token Count × Entry Price) + Quote Token Count
-              </p>
-            </div>
+            <Field
+              label="Deposited (USD)"
+              htmlFor="deposited"
+              hint="Type your deposit and the token counts split automatically — or type the token counts and this updates instead."
+            >
+              <input
+                id="deposited"
+                type="number"
+                step="any"
+                className={inputClass}
+                placeholder="0.00"
+                value={form.deposited}
+                onChange={(e) => setAnchor("deposited", e.target.value)}
+              />
+            </Field>
             <Field label="Base Token Symbol" htmlFor="token1Symbol">
               <input
                 id="token1Symbol"
@@ -1816,7 +1900,7 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.token1Count}
-                onChange={(e) => set("token1Count", e.target.value)}
+                onChange={(e) => setTokenCount("token1Count", e.target.value)}
               />
             </Field>
             <Field label="Quote Token Count" htmlFor="token2Count">
@@ -1827,10 +1911,21 @@ function PositionFormModal({
                 required
                 className={inputClass}
                 value={form.token2Count}
-                onChange={(e) => set("token2Count", e.target.value)}
+                onChange={(e) => setTokenCount("token2Count", e.target.value)}
               />
             </Field>
           </div>
+          {splitWarning && (
+            <p
+              className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300"
+              role="status"
+            >
+              Auto-split replaced your typed token counts (
+              {splitWarning.base || "0"} {form.token1Symbol || "base"} /{" "}
+              {splitWarning.quote || "0"} {form.token2Symbol || "quote"}). Edit
+              a token count again to take back control.
+            </p>
+          )}
           <div className="mt-4">
             <Field
               label="LP Transaction Link (Optional)"

@@ -666,6 +666,60 @@ export function calcRangeHealth(
   };
 }
 
+export interface TokenSplit {
+  baseCount: number;
+  quoteCount: number;
+}
+
+// Splits a deposited USD amount into the base/quote token counts a CLMM
+// position actually holds at `entryPrice` inside [rangeDown, rangeUp].
+//
+// Per unit of liquidity L the position holds
+//   base  = 1/√P − 1/√Pb      quote = √P − √Pa
+// so its value in quote terms is L × (2√P − P/√Pb − √Pa). Inverting that
+// gives L from a known deposit, and the two amounts follow. Branches on
+// entry vs. range exactly as calcIL does (Invariant #6 — the same position
+// shape must produce the same amounts here and in the IL projection):
+// at/below the bottom the position is 100% base, at/above the top 100%
+// quote. Note the 50/50 split sits at the GEOMETRIC mean √(Pa·Pb), not the
+// arithmetic midpoint of the range.
+//
+// Returns null when the inputs cannot describe a position (non-positive or
+// non-finite values, inverted range) so callers leave token counts alone
+// rather than writing zeros.
+export function splitDepositedIntoTokens(
+  deposited: number,
+  entryPrice: number,
+  rangeDown: number,
+  rangeUp: number,
+): TokenSplit | null {
+  const inputs = [deposited, entryPrice, rangeDown, rangeUp];
+  if (inputs.some((v) => !Number.isFinite(v) || v <= 0)) return null;
+  if (rangeUp <= rangeDown) return null;
+
+  const spa = Math.sqrt(rangeDown);
+  const spb = Math.sqrt(rangeUp);
+  const sp0 = Math.sqrt(entryPrice);
+
+  if (entryPrice <= rangeDown) {
+    return { baseCount: deposited / entryPrice, quoteCount: 0 };
+  }
+  if (entryPrice >= rangeUp) {
+    return { baseCount: 0, quoteCount: deposited };
+  }
+
+  const basePerL = 1 / sp0 - 1 / spb;
+  const quotePerL = sp0 - spa;
+  const valuePerL = basePerL * entryPrice + quotePerL;
+  if (valuePerL <= 0 || !Number.isFinite(valuePerL)) return null;
+
+  const L = deposited / valuePerL;
+  const baseCount = L * basePerL;
+  const quoteCount = L * quotePerL;
+  if (!Number.isFinite(baseCount) || !Number.isFinite(quoteCount)) return null;
+  return { baseCount, quoteCount };
+}
+
 export function calcWideRangePercent(
   rangeDown: number,
   rangeUp: number,
