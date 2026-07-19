@@ -847,6 +847,72 @@ export function entryPriceFromDeposited(
   return { entryPrice, clamped: false, maxDeposited };
 }
 
+export interface EntryPriceFromTokens {
+  entryPrice: number;
+  // "two-sided" solved the quadratic from both amounts; "base-only" and
+  // "quote-only" sit on a range boundary and need no solving.
+  shape: "two-sided" | "base-only" | "quote-only";
+}
+
+// Solves the entry price implied by the token amounts actually deposited —
+// the reverse of splitDepositedIntoTokens. Lets a position be recorded from
+// on-chain transaction amounts instead of a typed (estimated) price.
+//
+// With x = √P, the two CLMM amount formulas give a ratio that rearranges to
+//   (a0·√pU)x² + (a1 − a0·√pU·√pL)x − a1·√pU = 0
+// C is negative whenever a1 > 0, so the roots straddle zero and only the
+// positive one is physical.
+//
+// The ratio a0/a1 falls monotonically from ∞ at the bottom of the range to 0
+// at the top, so any two positive amounts map to exactly one price strictly
+// inside the range — a two-sided pair cannot be "out of range". Single-sided
+// input is the only way to land on a boundary, and it is solved directly
+// rather than through the quadratic (a0 = 0 would divide by zero).
+export function entryPriceFromTokens(
+  baseCount: number,
+  quoteCount: number,
+  rangeDown: number,
+  rangeUp: number,
+): EntryPriceFromTokens | null {
+  if (!Number.isFinite(baseCount) || !Number.isFinite(quoteCount)) return null;
+  if (baseCount < 0 || quoteCount < 0) return null;
+  if (
+    !Number.isFinite(rangeDown) ||
+    !Number.isFinite(rangeUp) ||
+    rangeDown <= 0 ||
+    rangeUp <= rangeDown
+  ) {
+    return null;
+  }
+  if (baseCount === 0 && quoteCount === 0) return null;
+
+  // All quote token means price has reached the top of the range; all base
+  // token means it has reached the bottom.
+  if (baseCount === 0) {
+    return { entryPrice: rangeUp, shape: "quote-only" };
+  }
+  if (quoteCount === 0) {
+    return { entryPrice: rangeDown, shape: "base-only" };
+  }
+
+  const spU = Math.sqrt(rangeUp);
+  const spL = Math.sqrt(rangeDown);
+  const a = baseCount * spU;
+  const b = quoteCount - baseCount * spU * spL;
+  const c = -quoteCount * spU;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const x = (-b + Math.sqrt(disc)) / (2 * a);
+  if (!Number.isFinite(x) || x <= 0) return null;
+  const entryPrice = x * x;
+  // Defensive only (Invariant #8) — unreachable for positive amounts given
+  // the monotonicity above, but a NaN or out-of-band price must never reach
+  // the IL projections.
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return null;
+  if (entryPrice < rangeDown || entryPrice > rangeUp) return null;
+  return { entryPrice, shape: "two-sided" };
+}
+
 export function calcWideRangePercent(
   rangeDown: number,
   rangeUp: number,

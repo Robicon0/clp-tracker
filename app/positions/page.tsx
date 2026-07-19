@@ -30,11 +30,13 @@ import {
   computePositionIL,
   depositedFromLiquidity,
   entryPriceFromDeposited,
+  entryPriceFromTokens,
   getEffectiveClaimed,
   getEffectiveDeposited,
   getEffectiveTotalFees,
   liquidityFromDeposited,
   splitDepositedIntoTokens,
+  type EntryPriceFromTokens,
   type ILResult,
   type TokenSplit,
   type RangeHealth,
@@ -187,6 +189,51 @@ function formatAmountInput(value: number, decimals: number): string {
 interface TokenSplitWarning {
   base: string;
   quote: string;
+}
+
+// Chooses which fields drive the LP Range section. Add-position only.
+function InputModeTabs({
+  mode,
+  onChange,
+}: {
+  mode: "price" | "tokens";
+  onChange: (mode: "price" | "tokens") => void;
+}) {
+  const tabs: { key: "price" | "tokens"; label: string }[] = [
+    { key: "price", label: "Price & deposit" },
+    { key: "tokens", label: "Token amounts" },
+  ];
+  return (
+    <div className="mb-4 space-y-1.5">
+      <div
+        role="tablist"
+        aria-label="Position input method"
+        className="inline-flex rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)]/40 p-0.5"
+      >
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={mode === tab.key}
+            onClick={() => onChange(tab.key)}
+            className={`rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${
+              mode === tab.key
+                ? "bg-[var(--accent)] text-white"
+                : "text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-[var(--muted)]">
+        {mode === "price"
+          ? "Type an entry price or a deposit — the token amounts follow."
+          : "Type the exact token amounts from your transaction — the entry price is solved from them."}
+      </p>
+    </div>
+  );
 }
 
 // Parses form strings, then delegates to the shared computePositionIL in
@@ -1571,6 +1618,16 @@ function PositionFormModal({
   const [clampNote, setClampNote] = useState<string | null>(null);
   // editingStatus is only passed from the Edit call site.
   const isEditing = editingStatus !== undefined;
+  // Which fields drive the rest. "price" is the existing behaviour — entry
+  // price and Deposited both editable and linked. "tokens" makes the token
+  // amounts the source of truth and solves the entry price from them. Add
+  // only: Edit must never rewrite a recorded position from derived numbers.
+  const [inputMode, setInputMode] = useState<"price" | "tokens">("price");
+  // Shape of the last token-driven solve, for the explanatory note.
+  const [solvedShape, setSolvedShape] = useState<
+    EntryPriceFromTokens["shape"] | null
+  >(null);
+  const tokenMode = !isEditing && inputMode === "tokens";
 
   const set = <K extends keyof PositionFormState>(
     key: K,
@@ -1667,11 +1724,29 @@ function PositionFormModal({
   // Typing a token count directly hands control back to the user: Deposited
   // recomputes from the tokens (the original one-way flow) and auto-split
   // stops overwriting until the anchor fields move again.
+  //
+  // In token-amount mode the token counts are instead the source of truth:
+  // the entry price is solved from them, so a position can be recorded from
+  // on-chain transaction amounts rather than an estimated price.
   const setTokenCount = (
     key: "token1Count" | "token2Count",
     value: string,
   ) => {
     const next: PositionFormState = { ...form, [key]: value };
+
+    if (inputMode === "tokens") {
+      const solved = entryPriceFromTokens(
+        num(next.token1Count),
+        num(next.token2Count),
+        num(next.bottomRange),
+        num(next.topRange),
+      );
+      setSolvedShape(solved ? solved.shape : null);
+      if (solved) {
+        next.entryPrice = formatAmountInput(solved.entryPrice, 6);
+      }
+    }
+
     const computed = formDeposited(
       next.token1Count,
       next.entryPrice,
@@ -1684,6 +1759,38 @@ function PositionFormModal({
     // Typing a token count is also how you resize past the value ceiling:
     // Deposited follows the tokens here, which re-pins the position size for
     // the next entry-price edit.
+    setClampNote(null);
+    setForm(next);
+  };
+
+  // Range bounds are what the entry price is solved against, so in token
+  // mode moving a bound re-solves from the same token amounts.
+  const setRangeBound = (
+    key: "bottomRange" | "topRange",
+    value: string,
+  ) => {
+    if (inputMode !== "tokens") {
+      setAnchor(key, value);
+      return;
+    }
+    const next: PositionFormState = { ...form, [key]: value };
+    const solved = entryPriceFromTokens(
+      num(next.token1Count),
+      num(next.token2Count),
+      num(next.bottomRange),
+      num(next.topRange),
+    );
+    setSolvedShape(solved ? solved.shape : null);
+    if (solved) {
+      next.entryPrice = formatAmountInput(solved.entryPrice, 6);
+    }
+    const computed = formDeposited(
+      next.token1Count,
+      next.entryPrice,
+      next.token2Count,
+      next.deposited,
+    );
+    next.deposited = computed > 0 ? formatAmountInput(computed, 2) : "";
     setClampNote(null);
     setForm(next);
   };
@@ -1873,18 +1980,38 @@ function PositionFormModal({
         </Section>
 
         <Section title="LP Range & Transaction">
+          {!isEditing && (
+            <InputModeTabs mode={inputMode} onChange={setInputMode} />
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Entry Price (Base)" htmlFor="entryPrice">
-              <input
-                id="entryPrice"
-                type="number"
-                step="any"
-                required
-                className={inputClass}
-                value={form.entryPrice}
-                onChange={(e) => setAnchor("entryPrice", e.target.value)}
-              />
-            </Field>
+            {tokenMode ? (
+              <div className="space-y-1.5">
+                <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                  Entry Price (Base)
+                </span>
+                <div
+                  className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]"
+                  aria-live="polite"
+                >
+                  {num(form.entryPrice) > 0 ? form.entryPrice : "—"}
+                </div>
+                <p className="text-[11px] text-[var(--muted)]">
+                  Solved from the token amounts and your range bounds.
+                </p>
+              </div>
+            ) : (
+              <Field label="Entry Price (Base)" htmlFor="entryPrice">
+                <input
+                  id="entryPrice"
+                  type="number"
+                  step="any"
+                  required
+                  className={inputClass}
+                  value={form.entryPrice}
+                  onChange={(e) => setAnchor("entryPrice", e.target.value)}
+                />
+              </Field>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Range Down" htmlFor="bottomRange">
                 <input
@@ -1894,7 +2021,7 @@ function PositionFormModal({
                   required
                   className={inputClass}
                   value={form.bottomRange}
-                  onChange={(e) => setAnchor("bottomRange", e.target.value)}
+                  onChange={(e) => setRangeBound("bottomRange", e.target.value)}
                 />
               </Field>
               <Field label="Range Up" htmlFor="topRange">
@@ -1905,7 +2032,7 @@ function PositionFormModal({
                   required
                   className={inputClass}
                   value={form.topRange}
-                  onChange={(e) => setAnchor("topRange", e.target.value)}
+                  onChange={(e) => setRangeBound("topRange", e.target.value)}
                 />
               </Field>
             </div>
@@ -1923,25 +2050,42 @@ function PositionFormModal({
                 Auto: (Range Up − Range Down) / Range Down × 100
               </p>
             </div>
-            <Field
-              label="Deposited (USD)"
-              htmlFor="deposited"
-              hint={
-                linkEntryAndDeposited
-                  ? "Linked to entry price along the LP value curve — moving either one moves the other, and the token counts follow both."
-                  : "Type your deposit and the token counts split automatically — or type the token counts and this updates instead."
-              }
-            >
-              <input
-                id="deposited"
-                type="number"
-                step="any"
-                className={inputClass}
-                placeholder="0.00"
-                value={form.deposited}
-                onChange={(e) => setAnchor("deposited", e.target.value)}
-              />
-            </Field>
+            {tokenMode ? (
+              <div className="space-y-1.5">
+                <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                  Deposited (USD)
+                </span>
+                <div
+                  className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]"
+                  aria-live="polite"
+                >
+                  {effectiveDeposited > 0 ? formatUsd(effectiveDeposited) : "—"}
+                </div>
+                <p className="text-[11px] text-[var(--muted)]">
+                  Auto: (Base Token Count × Entry Price) + Quote Token Count
+                </p>
+              </div>
+            ) : (
+              <Field
+                label="Deposited (USD)"
+                htmlFor="deposited"
+                hint={
+                  linkEntryAndDeposited
+                    ? "Linked to entry price along the LP value curve — moving either one moves the other, and the token counts follow both."
+                    : "Type your deposit and the token counts split automatically — or type the token counts and this updates instead."
+                }
+              >
+                <input
+                  id="deposited"
+                  type="number"
+                  step="any"
+                  className={inputClass}
+                  placeholder="0.00"
+                  value={form.deposited}
+                  onChange={(e) => setAnchor("deposited", e.target.value)}
+                />
+              </Field>
+            )}
             <Field label="Base Token Symbol" htmlFor="token1Symbol">
               <input
                 id="token1Symbol"
@@ -1985,6 +2129,30 @@ function PositionFormModal({
               />
             </Field>
           </div>
+          {tokenMode && solvedShape !== null && solvedShape !== "two-sided" && (
+            <p
+              className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[12px] text-sky-300"
+              role="status"
+            >
+              Only one token entered, so the entry price sits exactly on your{" "}
+              {solvedShape === "base-only" ? "Range Down" : "Range Up"} bound —
+              that is where a position holds{" "}
+              {solvedShape === "base-only"
+                ? `only ${form.token1Symbol || "the base token"}`
+                : `only ${form.token2Symbol || "the quote token"}`}
+              . Enter both amounts to solve a price inside the range.
+            </p>
+          )}
+          {tokenMode && form.token1Count !== "" && form.token2Count !== "" &&
+            solvedShape === null && (
+            <p
+              className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300"
+              role="status"
+            >
+              Could not solve an entry price from these amounts. Check that both
+              range bounds are set and Range Up is above Range Down.
+            </p>
+          )}
           {clampNote && (
             <p
               className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300"
