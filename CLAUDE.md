@@ -582,23 +582,37 @@ at the plan gate.
   cancel left the stored record untouched. tsc/lint/build clean;
   zero console errors; seeds removed.
 
+- Current Balance gap fix (2026-07-20) [63aa5c8]: Fixed Current
+  Balance gap in "Recalculate from token amounts" (follow-up to
+  22b966d). When Current Balance had never been independently
+  updated (still equal to old Deposited), it now moves together
+  with the correction, preventing fake profit/loss from appearing.
+  If Current Balance reflected real tracked data, it's left
+  untouched and the row now warns the user to review it manually.
+  CRITICAL SUBTLETY: the case test compares the position's STORED
+  deposited against its STORED currentBalance — NOT
+  getEffectiveDeposited. For the reported record the derived value
+  is 8666.892995 against a stored 8666.89, a 0.003 gap that would
+  misclassify an untouched balance as real tracked data and skip
+  the fix entirely. The 1e-8 epsilon only absorbs float
+  representation; choosing the right operand is what makes the
+  test correct. Current Balance moves via a currentBalanceOverride
+  field on the form state that only the confirmed recalculation
+  sets, so every other path through buildRecords carries the
+  stored balance through untouched. No schema change. Verified on
+  localhost:3001: Case 1 (balance 8666.89 = deposited) → both
+  Deposited and Current Balance $8,243.80, Price Diff $0.00,
+  Profit $0.00 (phantom $423.09 gone); Case 2 (balance 9100) →
+  Current Balance untouched, Profit $433.11 → $856.20 exactly as
+  the warning predicted; Update flow unchanged; a plain
+  entry-price edit afterwards still held Deposited and preserved
+  currentBalance, so the override does not leak. tsc/lint/build
+  clean; zero console errors; seeds removed.
+
 ## Known Issues
 
-- **currentBalance not covered by the Edit-mode recalculation**
-  [raised 2026-07-20, with 22b966d]. "Recalculate from token
-  amounts" updates Entry Price and Deposited but leaves
-  currentBalance alone. A position whose currentBalance still
-  equals the OLD (wrong) Deposited therefore shows a phantom Price
-  Diff and Profit afterwards — in the verification case Deposited
-  went $8,666.89 → $8,243.80 while currentBalance stayed
-  $8,666.89, displaying +$423.09 profit that does not exist. Not
-  changed silently: currentBalance is separately maintained via
-  the Update action, and deciding whether a correction should drag
-  it along needs a gate. Options are (a) move currentBalance with
-  the correction when it still equals the old Deposited, i.e. was
-  never independently updated, (b) always leave it and prompt the
-  user to run Update afterwards, or (c) show a warning on the
-  position row when currentBalance predates a recalculation.
+- None currently tracked. (Current Balance gap in the Edit-mode
+  recalculation closed 2026-07-20 by 63aa5c8 — see above.)
 
 ## Architecture Notes
 
