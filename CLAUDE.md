@@ -503,6 +503,61 @@ at the plan gate.
   appears on bad dates in both modals, disappears when dates are
   fixed); seeds removed after. tsc/build clean.
 
+- Deposited ↔ token counts two-way link (2026-07-19) [19be937]:
+  Deposited (USD) became an editable input on the position form.
+  Typing it solves for the token counts via
+  splitDepositedIntoTokens in lib/calculations.ts, so Invariant #9
+  still holds — Deposited stays (base × entry) + quote, just
+  derived from the other end. Editing a token count directly
+  recomputes Deposited (the original one-way flow) and hands
+  control back to the user; a later auto-split says so in an amber
+  note rather than replacing hand-typed amounts silently. Note the
+  50/50 token split sits at the GEOMETRIC mean √(Pa·Pb), not the
+  arithmetic midpoint. Verified: $8,666.89 at entry 1639.4 in
+  1559.37–1982.32 → 4.15359613 / 1857.48450667, exact round-trip.
+- Entry price ↔ Deposited link along the LP value curve
+  (2026-07-19) [9a3ba49]: moving either one moves the other,
+  holding the position's liquidity fixed — the same curve the
+  out-of-range projections use. lib/calculations.ts gained a
+  single perLiquidity core with liquidityFromDeposited,
+  tokensFromLiquidity, depositedFromLiquidity and
+  entryPriceFromDeposited built on it (splitDepositedIntoTokens
+  now composes the first two; behaviour unchanged). Value is flat
+  above the top of the range, so deposits above that ceiling clamp
+  with a note; below the bottom the position is all base token and
+  value is linear in price, so there is no lower bound. Live on
+  Add only — on a saved position Deposited must not move when an
+  entry-price typo is corrected. Verified: $10,000 @ 1700 in
+  1559.37–1982.32 pins L=2087.2655; entry → 1900 gave $10,467.20;
+  $12,000 clamped to $10,508.12; $8,000 solved entry 1338.52 below
+  the range.
+- Token-amount-driven entry price (2026-07-20) [b7da583]: Added
+  token-amount-driven entry price mode to Add Position form. Users
+  can type exact base/quote token amounts (from on-chain tx data)
+  and the app solves for the exact entry price using the range
+  bounds, instead of requiring a typed/estimated entry price. Edit
+  mode unaffected. entryPriceFromTokens in lib/calculations.ts
+  solves (a0·√pU)x² + (a1 − a0·√pU·√pL)x − a1·√pU = 0 for x = √P,
+  positive root only; single-sided input bypasses the quadratic
+  (a0 = 0 would divide by zero) and returns the range bound it
+  sits on, tagged via the returned `shape`. MATH NOTE: the ratio
+  a0/a1 falls monotonically from ∞ at range down to 0 at range up,
+  so any two positive amounts map to exactly one price strictly
+  inside the range — a two-sided pair cannot be out of range, and
+  the in-range check is a defensive guard (Invariant #8) rather
+  than a reachable case. UI is a two-tab selector on Add only
+  ("Price & deposit" = existing behaviour untouched / "Token
+  amounts" = new); Edit renders no tabs. No storage schema change.
+  Verified on localhost:3001: ZEC/USDC range 420–503.35, ZEC
+  4.2725565, USDC 2188.56 → entry 461.991043 (vs 462.9 originally
+  recorded, a 0.196% correction), Deposited $4,162.44, OOR upside
+  $4,248.90 — the same figure 79a2d1f recorded, confirming
+  consistency with the existing IL math (Invariant #6);
+  price/deposit modes byte-identical to before; Edit held
+  Deposited when entry price changed; base-only → 420, quote-only
+  → 503.35. tsc/lint/build clean; zero console errors; seeds
+  removed.
+
 ## Known Issues
 
 - None currently tracked. (Exit-before-entry date warning shipped
