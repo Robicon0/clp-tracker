@@ -40,6 +40,7 @@ import {
   type ILResult,
   type TokenSplit,
   type RangeHealth,
+  type RangeStatus,
 } from "../../lib/calculations";
 import {
   ClaimFormModal,
@@ -1218,32 +1219,69 @@ function RangeBadge({ status }: { status: RangeHealth["status"] }) {
   );
 }
 
-interface RangeHealthCellProps {
-  health?: RangeHealth;
-  onSetPrice?: (raw: string) => void;
+// Prices are quote-per-base, not USD — formatted as plain numbers with
+// enough precision for low-priced pairs without trailing noise on large ones.
+function formatPrice(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  const decimals = value >= 100 ? 2 : value >= 1 ? 4 : 6;
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
 }
 
-function RangeHealthCell({ health, onSetPrice }: RangeHealthCellProps) {
-  // Price can't be resolved automatically — let the user type it in.
-  if (!health || health.status === "unknown") {
-    return (
-      <input
-        type="number"
-        step="any"
-        min="0"
-        placeholder="current price"
-        aria-label="Current price"
-        className={`${inputClass} w-28 text-right`}
-        onBlur={(e) => onSetPrice?.(e.target.value)}
-      />
-    );
-  }
+const RANGE_BAR_TONE: Record<RangeStatus, { fill: string; text: string }> = {
+  safe: { fill: "bg-emerald-400", text: "text-emerald-300" },
+  close: { fill: "bg-amber-400", text: "text-amber-300" },
+  out: { fill: "bg-rose-400", text: "text-rose-300" },
+  unknown: { fill: "bg-[var(--muted)]", text: "text-[var(--muted)]" },
+};
+
+// Where price sits between the range bounds, drawn rather than described.
+// bandPosition is 0 at the bottom edge and 1 at the top; it runs outside that
+// when a position has drifted out of range, so the marker is clamped to the
+// track and the caption carries the real distance.
+function RangeBar({
+  health,
+  entryPrice,
+  rangeDown,
+  rangeUp,
+}: {
+  health: RangeHealth;
+  entryPrice: number;
+  rangeDown: number;
+  rangeUp: number;
+}) {
+  const span = rangeUp - rangeDown;
+  const tone = RANGE_BAR_TONE[health.status];
+  const clamp = (v: number) => Math.max(0, Math.min(1, v));
+  const pricePct =
+    health.bandPosition === null ? null : clamp(health.bandPosition) * 100;
+  const entryPct = span > 0 ? clamp((entryPrice - rangeDown) / span) * 100 : null;
+
   return (
-    <div className="flex flex-col items-start gap-1">
-      <RangeBadge status={health.status} />
-      <span className="text-[11px] text-[var(--muted)]">
-        {rangeHealthDetail(health)}
-      </span>
+    <div className="mt-3">
+      <div className="relative h-1.5 rounded-full bg-[var(--surface-2)]">
+        {entryPct !== null && (
+          <span
+            className="absolute top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-[var(--muted)]/70"
+            style={{ left: `${entryPct}%` }}
+            aria-hidden
+          />
+        )}
+        {pricePct !== null && (
+          <span
+            className={`absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-[var(--surface)] ${tone.fill}`}
+            style={{ left: `${pricePct}%` }}
+            aria-hidden
+          />
+        )}
+      </div>
+      <div className="mt-1.5 flex items-baseline justify-between gap-2 text-[11px] tabular-nums text-[var(--muted)]">
+        <span>{formatPrice(rangeDown)}</span>
+        <span className={tone.text}>{rangeHealthDetail(health)}</span>
+        <span>{formatPrice(rangeUp)}</span>
+      </div>
     </div>
   );
 }
@@ -1392,6 +1430,196 @@ interface PositionsTableProps {
   emptyText: string;
 }
 
+// One metric in the card's grid. Kept tiny so the grid stays declarative.
+function Metric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div>
+      <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+        {label}
+      </dt>
+      <dd
+        className={`mt-0.5 text-sm tabular-nums ${tone ?? "text-[var(--foreground)]"}`}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function PositionCard({
+  row,
+  variant,
+  health,
+  onSetPrice,
+  onEdit,
+  onUpdate,
+  onClose,
+  onClaim,
+}: {
+  row: DerivedRow;
+  variant: "active" | "closed";
+  health?: RangeHealth;
+  onSetPrice?: (raw: string) => void;
+  onEdit?: (p: Position) => void;
+  onUpdate?: (p: Position) => void;
+  onClose?: (p: Position) => void;
+  onClaim?: (p: Position) => void;
+}) {
+  const { position, deposited, claimed, fees, days, apr, priceDiff, profit } = row;
+  const [showDetails, setShowDetails] = useState(false);
+  const wideRange = calcWideRangePercent(position.bottomRange, position.topRange);
+  const isActive = variant === "active";
+  // Closed positions are dimmed but never hidden (Invariant #4).
+  const priceUnresolved = isActive && (!health || health.status === "unknown");
+
+  return (
+    <article
+      className={`rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--border-strong)] ${
+        isActive ? "" : "opacity-75 hover:opacity-100"
+      }`}
+    >
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[var(--foreground)]">
+            <span className="truncate">{position.pair}</span>
+            <TxLinkBadge value={position.txLink ?? null} />
+          </h3>
+          <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+            {position.chain} · {position.protocol}
+          </p>
+        </div>
+        {isActive ? (
+          priceUnresolved ? (
+            <input
+              type="number"
+              step="any"
+              min="0"
+              placeholder="current price"
+              aria-label={`Current price for ${position.pair}`}
+              className={`${inputClass} w-28 text-right`}
+              onBlur={(e) => onSetPrice?.(e.target.value)}
+            />
+          ) : (
+            <RangeBadge status={health!.status} />
+          )
+        ) : (
+          <div className="text-right text-[11px] text-[var(--muted)]">
+            <div className="tabular-nums">
+              {formatDateTime24(position.exitDatetime)}
+            </div>
+            <div className="text-[var(--muted)]/80">
+              {days.toFixed(1)} days held
+            </div>
+          </div>
+        )}
+      </header>
+
+      {isActive && health && health.status !== "unknown" && (
+        <RangeBar
+          health={health}
+          entryPrice={position.entryPrice}
+          rangeDown={position.bottomRange}
+          rangeUp={position.topRange}
+        />
+      )}
+
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+        <Metric label="Deposited" value={formatUsd(deposited)} />
+        <Metric label="Current" value={formatUsd(position.currentBalance)} />
+        <Metric
+          label="Profit"
+          value={formatUsd(profit)}
+          tone={`font-medium ${pnlColor(profit)}`}
+        />
+        <Metric label="Total Fees" value={formatUsd(fees)} />
+        <Metric label="Fee APR" value={formatPercent(apr)} />
+        {isActive ? (
+          <Metric label="Days Active" value={days.toFixed(1)} />
+        ) : (
+          <Metric
+            label="Scalp"
+            value={formatUsd(position.scalp ?? 0)}
+            tone={`font-medium ${pnlColor(position.scalp ?? 0)}`}
+          />
+        )}
+      </dl>
+
+      <button
+        type="button"
+        onClick={() => setShowDetails((v) => !v)}
+        aria-expanded={showDetails}
+        className="mt-3 text-[11px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
+      >
+        {showDetails ? "Hide details" : "Details"} {showDetails ? "▴" : "▾"}
+      </button>
+
+      {showDetails && (
+        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-[var(--border)] pt-3 sm:grid-cols-3">
+          <Metric label="New Fees" value={formatUsd(position.newFees)} />
+          <Metric label="Claimed" value={formatUsd(claimed)} />
+          <Metric
+            label="Price Diff"
+            value={formatUsd(priceDiff)}
+            tone={`font-medium ${pnlColor(priceDiff)}`}
+          />
+          <Metric label="Entry Price" value={formatPrice(position.entryPrice)} />
+          <Metric
+            label="Range"
+            value={`${formatPrice(position.bottomRange)} – ${formatPrice(position.topRange)}`}
+          />
+          <Metric
+            label="Range %"
+            value={wideRange > 0 ? formatPercent(wideRange) : "—"}
+          />
+        </dl>
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--border)] pt-3">
+        <button
+          type="button"
+          onClick={() => onEdit?.(position)}
+          className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Edit
+        </button>
+        {isActive && (
+          <button
+            type="button"
+            onClick={() => onUpdate?.(position)}
+            className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
+          >
+            Update
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onClaim?.(position)}
+          className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+        >
+          Claim
+        </button>
+        {isActive && (
+          <button
+            type="button"
+            onClick={() => onClose?.(position)}
+            className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+          >
+            Close
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
 function PositionsTable({
   title,
   rows,
@@ -1405,9 +1633,9 @@ function PositionsTable({
   emptyText,
 }: PositionsTableProps) {
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+    <div>
       {title && (
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
+        <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
           <span className="text-xs text-[var(--muted)]">
             {rows.length} {rows.length === 1 ? "position" : "positions"}
@@ -1416,174 +1644,28 @@ function PositionsTable({
       )}
 
       {rows.length === 0 ? (
-        <div className="px-5 py-10 text-center text-sm text-[var(--muted)]">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-5 py-10 text-center text-sm text-[var(--muted)]">
           {emptyText}
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-[var(--border)] text-sm">
-            <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium">Pair</th>
-                <th className="px-4 py-3 text-left font-medium">Chain</th>
-                <th className="px-4 py-3 text-left font-medium">Protocol</th>
-                <th className="px-4 py-3 text-right font-medium">Deposited</th>
-                <th className="px-4 py-3 text-right font-medium">
-                  Current Balance
-                </th>
-                <th className="px-4 py-3 text-right font-medium">New Fees</th>
-                <th className="px-4 py-3 text-right font-medium">Claimed</th>
-                <th className="px-4 py-3 text-right font-medium">Total Fees</th>
-                <th className="px-4 py-3 text-right font-medium">Fee APR</th>
-                <th className="px-4 py-3 text-right font-medium">Range %</th>
-                {variant === "active" && (
-                  <th className="px-4 py-3 text-left font-medium">
-                    Range Health
-                  </th>
-                )}
-                {variant === "active" ? (
-                  <th className="px-4 py-3 text-right font-medium">
-                    Days Active
-                  </th>
-                ) : (
-                  <th className="px-4 py-3 text-left font-medium">Exit Date</th>
-                )}
-                <th className="px-4 py-3 text-right font-medium">Price Diff</th>
-                {variant === "closed" && (
-                  <th className="px-4 py-3 text-right font-medium">Scalp</th>
-                )}
-                <th className="px-4 py-3 text-right font-medium">Profit</th>
-                <th className="px-4 py-3 text-right font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {rows.map(({ position, deposited, claimed, fees, days, apr, priceDiff, profit }) => (
-                <tr
-                  key={position.id}
-                  className="transition-colors hover:bg-[var(--surface-2)]/60"
-                >
-                  <td className="px-4 py-3 font-medium text-[var(--foreground)]">
-                    <span className="inline-flex items-center gap-1.5">
-                      {position.pair}
-                      <TxLinkBadge value={position.txLink ?? null} />
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-[var(--muted)]">
-                    {position.chain}
-                  </td>
-                  <td className="px-4 py-3 text-[var(--muted)]">
-                    {position.protocol}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatUsd(deposited)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatUsd(position.currentBalance)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatUsd(position.newFees)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatUsd(claimed)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatUsd(fees)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatPercent(apr)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
-                    {(() => {
-                      const wr = calcWideRangePercent(
-                        position.bottomRange,
-                        position.topRange,
-                      );
-                      return wr > 0 ? formatPercent(wr) : "—";
-                    })()}
-                  </td>
-                  {variant === "active" && (
-                    <td className="px-4 py-3">
-                      <RangeHealthCell
-                        health={healthById?.get(position.id)}
-                        onSetPrice={
-                          onSetPrice
-                            ? (raw) => onSetPrice(position.id, raw)
-                            : undefined
-                        }
-                      />
-                    </td>
-                  )}
-                  {variant === "active" ? (
-                    <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">
-                      {days.toFixed(1)}
-                    </td>
-                  ) : (
-                    <td className="px-4 py-3 text-[var(--muted)]">
-                      <div className="tabular-nums">
-                        {formatDateTime24(position.exitDatetime)}
-                      </div>
-                      <div className="text-[11px] text-[var(--muted)]/80">
-                        {days.toFixed(1)} days held
-                      </div>
-                    </td>
-                  )}
-                  <td
-                    className={`px-4 py-3 text-right tabular-nums font-medium ${pnlColor(priceDiff)}`}
-                  >
-                    {formatUsd(priceDiff)}
-                  </td>
-                  {variant === "closed" && (
-                    <td
-                      className={`px-4 py-3 text-right tabular-nums font-medium ${pnlColor(position.scalp ?? 0)}`}
-                    >
-                      {formatUsd(position.scalp ?? 0)}
-                    </td>
-                  )}
-                  <td
-                    className={`px-4 py-3 text-right tabular-nums font-medium ${pnlColor(profit)}`}
-                  >
-                    {formatUsd(profit)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="inline-flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onEdit?.(position)}
-                        className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                      >
-                        Edit
-                      </button>
-                      {variant === "active" && (
-                        <button
-                          type="button"
-                          onClick={() => onUpdate?.(position)}
-                          className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
-                        >
-                          Update
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => onClaim?.(position)}
-                        className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
-                      >
-                        Claim
-                      </button>
-                      {variant === "active" && (
-                        <button
-                          type="button"
-                          onClick={() => onClose?.(position)}
-                          className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
-                        >
-                          Close
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        // items-start so expanding one card's details does not stretch its
+        // row-mates into tall cards with dead space under the buttons.
+        <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2 xl:grid-cols-3">
+          {rows.map((row) => (
+            <PositionCard
+              key={row.position.id}
+              row={row}
+              variant={variant}
+              health={healthById?.get(row.position.id)}
+              onSetPrice={
+                onSetPrice ? (raw) => onSetPrice(row.position.id, raw) : undefined
+              }
+              onEdit={onEdit}
+              onUpdate={onUpdate}
+              onClose={onClose}
+              onClaim={onClaim}
+            />
+          ))}
         </div>
       )}
     </div>
