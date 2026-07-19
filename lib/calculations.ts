@@ -693,31 +693,158 @@ export function splitDepositedIntoTokens(
   rangeDown: number,
   rangeUp: number,
 ): TokenSplit | null {
-  const inputs = [deposited, entryPrice, rangeDown, rangeUp];
+  const liquidity = liquidityFromDeposited(
+    deposited,
+    entryPrice,
+    rangeDown,
+    rangeUp,
+  );
+  if (liquidity === null) return null;
+  return tokensFromLiquidity(liquidity, entryPrice, rangeDown, rangeUp);
+}
+
+// Token amounts and position value per unit of liquidity. The single place
+// the CLMM branch structure lives — everything below is built from it, so a
+// position's shape can never be described two different ways.
+interface PerLiquidity {
+  basePerL: number;
+  quotePerL: number;
+  valuePerL: number;
+}
+
+function perLiquidity(
+  entryPrice: number,
+  rangeDown: number,
+  rangeUp: number,
+): PerLiquidity | null {
+  const inputs = [entryPrice, rangeDown, rangeUp];
   if (inputs.some((v) => !Number.isFinite(v) || v <= 0)) return null;
   if (rangeUp <= rangeDown) return null;
 
   const spa = Math.sqrt(rangeDown);
   const spb = Math.sqrt(rangeUp);
-  const sp0 = Math.sqrt(entryPrice);
-
+  let basePerL: number;
+  let quotePerL: number;
   if (entryPrice <= rangeDown) {
-    return { baseCount: deposited / entryPrice, quoteCount: 0 };
+    basePerL = 1 / spa - 1 / spb;
+    quotePerL = 0;
+  } else if (entryPrice >= rangeUp) {
+    basePerL = 0;
+    quotePerL = spb - spa;
+  } else {
+    const sp0 = Math.sqrt(entryPrice);
+    basePerL = 1 / sp0 - 1 / spb;
+    quotePerL = sp0 - spa;
   }
-  if (entryPrice >= rangeUp) {
-    return { baseCount: 0, quoteCount: deposited };
-  }
-
-  const basePerL = 1 / sp0 - 1 / spb;
-  const quotePerL = sp0 - spa;
   const valuePerL = basePerL * entryPrice + quotePerL;
-  if (valuePerL <= 0 || !Number.isFinite(valuePerL)) return null;
+  if (!Number.isFinite(valuePerL) || valuePerL <= 0) return null;
+  return { basePerL, quotePerL, valuePerL };
+}
 
-  const L = deposited / valuePerL;
-  const baseCount = L * basePerL;
-  const quoteCount = L * quotePerL;
+// Liquidity (L) implied by depositing `deposited` at `entryPrice`. This is
+// what stays fixed as the entry price is nudged around — the size of the
+// position, independent of where the price happens to sit.
+export function liquidityFromDeposited(
+  deposited: number,
+  entryPrice: number,
+  rangeDown: number,
+  rangeUp: number,
+): number | null {
+  if (!Number.isFinite(deposited) || deposited <= 0) return null;
+  const per = perLiquidity(entryPrice, rangeDown, rangeUp);
+  if (per === null) return null;
+  const liquidity = deposited / per.valuePerL;
+  return Number.isFinite(liquidity) && liquidity > 0 ? liquidity : null;
+}
+
+export function tokensFromLiquidity(
+  liquidity: number,
+  entryPrice: number,
+  rangeDown: number,
+  rangeUp: number,
+): TokenSplit | null {
+  if (!Number.isFinite(liquidity) || liquidity <= 0) return null;
+  const per = perLiquidity(entryPrice, rangeDown, rangeUp);
+  if (per === null) return null;
+  const baseCount = liquidity * per.basePerL;
+  const quoteCount = liquidity * per.quotePerL;
   if (!Number.isFinite(baseCount) || !Number.isFinite(quoteCount)) return null;
   return { baseCount, quoteCount };
+}
+
+// What a position of fixed size is worth at a given entry price — the LP
+// value curve. Rises with price (dV/dP = L(1/√P − 1/√Pb) > 0 below the top)
+// and flattens completely once price passes the top of the range, because
+// the position is then entirely quote token.
+export function depositedFromLiquidity(
+  liquidity: number,
+  entryPrice: number,
+  rangeDown: number,
+  rangeUp: number,
+): number | null {
+  if (!Number.isFinite(liquidity) || liquidity <= 0) return null;
+  const per = perLiquidity(entryPrice, rangeDown, rangeUp);
+  if (per === null) return null;
+  const deposited = liquidity * per.valuePerL;
+  return Number.isFinite(deposited) && deposited > 0 ? deposited : null;
+}
+
+export interface EntryPriceFromDeposited {
+  entryPrice: number;
+  // Value is flat above the top of the range, so no entry price can produce
+  // a deposit larger than maxDeposited — the caller gets the top of the
+  // range back and `clamped` set, rather than a silently wrong price.
+  clamped: boolean;
+  maxDeposited: number;
+}
+
+// Inverse of depositedFromLiquidity: the entry price at which a position of
+// this size is worth `deposited`. Monotonic in price, so the answer is
+// unique wherever one exists.
+export function entryPriceFromDeposited(
+  deposited: number,
+  liquidity: number,
+  rangeDown: number,
+  rangeUp: number,
+): EntryPriceFromDeposited | null {
+  if (!Number.isFinite(deposited) || deposited <= 0) return null;
+  if (!Number.isFinite(liquidity) || liquidity <= 0) return null;
+  if (
+    !Number.isFinite(rangeDown) ||
+    !Number.isFinite(rangeUp) ||
+    rangeDown <= 0 ||
+    rangeUp <= rangeDown
+  ) {
+    return null;
+  }
+
+  const spa = Math.sqrt(rangeDown);
+  const spb = Math.sqrt(rangeUp);
+  const maxDeposited = liquidity * (spb - spa);
+  const atRangeDown = liquidity * (1 / spa - 1 / spb) * rangeDown;
+
+  if (deposited >= maxDeposited) {
+    return { entryPrice: rangeUp, clamped: true, maxDeposited };
+  }
+  // Below the range the position is 100% base token, so value is simply
+  // linear in price — no quadratic needed, and no lower bound to clamp at.
+  if (deposited <= atRangeDown) {
+    const basePerL = 1 / spa - 1 / spb;
+    const entryPrice = deposited / (liquidity * basePerL);
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) return null;
+    return { entryPrice, clamped: false, maxDeposited };
+  }
+
+  // Inside the range, with x = √P:
+  //   L(2x − x²/√Pb − √Pa) = V   ⇒   x² − 2√Pb·x + √Pb(√Pa + V/L) = 0
+  // The lower root is the one that lands inside the range.
+  const c = spb * (spa + deposited / liquidity);
+  const disc = spb * spb - c;
+  if (disc < 0) return null;
+  const x = spb - Math.sqrt(disc);
+  const entryPrice = x * x;
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return null;
+  return { entryPrice, clamped: false, maxDeposited };
 }
 
 export function calcWideRangePercent(

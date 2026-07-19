@@ -28,11 +28,15 @@ import {
   calcTotalFees,
   calcWideRangePercent,
   computePositionIL,
+  depositedFromLiquidity,
+  entryPriceFromDeposited,
   getEffectiveClaimed,
   getEffectiveDeposited,
   getEffectiveTotalFees,
+  liquidityFromDeposited,
   splitDepositedIntoTokens,
   type ILResult,
+  type TokenSplit,
   type RangeHealth,
 } from "../../lib/calculations";
 import {
@@ -1562,43 +1566,101 @@ function PositionFormModal({
   const [splitWarning, setSplitWarning] = useState<TokenSplitWarning | null>(
     null,
   );
+  // Set when a typed deposit exceeded what this position size can be worth,
+  // holding the formatted ceiling for the note.
+  const [clampNote, setClampNote] = useState<string | null>(null);
+  // editingStatus is only passed from the Edit call site.
+  const isEditing = editingStatus !== undefined;
 
   const set = <K extends keyof PositionFormState>(
     key: K,
     value: PositionFormState[K],
   ) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  // Deposited USD is the anchor: editing it, the entry price, or either
-  // range bound keeps the money fixed and re-splits it into the token
-  // counts the AMM would actually give you at that price (Invariant #9 —
-  // Deposited stays (base × entry) + quote, just solved from the other end).
+  // Writes the token counts implied by a (liquidity, entry price, range)
+  // triple, flagging the case where that replaces hand-typed amounts.
+  const applyTokens = (
+    next: PositionFormState,
+    split: TokenSplit | null,
+  ): void => {
+    if (!split) return;
+    const baseCount = formatAmountInput(split.baseCount, 8);
+    const quoteCount = formatAmountInput(split.quoteCount, 8);
+    if (
+      tokensTouched &&
+      (baseCount !== form.token1Count || quoteCount !== form.token2Count)
+    ) {
+      setSplitWarning({ base: form.token1Count, quote: form.token2Count });
+      setTokensTouched(false);
+    }
+    next.token1Count = baseCount;
+    next.token2Count = quoteCount;
+  };
+
+  // Entry price and Deposited are two views of one position of a fixed size.
+  // Once both are known the position's liquidity is pinned, and from then on
+  // moving either one slides along the LP value curve and drags the other
+  // with it — the same curve the out-of-range projections already use. Only
+  // live when adding: on a saved position the recorded deposit must not move
+  // just because an entry-price typo is corrected.
+  const linkEntryAndDeposited = !isEditing;
+
   const setAnchor = (
     key: "deposited" | "entryPrice" | "bottomRange" | "topRange",
     value: string,
   ) => {
     const next: PositionFormState = { ...form, [key]: value };
-    const split = splitDepositedIntoTokens(
-      num(next.deposited),
-      num(next.entryPrice),
-      num(next.bottomRange),
-      num(next.topRange),
+    const rangeDown = num(next.bottomRange);
+    const rangeUp = num(next.topRange);
+    setClampNote(null);
+
+    // Size of the position implied by what is currently on screen, before
+    // this edit is folded in. Null until both numbers exist — the first pair
+    // typed defines the position rather than moving it.
+    const pinned = liquidityFromDeposited(
+      num(form.deposited),
+      num(form.entryPrice),
+      num(form.bottomRange),
+      num(form.topRange),
     );
-    if (split) {
-      const baseCount = formatAmountInput(split.baseCount, 8);
-      const quoteCount = formatAmountInput(split.quoteCount, 8);
-      const replacesTyped =
-        tokensTouched &&
-        (baseCount !== form.token1Count || quoteCount !== form.token2Count);
-      if (replacesTyped) {
-        setSplitWarning({
-          base: form.token1Count,
-          quote: form.token2Count,
-        });
-        setTokensTouched(false);
+
+    if (linkEntryAndDeposited && pinned !== null && key === "entryPrice") {
+      const deposited = depositedFromLiquidity(
+        pinned,
+        num(value),
+        rangeDown,
+        rangeUp,
+      );
+      if (deposited !== null) {
+        next.deposited = formatAmountInput(deposited, 2);
       }
-      next.token1Count = baseCount;
-      next.token2Count = quoteCount;
+    } else if (linkEntryAndDeposited && pinned !== null && key === "deposited") {
+      const solved = entryPriceFromDeposited(
+        num(value),
+        pinned,
+        rangeDown,
+        rangeUp,
+      );
+      if (solved) {
+        next.entryPrice = formatAmountInput(solved.entryPrice, 6);
+        if (solved.clamped) {
+          setClampNote(formatUsd(solved.maxDeposited));
+          next.deposited = formatAmountInput(solved.maxDeposited, 2);
+        }
+      }
     }
+
+    // Range edits keep the money fixed and re-split it (changing your range
+    // is choosing a different position, not moving along one curve).
+    applyTokens(
+      next,
+      splitDepositedIntoTokens(
+        num(next.deposited),
+        num(next.entryPrice),
+        rangeDown,
+        rangeUp,
+      ),
+    );
     setForm(next);
   };
 
@@ -1619,6 +1681,10 @@ function PositionFormModal({
     next.deposited = computed > 0 ? formatAmountInput(computed, 2) : "";
     setTokensTouched(true);
     setSplitWarning(null);
+    // Typing a token count is also how you resize past the value ceiling:
+    // Deposited follows the tokens here, which re-pins the position size for
+    // the next entry-price edit.
+    setClampNote(null);
     setForm(next);
   };
 
@@ -1860,7 +1926,11 @@ function PositionFormModal({
             <Field
               label="Deposited (USD)"
               htmlFor="deposited"
-              hint="Type your deposit and the token counts split automatically — or type the token counts and this updates instead."
+              hint={
+                linkEntryAndDeposited
+                  ? "Linked to entry price along the LP value curve — moving either one moves the other, and the token counts follow both."
+                  : "Type your deposit and the token counts split automatically — or type the token counts and this updates instead."
+              }
             >
               <input
                 id="deposited"
@@ -1915,6 +1985,17 @@ function PositionFormModal({
               />
             </Field>
           </div>
+          {clampNote && (
+            <p
+              className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300"
+              role="status"
+            >
+              At this position size the deposit tops out at {clampNote} — above
+              the top of your range the position is all{" "}
+              {form.token2Symbol || "quote token"}, so its value stops rising.
+              Change a token count to size the position differently.
+            </p>
+          )}
           {splitWarning && (
             <p
               className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300"
