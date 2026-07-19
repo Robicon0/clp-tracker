@@ -198,6 +198,10 @@ interface RecalcSummary {
   toEntry: string;
   fromDeposited: string;
   toDeposited: string;
+  // Whether Current Balance moved with the correction, and if it did not,
+  // the stale figure the user needs to review.
+  balanceMoved: boolean;
+  staleBalance: string | null;
 }
 
 // The one path where Edit mode may rewrite a recorded Entry Price and
@@ -209,6 +213,8 @@ function RecalcFromTokensPanel({
   rangeUp,
   currentEntryPrice,
   currentDeposited,
+  savedCurrentBalance,
+  balanceTracksDeposited,
   baseSymbol,
   quoteSymbol,
   initialBase,
@@ -220,11 +226,21 @@ function RecalcFromTokensPanel({
   rangeUp: number;
   currentEntryPrice: number;
   currentDeposited: number;
+  savedCurrentBalance: number;
+  // True when the saved Current Balance still equals the saved Deposited —
+  // i.e. it has never been independently updated and is only a default.
+  balanceTracksDeposited: boolean;
   baseSymbol: string;
   quoteSymbol: string;
   initialBase: string;
   initialQuote: string;
-  onApply: (entryPrice: number, deposited: number, base: string, quote: string) => void;
+  onApply: (
+    entryPrice: number,
+    deposited: number,
+    base: string,
+    quote: string,
+    newCurrentBalance: number | null,
+  ) => void;
   onCancel: () => void;
 }) {
   const [base, setBase] = useState(initialBase);
@@ -241,6 +257,11 @@ function RecalcFromTokensPanel({
     solved !== null && solved.entryPrice.toFixed(6) !== currentEntryPrice.toFixed(6);
   const depositedChanges =
     newDeposited !== null && newDeposited.toFixed(2) !== currentDeposited.toFixed(2);
+  // Profit = Current Balance − Deposited, so correcting Deposited alone
+  // invents profit. When the balance was only ever a default copy of the
+  // deposit it moves with the correction and profit stays at zero; when it
+  // holds real tracked data it is left alone and the user is told why.
+  const balanceChanges = balanceTracksDeposited && depositedChanges;
 
   return (
     <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/[0.06] p-4">
@@ -329,7 +350,40 @@ function RecalcFromTokensPanel({
                 )}
               </dd>
             </div>
+            <div className="flex items-center justify-between gap-3 py-0.5">
+              <dt className="text-[var(--muted)]">Current Balance</dt>
+              <dd className="tabular-nums">
+                <span className={balanceChanges ? "text-[var(--muted)] line-through" : ""}>
+                  {formatUsd(savedCurrentBalance)}
+                </span>
+                {balanceChanges && newDeposited !== null && (
+                  <span className="ml-2 font-medium text-amber-300">
+                    {formatUsd(newDeposited)}
+                  </span>
+                )}
+              </dd>
+            </div>
           </dl>
+          {depositedChanges && !balanceTracksDeposited && (
+            <p className="rounded border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-300">
+              Current Balance ({formatUsd(savedCurrentBalance)}) holds real
+              tracked data from a previous Update, so it is left untouched.
+              Because Profit is Current Balance minus Deposited, this position
+              will show a Profit that shifts by{" "}
+              {newDeposited !== null
+                ? formatUsd(currentDeposited - newDeposited)
+                : "—"}{" "}
+              from this correction alone. Run Update on the position afterwards
+              to record its real current value.
+            </p>
+          )}
+          {balanceChanges && (
+            <p className="text-[11px] text-[var(--muted)]">
+              Current Balance still equals Deposited, so it has never been
+              updated on its own — it moves with the correction and Profit
+              stays at zero.
+            </p>
+          )}
           {!entryChanges && !depositedChanges && (
             <p className="text-[11px] text-[var(--muted)]">
               These amounts match what is already recorded — nothing would
@@ -348,7 +402,13 @@ function RecalcFromTokensPanel({
           disabled={solved === null || newDeposited === null}
           onClick={() => {
             if (solved === null || newDeposited === null) return;
-            onApply(solved.entryPrice, newDeposited, base, quote);
+            onApply(
+              solved.entryPrice,
+              newDeposited,
+              base,
+              quote,
+              balanceChanges ? newDeposited : null,
+            );
           }}
           className="rounded-md bg-amber-500 px-3 py-1.5 text-[12px] font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -492,6 +552,9 @@ interface PositionFormState {
   token1Count: string;
   token2Count: string;
   txLink: string;
+  // Empty unless a confirmed recalculation decided Current Balance should
+  // move with the correction. Never a visible field.
+  currentBalanceOverride: string;
   shortDateStart: string;
   shortDateEnd: string;
   shortTokenAmount: string;
@@ -519,6 +582,7 @@ const EMPTY_FORM: PositionFormState = {
   token1Count: "",
   token2Count: "",
   txLink: "",
+  currentBalanceOverride: "",
   shortDateStart: "",
   shortDateEnd: "",
   shortTokenAmount: "",
@@ -556,6 +620,7 @@ function positionToForm(p: Position): PositionFormState {
     token1Count: String(p.token1Count),
     token2Count: String(p.token2Count),
     txLink: p.txLink ?? "",
+    currentBalanceOverride: "",
     shortDateStart: isoToDateInput(p.shortDateStart),
     shortDateEnd: isoToDateInput(p.shortDateEnd),
     shortTokenAmount: numStr(p.shortTokenAmount),
@@ -633,7 +698,13 @@ function buildRecords(
     entryDatetime: entryIso,
     exitDatetime: base?.exitDatetime ?? null,
     deposited,
-    currentBalance: base?.currentBalance ?? deposited,
+    // Normally carried through untouched on edit. The one exception is a
+    // confirmed token-amount recalculation on a position whose balance had
+    // never been independently updated — see currentBalanceOverride.
+    currentBalance:
+      form.currentBalanceOverride !== ""
+        ? num(form.currentBalanceOverride)
+        : (base?.currentBalance ?? deposited),
     newFees: base?.newFees ?? 0,
     claimed: base?.claimed ?? 0,
     totalFees:
@@ -1016,6 +1087,8 @@ export default function PositionsPage() {
           submitLabel="Save Changes"
           initial={positionToForm(modal.position)}
           editingStatus={modal.position.status}
+          savedDeposited={modal.position.deposited}
+          savedCurrentBalance={modal.position.currentBalance}
           exitDatetime={modal.position.exitDatetime}
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={(form) => handleEdit(modal.position, form)}
@@ -1767,6 +1840,12 @@ interface PositionFormModalProps {
   initial: PositionFormState;
   editingStatus?: Position["status"];
   exitDatetime?: string | null;
+  // Raw stored values of the position being edited. The recalculation's
+  // case decision compares these two directly — NOT the derived Deposited,
+  // which can differ from the stored figure by rounding and would
+  // misclassify an untouched balance as real tracked data.
+  savedDeposited?: number;
+  savedCurrentBalance?: number;
   onCancel: () => void;
   onSubmit: (form: PositionFormState) => void;
 }
@@ -1777,6 +1856,8 @@ function PositionFormModal({
   initial,
   editingStatus,
   exitDatetime,
+  savedDeposited,
+  savedCurrentBalance,
   onCancel,
   onSubmit,
 }: PositionFormModalProps) {
@@ -1807,6 +1888,13 @@ function PositionFormModal({
   // field keeps its protection (re-split tokens only, never touch Deposited).
   const [recalcOpen, setRecalcOpen] = useState(false);
   const [recalcApplied, setRecalcApplied] = useState<RecalcSummary | null>(null);
+  // Exact comparison of the two stored figures (tight epsilon only to absorb
+  // float representation). A balance that still equals the deposit was never
+  // independently updated and is safe to move with a correction.
+  const balanceTracksDeposited =
+    savedDeposited !== undefined &&
+    savedCurrentBalance !== undefined &&
+    Math.abs(savedCurrentBalance - savedDeposited) <= 1e-8;
 
   const set = <K extends keyof PositionFormState>(
     key: K,
@@ -2326,17 +2414,24 @@ function PositionFormModal({
               rangeUp={num(form.topRange)}
               currentEntryPrice={num(form.entryPrice)}
               currentDeposited={effectiveDeposited}
+              savedCurrentBalance={savedCurrentBalance ?? 0}
+              balanceTracksDeposited={balanceTracksDeposited}
               baseSymbol={form.token1Symbol}
               quoteSymbol={form.token2Symbol}
               initialBase={form.token1Count}
               initialQuote={form.token2Count}
               onCancel={() => setRecalcOpen(false)}
-              onApply={(entryPrice, deposited, base, quote) => {
+              onApply={(entryPrice, deposited, base, quote, newBalance) => {
                 setRecalcApplied({
                   fromEntry: form.entryPrice,
                   toEntry: formatAmountInput(entryPrice, 6),
                   fromDeposited: formatUsd(effectiveDeposited),
                   toDeposited: formatUsd(deposited),
+                  balanceMoved: newBalance !== null,
+                  staleBalance:
+                    newBalance === null && savedCurrentBalance !== undefined
+                      ? formatUsd(savedCurrentBalance)
+                      : null,
                 });
                 setForm((prev) => ({
                   ...prev,
@@ -2344,6 +2439,8 @@ function PositionFormModal({
                   deposited: formatAmountInput(deposited, 2),
                   token1Count: base,
                   token2Count: quote,
+                  currentBalanceOverride:
+                    newBalance !== null ? String(newBalance) : "",
                 }));
                 setSplitWarning(null);
                 setClampNote(null);
@@ -2358,8 +2455,19 @@ function PositionFormModal({
             >
               Recalculated: Entry Price {recalcApplied.fromEntry} →{" "}
               {recalcApplied.toEntry}, Deposited {recalcApplied.fromDeposited} →{" "}
-              {recalcApplied.toDeposited}. Save this position to record it, or
-              close without saving to discard.
+              {recalcApplied.toDeposited}
+              {recalcApplied.balanceMoved
+                ? `, Current Balance ${recalcApplied.fromDeposited} → ${recalcApplied.toDeposited}`
+                : ""}
+              . Save this position to record it, or close without saving to
+              discard.
+              {!recalcApplied.balanceMoved && recalcApplied.staleBalance && (
+                <>
+                  {" "}
+                  Current Balance stays at {recalcApplied.staleBalance} — run
+                  Update afterwards so Profit reflects reality.
+                </>
+              )}
             </p>
           )}
           {tokenMode && solvedShape !== null && solvedShape !== "two-sided" && (
