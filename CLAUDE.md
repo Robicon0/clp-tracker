@@ -558,10 +558,47 @@ at the plan gate.
   → 503.35. tsc/lint/build clean; zero console errors; seeds
   removed.
 
+- Recalculate from token amounts (2026-07-20) [22b966d]: Added
+  "Recalculate from token amounts" correction tool to Edit mode.
+  Explicit, confirmed action that lets a user correct a
+  mis-recorded Entry Price using known-true token amounts (reuses
+  entryPriceFromTokens from the Add Position token-amount
+  feature). This is the ONE path where Edit mode is allowed to
+  update Deposited — normal quick-edit behavior (re-split tokens
+  only, never touch Deposited) is unchanged and remains the
+  default. Deliberately a button + separate panel, not a field, so
+  the tool cannot be reached by editing Entry Price. The panel
+  works on a local draft: nothing reaches the form until Apply,
+  nothing reaches storage until Save, and it shows an old → new
+  comparison for both Entry Price and Deposited (old struck
+  through) before applying. No storage schema change. Verified on
+  localhost:3001 against the reported record (range 1559.37–
+  1982.32, saved entry 1639.4, deposited $8,666.89, ETH
+  5.286624982, USDC 0): solved entry 1559.37 — the range floor,
+  the only price at which a position is 100% base, confirming the
+  saved 1639.4 was inconsistent with the token amounts — Deposited
+  → $8,243.80, OOR up $9,294.80 / down $8,243.80; quick-edit path
+  unchanged (1639.4 → 1700 → 1639.4 held Deposited at 8666.89);
+  cancel left the stored record untouched. tsc/lint/build clean;
+  zero console errors; seeds removed.
+
 ## Known Issues
 
-- None currently tracked. (Exit-before-entry date warning shipped
-  2026-07-18 — see Recent Shipped Sprints.)
+- **currentBalance not covered by the Edit-mode recalculation**
+  [raised 2026-07-20, with 22b966d]. "Recalculate from token
+  amounts" updates Entry Price and Deposited but leaves
+  currentBalance alone. A position whose currentBalance still
+  equals the OLD (wrong) Deposited therefore shows a phantom Price
+  Diff and Profit afterwards — in the verification case Deposited
+  went $8,666.89 → $8,243.80 while currentBalance stayed
+  $8,666.89, displaying +$423.09 profit that does not exist. Not
+  changed silently: currentBalance is separately maintained via
+  the Update action, and deciding whether a correction should drag
+  it along needs a gate. Options are (a) move currentBalance with
+  the correction when it still equals the old Deposited, i.e. was
+  never independently updated, (b) always leave it and prompt the
+  user to run Update afterwards, or (c) show a warning on the
+  position row when currentBalance predates a recalculation.
 
 ## Architecture Notes
 
