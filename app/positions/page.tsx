@@ -191,6 +191,181 @@ interface TokenSplitWarning {
   quote: string;
 }
 
+// What a confirmed recalculation replaced, kept to report it back after the
+// panel closes.
+interface RecalcSummary {
+  fromEntry: string;
+  toEntry: string;
+  fromDeposited: string;
+  toDeposited: string;
+}
+
+// The one path where Edit mode may rewrite a recorded Entry Price and
+// Deposited together. Everything here works on a local draft so that
+// cancelling touches nothing, and the solved result is shown as an explicit
+// old → new comparison that the user must confirm before it reaches the form.
+function RecalcFromTokensPanel({
+  rangeDown,
+  rangeUp,
+  currentEntryPrice,
+  currentDeposited,
+  baseSymbol,
+  quoteSymbol,
+  initialBase,
+  initialQuote,
+  onApply,
+  onCancel,
+}: {
+  rangeDown: number;
+  rangeUp: number;
+  currentEntryPrice: number;
+  currentDeposited: number;
+  baseSymbol: string;
+  quoteSymbol: string;
+  initialBase: string;
+  initialQuote: string;
+  onApply: (entryPrice: number, deposited: number, base: string, quote: string) => void;
+  onCancel: () => void;
+}) {
+  const [base, setBase] = useState(initialBase);
+  const [quote, setQuote] = useState(initialQuote);
+
+  const solved = useMemo(
+    () => entryPriceFromTokens(num(base), num(quote), rangeDown, rangeUp),
+    [base, quote, rangeDown, rangeUp],
+  );
+  const newDeposited =
+    solved !== null ? num(base) * solved.entryPrice + num(quote) : null;
+
+  const entryChanges =
+    solved !== null && solved.entryPrice.toFixed(6) !== currentEntryPrice.toFixed(6);
+  const depositedChanges =
+    newDeposited !== null && newDeposited.toFixed(2) !== currentDeposited.toFixed(2);
+
+  return (
+    <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/[0.06] p-4">
+      <h4 className="text-[13px] font-semibold text-[var(--foreground)]">
+        Recalculate from token amounts
+      </h4>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        Use this when the saved record itself is wrong — not to fix a typo.
+        Enter the token amounts you know are correct and the entry price will
+        be solved from them, then Deposited recalculated. This is the only
+        place editing a position can change Deposited.
+      </p>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field
+          label={`Base Token Count${baseSymbol ? ` (${baseSymbol})` : ""}`}
+          htmlFor="recalcBase"
+        >
+          <input
+            id="recalcBase"
+            type="number"
+            step="any"
+            className={inputClass}
+            value={base}
+            onChange={(e) => setBase(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={`Quote Token Count${quoteSymbol ? ` (${quoteSymbol})` : ""}`}
+          htmlFor="recalcQuote"
+        >
+          <input
+            id="recalcQuote"
+            type="number"
+            step="any"
+            className={inputClass}
+            value={quote}
+            onChange={(e) => setQuote(e.target.value)}
+          />
+        </Field>
+      </div>
+
+      {solved === null ? (
+        <p className="mt-3 text-[12px] text-amber-300" role="status">
+          {num(base) === 0 && num(quote) === 0
+            ? "Enter at least one token amount."
+            : "Cannot solve an entry price from these amounts. Check both range bounds are set and Range Up is above Range Down."}
+        </p>
+      ) : (
+        <div className="mt-3 space-y-2" aria-live="polite">
+          {solved.shape !== "two-sided" && (
+            <p className="text-[11px] text-[var(--muted)]">
+              Only one token entered, so the entry price is the{" "}
+              {solved.shape === "base-only" ? "bottom" : "top"} of your range —
+              the only point where a position holds{" "}
+              {solved.shape === "base-only"
+                ? `100% ${baseSymbol || "base token"}`
+                : `100% ${quoteSymbol || "quote token"}`}
+              .
+            </p>
+          )}
+          <dl className="rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/50 px-3 py-2 text-[12px]">
+            <div className="flex items-center justify-between gap-3 py-0.5">
+              <dt className="text-[var(--muted)]">Entry Price</dt>
+              <dd className="tabular-nums">
+                <span className={entryChanges ? "text-[var(--muted)] line-through" : ""}>
+                  {currentEntryPrice > 0 ? currentEntryPrice : "—"}
+                </span>
+                {entryChanges && (
+                  <span className="ml-2 font-medium text-amber-300">
+                    {formatAmountInput(solved.entryPrice, 6)}
+                  </span>
+                )}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-0.5">
+              <dt className="text-[var(--muted)]">Deposited (USD)</dt>
+              <dd className="tabular-nums">
+                <span className={depositedChanges ? "text-[var(--muted)] line-through" : ""}>
+                  {currentDeposited > 0 ? formatUsd(currentDeposited) : "—"}
+                </span>
+                {depositedChanges && newDeposited !== null && (
+                  <span className="ml-2 font-medium text-amber-300">
+                    {formatUsd(newDeposited)}
+                  </span>
+                )}
+              </dd>
+            </div>
+          </dl>
+          {!entryChanges && !depositedChanges && (
+            <p className="text-[11px] text-[var(--muted)]">
+              These amounts match what is already recorded — nothing would
+              change.
+            </p>
+          )}
+          <p className="text-[11px] text-[var(--muted)]">
+            Applying replaces the recorded values when you save this position.
+          </p>
+        </div>
+      )}
+
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          disabled={solved === null || newDeposited === null}
+          onClick={() => {
+            if (solved === null || newDeposited === null) return;
+            onApply(solved.entryPrice, newDeposited, base, quote);
+          }}
+          className="rounded-md bg-amber-500 px-3 py-1.5 text-[12px] font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Apply recalculation
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-[12px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Chooses which fields drive the LP Range section. Add-position only.
 function InputModeTabs({
   mode,
@@ -1628,6 +1803,10 @@ function PositionFormModal({
     EntryPriceFromTokens["shape"] | null
   >(null);
   const tokenMode = !isEditing && inputMode === "tokens";
+  // Edit-mode correction tool. Opt-in and confirmed — the normal Entry Price
+  // field keeps its protection (re-split tokens only, never touch Deposited).
+  const [recalcOpen, setRecalcOpen] = useState(false);
+  const [recalcApplied, setRecalcApplied] = useState<RecalcSummary | null>(null);
 
   const set = <K extends keyof PositionFormState>(
     key: K,
@@ -2129,6 +2308,60 @@ function PositionFormModal({
               />
             </Field>
           </div>
+          {isEditing && !recalcOpen && (
+            <button
+              type="button"
+              onClick={() => {
+                setRecalcApplied(null);
+                setRecalcOpen(true);
+              }}
+              className="mt-4 rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-[12px] font-medium text-[var(--muted)] transition-colors hover:border-amber-500/50 hover:text-amber-300"
+            >
+              Recalculate from token amounts…
+            </button>
+          )}
+          {isEditing && recalcOpen && (
+            <RecalcFromTokensPanel
+              rangeDown={num(form.bottomRange)}
+              rangeUp={num(form.topRange)}
+              currentEntryPrice={num(form.entryPrice)}
+              currentDeposited={effectiveDeposited}
+              baseSymbol={form.token1Symbol}
+              quoteSymbol={form.token2Symbol}
+              initialBase={form.token1Count}
+              initialQuote={form.token2Count}
+              onCancel={() => setRecalcOpen(false)}
+              onApply={(entryPrice, deposited, base, quote) => {
+                setRecalcApplied({
+                  fromEntry: form.entryPrice,
+                  toEntry: formatAmountInput(entryPrice, 6),
+                  fromDeposited: formatUsd(effectiveDeposited),
+                  toDeposited: formatUsd(deposited),
+                });
+                setForm((prev) => ({
+                  ...prev,
+                  entryPrice: formatAmountInput(entryPrice, 6),
+                  deposited: formatAmountInput(deposited, 2),
+                  token1Count: base,
+                  token2Count: quote,
+                }));
+                setSplitWarning(null);
+                setClampNote(null);
+                setRecalcOpen(false);
+              }}
+            />
+          )}
+          {recalcApplied && (
+            <p
+              className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300"
+              role="status"
+            >
+              Recalculated: Entry Price {recalcApplied.fromEntry} →{" "}
+              {recalcApplied.toEntry}, Deposited {recalcApplied.fromDeposited} →{" "}
+              {recalcApplied.toDeposited}. Save this position to record it, or
+              close without saving to discard.
+            </p>
+          )}
           {tokenMode && solvedShape !== null && solvedShape !== "two-sided" && (
             <p
               className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[12px] text-sky-300"
