@@ -272,10 +272,19 @@ export default function TotalPnlPage() {
     setClaims(getClaims());
   });
 
+  // Portfolio Summary describes what is deployed right now, so it spans open
+  // positions only — capital in a closed position has been withdrawn. Net P&L
+  // is a sum of the cards beside it, so every one of them must share that
+  // scope or the row stops adding up. Closed positions are not hidden: their
+  // realised numbers keep their own column in the Active/Closed breakdown
+  // below, and Lifetime Total Deposited spans everything ever opened.
   const totals = useMemo(
     () =>
       hydrated
-        ? computeTotals(positions, claims)
+        ? computeTotals(
+            positions.filter((p) => p.status === "active"),
+            claims,
+          )
         : {
             totalInvested: 0,
             totalCurrentValue: 0,
@@ -285,6 +294,14 @@ export default function TotalPnlPage() {
             netPnL: 0,
           },
     [hydrated, positions, claims],
+  );
+
+  const lifetimeDeposited = useMemo(
+    () =>
+      hydrated
+        ? positions.reduce((sum, p) => sum + getEffectiveDeposited(p), 0)
+        : 0,
+    [hydrated, positions],
   );
 
   const activeSummary = useMemo(
@@ -349,7 +366,10 @@ export default function TotalPnlPage() {
         </div>
       ) : (
         <>
-          <PortfolioSummarySection totals={totals} />
+          <PortfolioSummarySection
+            totals={totals}
+            lifetimeDeposited={lifetimeDeposited}
+          />
           <PerformanceBreakdownSection
             active={activeSummary}
             closed={closedSummary}
@@ -380,22 +400,44 @@ function EmptyIcon() {
 
 interface PortfolioSummarySectionProps {
   totals: PortfolioTotals;
+  lifetimeDeposited: number;
 }
 
-function PortfolioSummarySection({ totals }: PortfolioSummarySectionProps) {
+function PortfolioSummarySection({
+  totals,
+  lifetimeDeposited,
+}: PortfolioSummarySectionProps) {
   return (
     <div className="space-y-3">
       <SectionHeading title="Portfolio Summary" />
+      <p className="-mt-1 text-xs text-[var(--muted)]">
+        Open positions only — closed positions keep their own column in the
+        Active vs Closed breakdown below.
+      </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <BigStat label="Total Invested" value={formatUsd(totals.totalInvested)} />
+        <BigStat
+          label="Total Invested (Active)"
+          value={formatUsd(totals.totalInvested)}
+          hint="Capital currently deployed in open positions."
+        />
+        <BigStat
+          label="Lifetime Total Deposited"
+          value={formatUsd(lifetimeDeposited)}
+          hint="All positions ever opened, including closed."
+        />
         <BigStat
           label="Total Current Value"
           value={formatUsd(totals.totalCurrentValue)}
         />
+        {/* Scoped label on purpose: the Dashboard's "Total Fees Earned" spans
+            every position ever, so reusing that exact name here — where it is
+            an addend of an active-only Net P&L — would put two different
+            numbers under one label and break Invariant #6. */}
         <BigStat
-          label="Total Fees Earned"
+          label="Fees Earned (Active)"
           value={formatUsd(totals.totalFees)}
           valueClass={pnlColor(totals.totalFees)}
+          hint="Fees on open positions. Closed-position fees appear in the breakdown below."
         />
         <BigStat
           label="Total Short P&L"
@@ -406,7 +448,7 @@ function PortfolioSummarySection({ totals }: PortfolioSummarySectionProps) {
           label="LP P&L"
           value={formatUsd(totals.lpPnL)}
           valueClass={pnlColor(totals.lpPnL)}
-          hint="Sum of (current value − deposited) across all positions. Price movement only, before fees."
+          hint="Sum of (current value − deposited) across open positions. Price movement only, before fees."
         />
         <NetPnlCard value={totals.netPnL} />
       </div>

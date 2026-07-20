@@ -184,8 +184,20 @@ export default function DashboardPage() {
     setClaims(getClaims());
   });
 
+  // Two scopes, deliberately kept apart. `summary` spans every position ever
+  // opened and feeds the metrics where closed positions still count — fees
+  // earned, profit realised, historical APR. `activeSummary` spans only open
+  // positions and feeds the "what is deployed right now" cards, so those
+  // agree with the Active Positions count beside them: capital in a closed
+  // position has been withdrawn and is not sitting in any pool.
   const summary = hydrated
     ? calcPortfolioSummary(positions, claims)
+    : EMPTY_SUMMARY;
+  const activeSummary = hydrated
+    ? calcPortfolioSummary(
+        positions.filter((p) => p.status === "active"),
+        claims,
+      )
     : EMPTY_SUMMARY;
   const activeRows = hydrated
     ? deriveRows(positions.filter((p) => p.status === "active"), claims)
@@ -218,12 +230,19 @@ export default function DashboardPage() {
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <SummaryCard
-              label="Total Deposited"
+              label="Total Deposited (Active)"
+              value={formatUsd(activeSummary.totalDeposited)}
+              hint="Capital currently deployed in open positions."
+            />
+            <SummaryCard
+              label="Lifetime Total Deposited"
               value={formatUsd(summary.totalDeposited)}
+              hint="All positions ever opened, including closed."
             />
             <SummaryCard
               label="Current Value"
-              value={formatUsd(summary.totalCurrentValue)}
+              value={formatUsd(activeSummary.totalCurrentValue)}
+              hint="Open positions only."
             />
             <SummaryCard
               label="Total Fees Earned"

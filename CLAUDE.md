@@ -115,6 +115,23 @@ wallet connection, live price feeds, and on-chain reads.
    LP P&L, position detail, docs, about pages must all show
    consistent data. Same protocol's value in two places must
    agree. Same formula in two pages must produce same number.
+   SCOPE RULE (2026-07-21): "current standing" totals scope to
+   ACTIVE positions only — Dashboard Total Deposited (Active) and
+   Current Value; Total P&L's Total Invested (Active), Total
+   Current Value, Fees Earned (Active), Total Short P&L, LP P&L
+   and Net P&L; and Sidebar Net P&L, which must always equal Total
+   P&L's Net P&L. Capital in a closed position has been withdrawn
+   and redeployed, so counting it again double-counts. Metrics
+   that describe money EARNED still span all positions: Dashboard
+   Total Fees Earned, Total Profit and Average Fee APR. Because
+   the two scopes now coexist, a label may not be reused across
+   scopes — Total P&L's fees card is deliberately "Fees Earned
+   (Active)" rather than "Total Fees Earned", since the Dashboard
+   card of that name spans everything and the two figures differ
+   ($1,163.82 vs $1,428.22 in verification). Closed positions are
+   never hidden: they keep their own column in Total P&L's
+   Active/Closed breakdown, and Lifetime Total Deposited on both
+   pages spans every position ever opened.
 
 7. [ASPIRATIONAL] **Wallet Security** — Per-chain disconnected
    flags (localStorage). Wallets only connect when actively
@@ -608,6 +625,45 @@ at the plan gate.
   entry-price edit afterwards still held Deposited and preserved
   currentBalance, so the override does not leak. tsc/lint/build
   clean; zero console errors; seeds removed.
+
+- Positions list rebuilt as cards (2026-07-20) [b9f10df]: the
+  15-column table pushed Edit/Update/Claim/Close past the right
+  edge, reachable only by dragging sideways. Replaced with a card
+  grid: header (pair, chain · protocol, status badge), a visual
+  range bar drawing where price sits between the bounds (dot
+  coloured by status, tick for entry price), six headline metrics,
+  a Details toggle for New Fees / Claimed / Price Diff / Entry
+  Price / Range bounds / Range %, and actions always visible at
+  the bottom. Every value the table showed is still shown, plus
+  Entry Price and range bounds which it had no room for. Closed
+  cards dimmed, never filtered (Invariant #4). Dropped
+  RangeHealthCell and the old table markup. Verified no horizontal
+  scroll at 1299px and 430px.
+- Active-only scope for current-standing totals (2026-07-21)
+  [PENDING]: Dashboard and Total P&L top-level cards (Total
+  Deposited, Current Value, LP P&L, Net P&L) now scope to active
+  (non-closed) positions only, matching Active Positions count.
+  Added new "Lifetime Total Deposited" card on both pages showing
+  all positions ever (active + closed) for overall profit/loss
+  context. Sidebar Net P&L updated to match Total P&L's new
+  active-only scope (Invariant #6 updated accordingly). Existing
+  Active/Closed breakdown on Total P&L page is unchanged — closed
+  positions remain fully visible there. JUDGMENT CALL made during
+  Phase B: Net P&L on Total P&L is the sum of the cards beside it,
+  and totalFees is one of its addends, so making Net P&L
+  active-only necessarily made Fees Earned and Total Short P&L
+  active-only too — the whole computeTotals object shares one
+  loop. Osho chose the fully-coherent row at the gate. That left
+  Total P&L's fees card showing $1,163.82 under the same label as
+  the Dashboard's $1,428.22, so it was renamed "Fees Earned
+  (Active)" to avoid two numbers under one name. Verified on
+  localhost:3001 with the reported data: Total Deposited (Active)
+  $28,003.03, Lifetime $34,956.13, Current Value $29,581.53, LP
+  P&L $1,722.05 → $1,578.50, Net P&L $3,150.27 → $2,742.32,
+  Sidebar $2,742.32 (agrees exactly); Dashboard Total Fees
+  $1,428.22 / Total Profit $3,006.72 / Avg APR 35.82% unchanged;
+  Closed breakdown still shows 2 positions, $6,953.10 invested,
+  $264.40 fees. tsc/lint/build clean.
 
 ## Known Issues
 
