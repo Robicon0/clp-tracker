@@ -640,7 +640,7 @@ at the plan gate.
   RangeHealthCell and the old table markup. Verified no horizontal
   scroll at 1299px and 430px.
 - Active-only scope for current-standing totals (2026-07-21)
-  [PENDING]: Dashboard and Total P&L top-level cards (Total
+  [7ae0e50]: Dashboard and Total P&L top-level cards (Total
   Deposited, Current Value, LP P&L, Net P&L) now scope to active
   (non-closed) positions only, matching Active Positions count.
   Added new "Lifetime Total Deposited" card on both pages showing
