@@ -409,6 +409,14 @@ export interface BusinessPnL {
 
 const STABLE_SYMBOLS = new Set(["USDC", "USDT", "DAI", "USD"]);
 
+// Stablecoins are anchored to $1 rather than priced, current or historical.
+// Exported so the historical price route uses the same list as every other
+// calculation — a symbol treated as stable in one place and volatile in
+// another would value the same close two different ways (Invariant #6).
+export function isStableSymbol(symbol: string): boolean {
+  return STABLE_SYMBOLS.has(symbol.trim().toUpperCase());
+}
+
 export function calcBusinessPnL(
   claims: FeeClaim[],
   prices: Record<string, number>,

@@ -2957,6 +2957,183 @@ function UpdatePositionModal({
   );
 }
 
+type HistoricalPriceState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | {
+      status: "done";
+      sources: Record<string, string>;
+      coarse: string[];
+      unresolved: string[];
+      at: string;
+    };
+
+const PRICE_SOURCE_LABEL: Record<string, string> = {
+  stable: "stablecoin — anchored to $1.00, not fetched",
+  defillama: "DeFiLlama, priced at the exact exit time",
+  coingecko: "CoinGecko — daily snapshot only, not the exact time",
+};
+
+function CloseModeTabs({
+  mode,
+  onChange,
+}: {
+  mode: "manual" | "tokens";
+  onChange: (next: "manual" | "tokens") => void;
+}) {
+  const tabs: Array<{ key: "manual" | "tokens"; label: string }> = [
+    { key: "manual", label: "Enter manually" },
+    { key: "tokens", label: "Enter token amounts received" },
+  ];
+  return (
+    <div className="space-y-1.5">
+      <div
+        role="tablist"
+        aria-label="Close entry method"
+        className="inline-flex rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)]/40 p-0.5"
+      >
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={mode === tab.key}
+            onClick={() => onChange(tab.key)}
+            className={`rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${
+              mode === tab.key
+                ? "bg-[var(--accent)] text-white"
+                : "text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-[var(--muted)]">
+        {mode === "manual"
+          ? "Type the final balance and scalp yourself."
+          : "Type the tokens you actually received; the app prices them at your exit time and works out the rest."}
+      </p>
+    </div>
+  );
+}
+
+// Fetched prices are shown, not hidden, and stay editable — an index price at
+// a timestamp is not necessarily the price actually filled at.
+function ExitPricePanel({
+  state,
+  baseSymbol,
+  quoteSymbol,
+  basePrice,
+  quotePrice,
+  onBasePrice,
+  onQuotePrice,
+  onFetch,
+  onSwitchToManual,
+}: {
+  state: HistoricalPriceState;
+  baseSymbol: string;
+  quoteSymbol: string;
+  basePrice: string;
+  quotePrice: string;
+  onBasePrice: (v: string) => void;
+  onQuotePrice: (v: string) => void;
+  onFetch: () => void;
+  onSwitchToManual: () => void;
+}) {
+  const sources = state.status === "done" ? state.sources : {};
+  const unresolved = state.status === "done" ? state.unresolved : [];
+  const rows = [
+    { symbol: baseSymbol || "Base", value: basePrice, onChange: onBasePrice },
+    { symbol: quoteSymbol || "Quote", value: quotePrice, onChange: onQuotePrice },
+  ];
+
+  return (
+    <div className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)]/30 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+          Price at exit time
+        </span>
+        <button
+          type="button"
+          onClick={onFetch}
+          disabled={state.status === "loading"}
+          className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-[11px] font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)] disabled:opacity-50"
+        >
+          {state.status === "loading" ? "Fetching…" : "Fetch prices"}
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {rows.map((row) => {
+          const source = sources[row.symbol.trim().toUpperCase()];
+          return (
+            <div key={row.symbol} className="space-y-1">
+              <label
+                htmlFor={`c_price_${row.symbol}`}
+                className="block text-[11px] text-[var(--muted)]"
+              >
+                {row.symbol} price (USD)
+              </label>
+              <input
+                id={`c_price_${row.symbol}`}
+                type="number"
+                step="any"
+                className={inputClass}
+                placeholder="0.00"
+                value={row.value}
+                onChange={(e) => row.onChange(e.target.value)}
+              />
+              {source && (
+                <p className="text-[10px] text-[var(--muted)]">
+                  {PRICE_SOURCE_LABEL[source] ?? source}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {state.status === "error" && (
+        <div className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+          {state.message} You can retry, type the prices in by hand above, or{" "}
+          <button
+            type="button"
+            onClick={onSwitchToManual}
+            className="underline underline-offset-2 hover:text-amber-200"
+          >
+            switch to manual entry
+          </button>
+          .
+        </div>
+      )}
+
+      {state.status === "done" && unresolved.length > 0 && (
+        <div className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+          No historical price found for {unresolved.join(", ")}. Type it in
+          above, or{" "}
+          <button
+            type="button"
+            onClick={onSwitchToManual}
+            className="underline underline-offset-2 hover:text-amber-200"
+          >
+            switch to manual entry
+          </button>
+          .
+        </div>
+      )}
+
+      {state.status === "done" && state.coarse.length > 0 && (
+        <p className="mt-2 text-[11px] text-amber-300">
+          {state.coarse.join(", ")} priced from a daily snapshot, not your exact
+          exit time — check it before saving.
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface ClosePositionModalProps {
   position: Position;
   onCancel: () => void;
@@ -2987,6 +3164,16 @@ function ClosePositionModal({
     String(position.currentBalance ?? 0),
   );
   const [closeTxLink, setCloseTxLink] = useState("");
+  // Mode 2: token amounts received, priced at the exit moment. Both modes
+  // save the same scalp/currentBalance — this one just does the arithmetic.
+  const [closeMode, setCloseMode] = useState<"manual" | "tokens">("manual");
+  const [baseReceived, setBaseReceived] = useState("");
+  const [quoteReceived, setQuoteReceived] = useState("");
+  const [basePrice, setBasePrice] = useState("");
+  const [quotePrice, setQuotePrice] = useState("");
+  const [priceState, setPriceState] = useState<HistoricalPriceState>({
+    status: "idle",
+  });
   const [claimSectionOpen, setClaimSectionOpen] = useState(false);
   const [claimTokens1, setClaimTokens1] = useState("");
   const [claimTokens2, setClaimTokens2] = useState("");
@@ -2998,12 +3185,75 @@ function ClosePositionModal({
   const shouldCreateClaim =
     num(claimTokens1) > 0 || num(claimTokens2) > 0 || num(claimUsdValue) > 0;
 
+  const deposited = getEffectiveDeposited(position);
+  // Mode 2 results. Prices are whatever is in the (overridable) inputs, so an
+  // edited price flows straight through without refetching.
+  const tokensBalance =
+    num(baseReceived) * num(basePrice) + num(quoteReceived) * num(quotePrice);
+  const tokensScalp = tokensBalance - deposited;
+  const usingTokens = closeMode === "tokens";
+
+  // The datetime-local input holds LOCAL wall-clock time. new Date() parses it
+  // in the device's zone, so getTime() is already the correct absolute moment
+  // — no manual offset arithmetic, which is where this usually goes wrong.
+  const fetchExitPrices = useCallback(async () => {
+    const ms = new Date(exitDatetime).getTime();
+    const ts = Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+    if (ts === null) {
+      setPriceState({ status: "error", message: "Enter a valid exit date and time first." });
+      return;
+    }
+    const symbols = [position.token1Symbol, position.token2Symbol]
+      .map((s) => (s ?? "").trim().toUpperCase())
+      .filter((s) => s !== "");
+    if (symbols.length === 0) {
+      setPriceState({ status: "error", message: "This position has no token symbols set." });
+      return;
+    }
+    setPriceState({ status: "loading" });
+    try {
+      const res = await fetch(
+        `/api/prices/historical?symbols=${encodeURIComponent(symbols.join(","))}&timestamp=${ts}`,
+      );
+      if (!res.ok) throw new Error(`Price service returned ${res.status}`);
+      const data = (await res.json()) as {
+        prices: Record<string, number>;
+        sources: Record<string, string>;
+        coarse: string[];
+        unresolved: string[];
+      };
+      const base = position.token1Symbol.trim().toUpperCase();
+      const quote = position.token2Symbol.trim().toUpperCase();
+      if (typeof data.prices[base] === "number") {
+        setBasePrice(formatAmountInput(data.prices[base], 8));
+      }
+      if (typeof data.prices[quote] === "number") {
+        setQuotePrice(formatAmountInput(data.prices[quote], 8));
+      }
+      setPriceState({
+        status: "done",
+        sources: data.sources ?? {},
+        coarse: data.coarse ?? [],
+        unresolved: data.unresolved ?? [],
+        at: new Date(ts * 1000).toISOString(),
+      });
+    } catch (err) {
+      setPriceState({
+        status: "error",
+        message:
+          err instanceof Error
+            ? `Could not fetch prices (${err.message}).`
+            : "Could not fetch prices.",
+      });
+    }
+  }, [exitDatetime, position.token1Symbol, position.token2Symbol]);
+
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     onSubmit({
       exitDatetime: new Date(exitDatetime).toISOString(),
-      currentBalance: num(currentBalance),
-      scalp: optionalNum(scalp),
+      currentBalance: usingTokens ? tokensBalance : num(currentBalance),
+      scalp: usingTokens ? tokensScalp : optionalNum(scalp),
       closeTxLink: closeTxLink.trim() === "" ? null : closeTxLink.trim(),
       feeClaim: shouldCreateClaim
         ? {
@@ -3045,32 +3295,111 @@ function ClosePositionModal({
               entry={position.entryDatetime}
               exit={exitDatetime}
             />
-            <Field
-              label="Scalp (USD)"
-              htmlFor="c_scalp"
-              hint="Positive = realized gain at close. Negative = realized loss at close. Leave blank if no scalp event."
-            >
-              <input
-                id="c_scalp"
-                type="number"
-                step="any"
-                className={inputClass}
-                placeholder="0.00"
-                value={scalp}
-                onChange={(e) => setScalp(e.target.value)}
-              />
-            </Field>
-            <Field label="Final Current Balance (USD)" htmlFor="c_balance">
-              <input
-                id="c_balance"
-                type="number"
-                step="any"
-                required
-                className={inputClass}
-                value={currentBalance}
-                onChange={(e) => setCurrentBalance(e.target.value)}
-              />
-            </Field>
+            <div className="sm:col-span-2">
+              <CloseModeTabs mode={closeMode} onChange={setCloseMode} />
+            </div>
+            {usingTokens ? (
+              <>
+                <Field
+                  label={`${position.token1Symbol || "Base"} received`}
+                  htmlFor="c_baseRecv"
+                >
+                  <input
+                    id="c_baseRecv"
+                    type="number"
+                    step="any"
+                    className={inputClass}
+                    placeholder="0"
+                    value={baseReceived}
+                    onChange={(e) => setBaseReceived(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label={`${position.token2Symbol || "Quote"} received`}
+                  htmlFor="c_quoteRecv"
+                >
+                  <input
+                    id="c_quoteRecv"
+                    type="number"
+                    step="any"
+                    className={inputClass}
+                    placeholder="0"
+                    value={quoteReceived}
+                    onChange={(e) => setQuoteReceived(e.target.value)}
+                  />
+                </Field>
+                <div className="sm:col-span-2">
+                  <ExitPricePanel
+                    state={priceState}
+                    baseSymbol={position.token1Symbol}
+                    quoteSymbol={position.token2Symbol}
+                    basePrice={basePrice}
+                    quotePrice={quotePrice}
+                    onBasePrice={setBasePrice}
+                    onQuotePrice={setQuotePrice}
+                    onFetch={fetchExitPrices}
+                    onSwitchToManual={() => setCloseMode("manual")}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                    Final Current Balance (USD)
+                  </span>
+                  <div
+                    className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]"
+                    aria-live="polite"
+                  >
+                    {formatUsd(tokensBalance)}
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    Auto: (base × price) + (quote × price)
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                    Scalp (USD)
+                  </span>
+                  <div
+                    className={`rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums ${pnlColor(tokensScalp)}`}
+                    aria-live="polite"
+                  >
+                    {formatUsd(tokensScalp)}
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    Auto: Final Balance − Deposited ({formatUsd(deposited)})
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <Field
+                  label="Scalp (USD)"
+                  htmlFor="c_scalp"
+                  hint="Positive = realized gain at close. Negative = realized loss at close. Leave blank if no scalp event."
+                >
+                  <input
+                    id="c_scalp"
+                    type="number"
+                    step="any"
+                    className={inputClass}
+                    placeholder="0.00"
+                    value={scalp}
+                    onChange={(e) => setScalp(e.target.value)}
+                  />
+                </Field>
+                <Field label="Final Current Balance (USD)" htmlFor="c_balance">
+                  <input
+                    id="c_balance"
+                    type="number"
+                    step="any"
+                    required
+                    className={inputClass}
+                    value={currentBalance}
+                    onChange={(e) => setCurrentBalance(e.target.value)}
+                  />
+                </Field>
+              </>
+            )}
             <Field
               label="Close Transaction Link (Optional)"
               htmlFor="c_txLink"
