@@ -813,6 +813,37 @@ at the plan gate.
   overridable; Mode 2 and open-position Edit unaffected.
   tsc/lint/build clean.
 
+- Hypothetical labelling on closed positions (2026-07-22)
+  [c7fce4f]: Out-of-Range Upside/Downside and Net Coverage boxes
+  now show a "Hypothetical — not what actually happened" label and
+  are visually de-emphasized on CLOSED positions, to avoid
+  confusion with the position's real Scalp/Profit result. No change
+  on open positions, no calculation changes.
+  WHY: these boxes answer "what would this be worth IF price hit
+  the exact edge of the range?" — useful while open, but on a
+  closed position the real outcome is already recorded and the
+  projection almost never matches, because a close rarely lands
+  exactly on a range boundary. Confirmed case: WETH/USDC closed
+  with Scalp $29.07 / Profit $283.13 beside a hypothetical upside
+  of $234.58, no label distinguishing them.
+  ALL THREE RENDER LOCATIONS (audited — if a fourth is ever added,
+  it needs the same treatment): (1) app/positions/page.tsx Add/Edit
+  modal — two OutOfRangeBox + two NetCoverageBox; (2)
+  app/pool-pnl/page.tsx By Position table — OOR Upside / OOR
+  Downside cells; (3) app/pool-pnl/page.tsx expanded row — "Out of
+  Range Scenarios" ScenarioBox + CoverageBox. The Positions page
+  position CARD does not render these at all. Settings CSV export
+  writes the raw fields and was deliberately left alone — a
+  spreadsheet column is not a side-by-side comparison with the real
+  result.
+  Shared via components/Hypothetical.tsx (HYPOTHETICAL_DIM,
+  HypotheticalNotice, HypotheticalTag) so the surfaces cannot drift
+  — do not inline copies per page. Verified: closed Edit showed the
+  notice with both grids at opacity-60; open Edit unchanged with
+  identical class strings; closed table row had exactly 2 dimmed
+  titled cells vs 0 on the open row; lib/calculations.ts not in the
+  diff. tsc/lint/build clean.
+
 ## Known Issues
 
 - **Pool P&L summary cards ignore both the status filter and the
