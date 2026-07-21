@@ -198,6 +198,15 @@ export default function PoolPnlPage() {
         </p>
       </header>
 
+      <p className="-mt-4 text-xs text-[var(--muted)]">
+        These totals reflect whichever filter is selected below — All, Active,
+        or Closed —{" "}
+        <span className="text-[var(--foreground)]">
+          currently {statusFilter === "all" ? "All" : statusFilter === "active" ? "Active" : "Closed"}
+        </span>
+        . They change when you switch it.
+      </p>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <SummaryStat label="Total Invested" value={formatUsd(totals.invested)} />
         <SummaryStat
