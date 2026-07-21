@@ -30,6 +30,9 @@ export interface Position {
   outOfRangeDownside: number | null;
   scalp: number | null;
   txLink: string | null;
+  // Explorer link for the CLOSING transaction, mirroring txLink which covers
+  // the opening one. Optional; absent on positions closed before this existed.
+  closeTxLink?: string | null;
   notes: string;
   status: "active" | "closed";
 }

@@ -25,6 +25,7 @@ import {
   calcPositionProfit,
   calcPriceDiff,
   calcRangeHealth,
+  calcClosedProfit,
   calcTotalFees,
   calcWideRangePercent,
   computePositionIL,
@@ -427,6 +428,35 @@ function RecalcFromTokensPanel({
   );
 }
 
+// Read-only mirror of the closed-position profit on the card, so editing
+// Scalp shows its effect before saving. Profit is derived, never stored:
+// closed profit = scalp + total fees (Master Formulas).
+function ClosedProfitSummary({
+  scalp,
+  totalFees,
+}: {
+  scalp: string;
+  totalFees: number;
+}) {
+  const profit = calcClosedProfit(optionalNum(scalp), totalFees);
+  return (
+    <div className="space-y-1.5">
+      <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+        Profit / Loss
+      </span>
+      <div
+        className={`rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums ${pnlColor(profit)}`}
+        aria-live="polite"
+      >
+        {formatUsd(profit)}
+      </div>
+      <p className="text-[11px] text-[var(--muted)]">
+        Auto: Scalp + Total Fees ({formatUsd(totalFees)} in fees)
+      </p>
+    </div>
+  );
+}
+
 // Chooses which fields drive the LP Range section. Add-position only.
 function InputModeTabs({
   mode,
@@ -553,6 +583,11 @@ interface PositionFormState {
   token1Count: string;
   token2Count: string;
   txLink: string;
+  // Close-specific fields. Only surfaced when editing a CLOSED position —
+  // ignored entirely for open ones, which have no exit to describe.
+  exitDatetime: string;
+  closeBalance: string;
+  closeTxLink: string;
   // Empty unless a confirmed recalculation decided Current Balance should
   // move with the correction. Never a visible field.
   currentBalanceOverride: string;
@@ -583,6 +618,9 @@ const EMPTY_FORM: PositionFormState = {
   token1Count: "",
   token2Count: "",
   txLink: "",
+  exitDatetime: "",
+  closeBalance: "",
+  closeTxLink: "",
   currentBalanceOverride: "",
   shortDateStart: "",
   shortDateEnd: "",
@@ -621,6 +659,9 @@ function positionToForm(p: Position): PositionFormState {
     token1Count: String(p.token1Count),
     token2Count: String(p.token2Count),
     txLink: p.txLink ?? "",
+    exitDatetime: isoToDatetimeLocal(p.exitDatetime ?? ""),
+    closeBalance: formatAmountInput(p.currentBalance, 2),
+    closeTxLink: p.closeTxLink ?? "",
     currentBalanceOverride: "",
     shortDateStart: isoToDateInput(p.shortDateStart),
     shortDateEnd: isoToDateInput(p.shortDateEnd),
@@ -653,6 +694,7 @@ function buildRecords(
   const entryIso = form.entryDatetime
     ? new Date(form.entryDatetime).toISOString()
     : new Date().toISOString();
+  const isClosed = base?.status === "closed";
 
   // Stored deposited is a cache of the derived value — rewritten on every
   // Add/Edit save so storage stays in sync with the computed truth.
@@ -697,13 +739,20 @@ function buildRecords(
     chain: form.chain.trim().toUpperCase(),
     protocol: form.protocol.trim().toUpperCase(),
     entryDatetime: entryIso,
-    exitDatetime: base?.exitDatetime ?? null,
+    // Editable only while editing a closed position; open positions have no
+    // exit and must keep null.
+    exitDatetime: isClosed
+      ? (form.exitDatetime
+          ? new Date(form.exitDatetime).toISOString()
+          : base?.exitDatetime ?? null)
+      : (base?.exitDatetime ?? null),
     deposited,
-    // Normally carried through untouched on edit. The one exception is a
-    // confirmed token-amount recalculation on a position whose balance had
-    // never been independently updated — see currentBalanceOverride.
-    currentBalance:
-      form.currentBalanceOverride !== ""
+    // Three ways this can be set, in priority order: the final withdrawn
+    // amount typed on a closed position, a confirmed token-amount
+    // recalculation (currentBalanceOverride), or carried through untouched.
+    currentBalance: isClosed
+      ? num(form.closeBalance)
+      : form.currentBalanceOverride !== ""
         ? num(form.currentBalanceOverride)
         : (base?.currentBalance ?? deposited),
     newFees: base?.newFees ?? 0,
@@ -732,6 +781,9 @@ function buildRecords(
     outOfRangeDownside: ooDown,
     scalp: optionalNum(form.scalp),
     txLink: form.txLink.trim() === "" ? null : form.txLink.trim(),
+    closeTxLink: isClosed
+      ? (form.closeTxLink.trim() === "" ? null : form.closeTxLink.trim())
+      : (base?.closeTxLink ?? null),
     notes: form.notes.trim().toUpperCase(),
     status: base?.status ?? "active",
   };
@@ -974,6 +1026,7 @@ export default function PositionsPage() {
       exitDatetime: string;
       currentBalance: number;
       scalp: number | null;
+      closeTxLink: string | null;
       feeClaim?: {
         token1Amount: number;
         token2Amount: number;
@@ -1015,6 +1068,7 @@ export default function PositionsPage() {
             exitDatetime: next.exitDatetime,
             currentBalance: next.currentBalance,
             scalp: next.scalp,
+            closeTxLink: next.closeTxLink,
             status: "closed" as const,
           }
         : p,
@@ -1090,6 +1144,7 @@ export default function PositionsPage() {
           editingStatus={modal.position.status}
           savedDeposited={modal.position.deposited}
           savedCurrentBalance={modal.position.currentBalance}
+          closedTotalFees={getEffectiveTotalFees(modal.position, claims)}
           exitDatetime={modal.position.exitDatetime}
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={(form) => handleEdit(modal.position, form)}
@@ -1928,6 +1983,9 @@ interface PositionFormModalProps {
   // misclassify an untouched balance as real tracked data.
   savedDeposited?: number;
   savedCurrentBalance?: number;
+  // Effective total fees for the position being edited, so the closed-position
+  // Profit/Loss summary matches the card exactly (Invariant #10).
+  closedTotalFees?: number;
   onCancel: () => void;
   onSubmit: (form: PositionFormState) => void;
 }
@@ -1940,6 +1998,7 @@ function PositionFormModal({
   exitDatetime,
   savedDeposited,
   savedCurrentBalance,
+  closedTotalFees = 0,
   onCancel,
   onSubmit,
 }: PositionFormModalProps) {
@@ -2296,23 +2355,67 @@ function PositionFormModal({
               onChange={(v) => set("entryDatetime", v)}
               required
             />
-            <DateOrderWarning entry={form.entryDatetime} exit={exitDatetime} />
+            <DateOrderWarning
+              entry={form.entryDatetime}
+              exit={editingStatus === "closed" ? form.exitDatetime : exitDatetime}
+            />
             {editingStatus === "closed" && (
-              <Field
-                label="Scalp (USD)"
-                htmlFor="scalp"
-                hint="Positive = gain at close. Negative = loss at close."
-              >
-                <input
-                  id="scalp"
-                  type="number"
-                  step="any"
-                  className={inputClass}
-                  placeholder="0.00"
-                  value={form.scalp}
-                  onChange={(e) => set("scalp", e.target.value)}
+              <>
+                <DateTimeFields
+                  dateLabel="Exit Date"
+                  timeLabel="Exit Time (24h)"
+                  idPrefix="exit"
+                  value={form.exitDatetime}
+                  onChange={(v) => set("exitDatetime", v)}
                 />
-              </Field>
+                <Field
+                  label="Final Withdrawn Amount (USD)"
+                  htmlFor="closeBalance"
+                  hint="What the position was worth when you closed it."
+                >
+                  <input
+                    id="closeBalance"
+                    type="number"
+                    step="any"
+                    className={inputClass}
+                    placeholder="0.00"
+                    value={form.closeBalance}
+                    onChange={(e) => set("closeBalance", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Close Transaction Link (Optional)"
+                  htmlFor="closeTxLink"
+                  hint="From your blockchain explorer e.g. hyperliquid.xyz, suiscan.xyz, basescan.org"
+                >
+                  <input
+                    id="closeTxLink"
+                    className={inputClass}
+                    placeholder="Paste transaction hash or explorer URL"
+                    value={form.closeTxLink}
+                    onChange={(e) => set("closeTxLink", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Scalp (USD)"
+                  htmlFor="scalp"
+                  hint="Positive = gain at close. Negative = loss at close."
+                >
+                  <input
+                    id="scalp"
+                    type="number"
+                    step="any"
+                    className={inputClass}
+                    placeholder="0.00"
+                    value={form.scalp}
+                    onChange={(e) => set("scalp", e.target.value)}
+                  />
+                </Field>
+                <ClosedProfitSummary
+                  scalp={form.scalp}
+                  totalFees={closedTotalFees}
+                />
+              </>
             )}
           </div>
           <div className="mt-4">
@@ -2861,6 +2964,7 @@ interface ClosePositionModalProps {
     exitDatetime: string;
     currentBalance: number;
     scalp: number | null;
+    closeTxLink: string | null;
     feeClaim?: {
       token1Amount: number;
       token2Amount: number;
@@ -2882,6 +2986,7 @@ function ClosePositionModal({
   const [currentBalance, setCurrentBalance] = useState(
     String(position.currentBalance ?? 0),
   );
+  const [closeTxLink, setCloseTxLink] = useState("");
   const [claimSectionOpen, setClaimSectionOpen] = useState(false);
   const [claimTokens1, setClaimTokens1] = useState("");
   const [claimTokens2, setClaimTokens2] = useState("");
@@ -2899,6 +3004,7 @@ function ClosePositionModal({
       exitDatetime: new Date(exitDatetime).toISOString(),
       currentBalance: num(currentBalance),
       scalp: optionalNum(scalp),
+      closeTxLink: closeTxLink.trim() === "" ? null : closeTxLink.trim(),
       feeClaim: shouldCreateClaim
         ? {
             token1Amount: num(claimTokens1),
@@ -2963,6 +3069,19 @@ function ClosePositionModal({
                 className={inputClass}
                 value={currentBalance}
                 onChange={(e) => setCurrentBalance(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Close Transaction Link (Optional)"
+              htmlFor="c_txLink"
+              hint="From your blockchain explorer e.g. hyperliquid.xyz, suiscan.xyz, basescan.org"
+            >
+              <input
+                id="c_txLink"
+                className={inputClass}
+                placeholder="Paste transaction hash or explorer URL"
+                value={closeTxLink}
+                onChange={(e) => setCloseTxLink(e.target.value)}
               />
             </Field>
           </div>
