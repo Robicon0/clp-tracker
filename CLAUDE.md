@@ -88,12 +88,44 @@ wallet connection, live price feeds, and on-chain reads.
    treat per-tick delta as 0. Applies to every Uniswap V3-style
    AMM. Activates when CLP Tracker reads on-chain fee growth.
 
-2. [ASPIRATIONAL] **Claim-Time Historical Pricing (Rule 1a)** —
-   Fee USD valuation must use claim-date historical price, never
-   current spot. Cascade: hardcoded stablecoin anchor ($1) →
-   CoinGecko historical → DeFiLlama historical → pending. Never
-   current spot as fallback for fee claims. Activates when
-   CLP Tracker auto-fetches token prices instead of manual entry.
+2. [PARTIALLY ACTIVE] **Historical Pricing (Rule 1a)** — USD
+   valuation of a past event must use the price AT that moment,
+   never current spot.
+
+   CASCADE (corrected 2026-07-21 by measurement — the earlier
+   [ASPIRATIONAL] version listed CoinGecko before DeFiLlama, which
+   testing showed is backwards):
+
+     1. Stablecoin anchor ($1, STABLE_SYMBOLS via isStableSymbol) —
+        never fetched.
+     2. DeFiLlama /prices/historical/{unixtime} — PRIMARY. Genuinely
+        time-granular (asking 19:13 returns the 19:13 price),
+        batches every symbol into one ~0.5s call, reaches years
+        back, 0 failures in a 12-call burst.
+     3. CoinGecko /coins/{id}/history — LAST RESORT ONLY. DATE-only
+        (one snapshot per day), capped at 365 days on the free tier,
+        and rate-limits hard: 5 of 10 sequential calls returned 429.
+        One call per token, no batching. Results must be flagged
+        `coarse` so the UI never implies minute accuracy.
+     4. Manual entry fallback.
+
+   Never current spot as a fallback for a past event.
+
+   ACTIVE for: Close Position token-amount mode (b74595d), via
+   app/api/prices/historical/route.ts.
+   STILL ASPIRATIONAL for: per-claim fee valuation, which remains
+   on manual/current-price entry.
+
+   SCOPE NOTE: this cascade governs HISTORICAL lookups only.
+   CoinGecko stays primary for LIVE prices in
+   app/api/prices/route.ts, where it is fast (~72ms) and
+   unthrottled — do not "unify" the two routes onto one provider.
+
+   TIMEZONE: callers pass an absolute unix timestamp. The client
+   builds it with new Date(localDatetimeString).getTime()/1000 —
+   the datetime-local input holds local wall-clock time and Date
+   parses it in the device zone, so this is already correct. Do
+   not add manual offset arithmetic; that is how this gets broken.
 
 3. [ASPIRATIONAL] **Persistent Price Cache** — Use Redis or
    equivalent to cache historical prices keyed by (token, date).
@@ -724,6 +756,27 @@ at the plan gate.
   $339.21 on the card; date warning fired and cleared; closing SUI
   stored closeTxLink and reopened editable; open-position Edit
   unchanged. tsc/lint/build clean.
+
+- Token-amount close mode + exact-time historical pricing
+  (2026-07-21) [b74595d]: Close Position flow now offers an
+  optional token-amount entry mode alongside manual entry. User
+  enters base/quote token amounts received at close; app fetches
+  the exact historical price at that timestamp via DeFiLlama
+  (corrected cascade — see Invariant #2 update) and auto-calculates
+  Final Current Balance and Scalp. Fetched price is
+  user-overridable. Falls back gracefully to manual entry on fetch
+  failure. New route app/api/prices/historical/route.ts; manual
+  mode and all live-price paths unchanged; no schema change (Mode 2
+  writes the same scalp/currentBalance). isStableSymbol exported
+  from lib/calculations so the route anchors the same stable set as
+  every other calculation. Verified 2026-07-04 19:13 AEST: ETH
+  1759.85149134 matched an independent DeFiLlama call to 8dp; unix
+  1783156380 = 09:13 UTC and stored as 2026-07-04T09:13:00.000Z;
+  price override 2000 → $6,500.00 / -$3,500.00 instantly;
+  USDC/USDT close fetched nothing and anchored both to $1.00;
+  FOOBAR produced a graceful "type it in or switch to manual"
+  fallback; exit-before-entry warning fired in token mode.
+  tsc/lint/build clean.
 
 ## Known Issues
 
