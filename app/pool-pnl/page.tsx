@@ -134,25 +134,35 @@ export default function PoolPnlPage() {
     [hydrated, positions, claims],
   );
 
+  // The single filtered set the whole page describes. Both the table and the
+  // summary cards read from this — computing totals over raw `positions`
+  // instead was the bug where the cards ignored the Active/Closed toggle and
+  // Pool P&L's Net P&L could disagree with the Sidebar's (Invariant #6).
+  const filteredPositions = useMemo(
+    () =>
+      hydrated
+        ? positions.filter((p) =>
+            statusFilter === "all" ? true : p.status === statusFilter,
+          )
+        : [],
+    [hydrated, positions, statusFilter],
+  );
+
   const rows = useMemo(() => {
-    if (!hydrated) return [];
-    const filtered = positions.filter((p) =>
-      statusFilter === "all" ? true : p.status === statusFilter,
-    );
-    const sorted = [...filtered].sort((a, b) => {
+    const sorted = [...filteredPositions].sort((a, b) => {
       const ta = new Date(a.entryDatetime).getTime();
       const tb = new Date(b.entryDatetime).getTime();
       return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
     });
     return derive(sorted);
-  }, [hydrated, positions, statusFilter]);
+  }, [filteredPositions]);
 
   const totals = useMemo(() => {
     let invested = 0;
     let currentValue = 0;
     let lpPnl = 0;
     let shortPnl = 0;
-    for (const p of positions) {
+    for (const p of filteredPositions) {
       const deposited = getEffectiveDeposited(p);
       invested += deposited;
       currentValue += p.currentBalance;
@@ -168,7 +178,7 @@ export default function PoolPnlPage() {
       shortPnl,
       netPnl: lpPnl + shortPnl,
     };
-  }, [positions]);
+  }, [filteredPositions]);
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
