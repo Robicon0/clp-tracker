@@ -2,17 +2,38 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { getClaims, getPositions } from "../../lib/storage";
+import {
+  getClaims,
+  getPositions,
+  getSettings,
+  getTransfers,
+  saveSettings,
+} from "../../lib/storage";
 import {
   calcDaysActive,
   calcFeeAPR,
+  calcOverallPnL,
   calcPositionProfit,
   calcPriceDiff,
   getEffectiveDeposited,
   getEffectiveTotalFees,
+  type OverallPnL,
 } from "../../lib/calculations";
+import {
+  InitialCapitalCard,
+  OverallPnLCard,
+} from "../../components/CapitalCards";
 import { useHydrated } from "../../lib/useHydrated";
-import type { FeeClaim, Position } from "../../lib/types";
+import type { FeeClaim, Position, Transfer } from "../../lib/types";
+
+const EMPTY_OVERALL: OverallPnL = {
+  activeCurrentValue: 0,
+  convertedFees: 0,
+  expenses: 0,
+  initialCapital: 0,
+  overall: 0,
+  unvaluedConvertedClaims: 0,
+};
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -266,10 +287,14 @@ function buildMonthRows(claims: FeeClaim[], positions: Position[]): MonthRow[] {
 export default function TotalPnlPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [initialCapital, setInitialCapital] = useState(0);
 
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
+    setTransfers(getTransfers());
+    setInitialCapital(getSettings().initialCapital);
   });
 
   // Portfolio Summary describes what is deployed right now, so it spans open
@@ -294,6 +319,19 @@ export default function TotalPnlPage() {
             netPnL: 0,
           },
     [hydrated, positions, claims],
+  );
+
+  const handleSaveInitialCapital = (next: number) => {
+    saveSettings({ ...getSettings(), initialCapital: next });
+    setInitialCapital(next);
+  };
+
+  const overall = useMemo(
+    () =>
+      hydrated
+        ? calcOverallPnL(positions, claims, transfers, initialCapital)
+        : EMPTY_OVERALL,
+    [hydrated, positions, claims, transfers, initialCapital],
   );
 
   const lifetimeDeposited = useMemo(
@@ -369,6 +407,9 @@ export default function TotalPnlPage() {
           <PortfolioSummarySection
             totals={totals}
             lifetimeDeposited={lifetimeDeposited}
+            overall={overall}
+            initialCapital={initialCapital}
+            onSaveInitialCapital={handleSaveInitialCapital}
           />
           <PerformanceBreakdownSection
             active={activeSummary}
@@ -401,11 +442,17 @@ function EmptyIcon() {
 interface PortfolioSummarySectionProps {
   totals: PortfolioTotals;
   lifetimeDeposited: number;
+  overall: OverallPnL;
+  initialCapital: number;
+  onSaveInitialCapital: (next: number) => void;
 }
 
 function PortfolioSummarySection({
   totals,
   lifetimeDeposited,
+  overall,
+  initialCapital,
+  onSaveInitialCapital,
 }: PortfolioSummarySectionProps) {
   return (
     <div className="space-y-3">
@@ -451,6 +498,11 @@ function PortfolioSummarySection({
           hint="Sum of (current value − deposited) across open positions. Price movement only, before fees."
         />
         <NetPnlCard value={totals.netPnL} />
+        <InitialCapitalCard
+          value={initialCapital}
+          onSave={onSaveInitialCapital}
+        />
+        <OverallPnLCard result={overall} />
       </div>
     </div>
   );

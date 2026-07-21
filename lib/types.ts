@@ -64,6 +64,16 @@ export interface Transfer {
   // "RAKA TEZ", "AAVE BASE"). Optional — legacy records default to "".
   destination: string;
   transferType: "fees" | "undeployed" | "outOfRangeUpside";
+  // Whether the money is still working in the LP business ("redeployed", e.g.
+  // moved to AAVE) or has genuinely left it ("expense", e.g. rent). Only
+  // expenses reduce Overall P&L.
+  //
+  // Deliberately optional rather than backfilled: undefined means "logged
+  // before expense tracking existed and never reviewed". It is treated
+  // exactly as "redeployed" by every calculation, so legacy data can never
+  // manufacture a loss, while still being countable for the review prompt.
+  // Saving a transfer through the form always writes an explicit value.
+  moneyStatus?: "redeployed" | "expense";
   notes: string;
 }
 
@@ -116,6 +126,9 @@ export interface PoolPnLEntry {
 export interface AppSettings {
   transfersEnabled: boolean;
   currency: "USD";
+  // Real capital the business started with. Manually entered, never derived
+  // from position records, and never changed automatically.
+  initialCapital: number;
 }
 
 export interface PortfolioSummary {

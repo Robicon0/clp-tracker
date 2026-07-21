@@ -1,4 +1,9 @@
-import type { FeeClaim, PortfolioSummary, Position } from "./types";
+import type {
+  FeeClaim,
+  PortfolioSummary,
+  Position,
+  Transfer,
+} from "./types";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -925,6 +930,78 @@ export function calcWideRangePercent(
     return 0;
   }
   return ((rangeUp - rangeDown) / rangeDown) * 100;
+}
+
+export interface OverallPnL {
+  activeCurrentValue: number;
+  convertedFees: number;
+  expenses: number;
+  initialCapital: number;
+  overall: number;
+  // Claims marked converted but saved without a USD value contribute nothing
+  // and are counted here so the UI can say so rather than quietly understate.
+  unvaluedConvertedClaims: number;
+}
+
+// Where the business stands against the capital it started with.
+//
+//   Overall P&L = current value of open positions
+//               + fees claimed AND converted to stablecoin, all positions
+//               − transfers classified as a real expense
+//               − initial capital
+//
+// Conversion-gated on purpose: this measures money actually banked, so fees
+// still held as tokens are excluded and stay in the Business P&L page's
+// Unconverted Holdings view. That makes it the second conversion-gated
+// metric in the app, alongside Total P&L's per-token stable contributed —
+// everywhere else stableAmount means USD value regardless of conversion
+// (Invariant #10).
+//
+// Closed positions contribute only through their converted fees: their
+// principal was withdrawn and is not held anywhere the app can see.
+export function calcOverallPnL(
+  positions: Position[],
+  claims: FeeClaim[],
+  transfers: Transfer[],
+  initialCapital: number,
+): OverallPnL {
+  let activeCurrentValue = 0;
+  for (const p of positions) {
+    if (p.status === "active") activeCurrentValue += toFinite(p.currentBalance);
+  }
+
+  let convertedFees = 0;
+  let unvaluedConvertedClaims = 0;
+  for (const c of claims) {
+    if (!c.convertedToStable) continue;
+    if (c.stableAmount === null || !Number.isFinite(c.stableAmount)) {
+      unvaluedConvertedClaims += 1;
+      continue;
+    }
+    convertedFees += c.stableAmount;
+  }
+
+  let expenses = 0;
+  for (const t of transfers) {
+    // Only an explicit "expense" counts. Undefined means never reviewed and
+    // is treated as redeployed, so legacy data cannot invent a loss.
+    if (t.moneyStatus === "expense") expenses += toFinite(t.amount);
+  }
+
+  const capital = toFinite(initialCapital);
+  return {
+    activeCurrentValue,
+    convertedFees,
+    expenses,
+    initialCapital: capital,
+    overall: activeCurrentValue + convertedFees - expenses - capital,
+    unvaluedConvertedClaims,
+  };
+}
+
+// Transfers logged before expense tracking existed, i.e. never classified.
+export function countUnclassifiedTransfers(transfers: Transfer[]): number {
+  return transfers.filter((t) => t.moneyStatus === undefined).length;
 }
 
 export function calcPortfolioSummary(

@@ -2,19 +2,45 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { getClaims, getPositions } from "../lib/storage";
+import {
+  getClaims,
+  getPositions,
+  getSettings,
+  getTransfers,
+  saveSettings,
+} from "../lib/storage";
+import {
+  InitialCapitalCard,
+  OverallPnLCard,
+} from "../components/CapitalCards";
 import { useHydrated } from "../lib/useHydrated";
 import {
   calcDaysActive,
   calcFeeAPR,
+  calcOverallPnL,
   calcPortfolioSummary,
+  type OverallPnL,
   calcPositionProfit,
   calcPriceDiff,
   calcWideRangePercent,
   getEffectiveDeposited,
   getEffectiveTotalFees,
 } from "../lib/calculations";
-import type { FeeClaim, PortfolioSummary, Position } from "../lib/types";
+import type {
+  FeeClaim,
+  PortfolioSummary,
+  Position,
+  Transfer,
+} from "../lib/types";
+
+const EMPTY_OVERALL: OverallPnL = {
+  activeCurrentValue: 0,
+  convertedFees: 0,
+  expenses: 0,
+  initialCapital: 0,
+  overall: 0,
+  unvaluedConvertedClaims: 0,
+};
 
 const EMPTY_SUMMARY: PortfolioSummary = {
   totalDeposited: 0,
@@ -179,10 +205,28 @@ export default function DashboardPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
 
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [initialCapital, setInitialCapital] = useState(0);
+
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
+    setTransfers(getTransfers());
+    setInitialCapital(getSettings().initialCapital);
   });
+
+  const handleSaveInitialCapital = (next: number) => {
+    saveSettings({ ...getSettings(), initialCapital: next });
+    setInitialCapital(next);
+  };
+
+  const overall = useMemo(
+    () =>
+      hydrated
+        ? calcOverallPnL(positions, claims, transfers, initialCapital)
+        : EMPTY_OVERALL,
+    [hydrated, positions, claims, transfers, initialCapital],
+  );
 
   // Two scopes, deliberately kept apart. `summary` spans every position ever
   // opened and feeds the metrics where closed positions still count — fees
@@ -263,6 +307,11 @@ export default function DashboardPage() {
               label="Active Positions"
               value={String(summary.activePositions)}
             />
+            <InitialCapitalCard
+              value={initialCapital}
+              onSave={handleSaveInitialCapital}
+            />
+            <OverallPnLCard result={overall} />
           </div>
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">

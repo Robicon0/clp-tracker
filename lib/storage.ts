@@ -24,6 +24,7 @@ const KEYS = {
 const DEFAULT_SETTINGS: AppSettings = {
   transfersEnabled: true,
   currency: "USD",
+  initialCapital: 0,
 };
 
 function isBrowser(): boolean {

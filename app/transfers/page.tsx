@@ -17,6 +17,7 @@ import {
   saveTransfers,
   saveWithdrawals,
 } from "../../lib/storage";
+import { countUnclassifiedTransfers } from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
 import type {
   AppSettings,
@@ -26,6 +27,7 @@ import type {
 } from "../../lib/types";
 
 type TransferType = Transfer["transferType"];
+type MoneyStatus = NonNullable<Transfer["moneyStatus"]>;
 
 const TYPE_LABELS: Record<TransferType, string> = {
   fees: "Fees",
@@ -102,6 +104,7 @@ interface TransferFormState {
   platform: string;
   destination: string;
   transferType: TransferType;
+  moneyStatus: MoneyStatus;
   notes: string;
 }
 
@@ -113,6 +116,9 @@ const EMPTY_FORM: TransferFormState = {
   platform: "",
   destination: "",
   transferType: "fees",
+  // Redeployed is the safe default: it has no P&L impact, so a transfer
+  // saved without thinking about it cannot invent an expense.
+  moneyStatus: "redeployed",
   notes: "",
 };
 
@@ -125,6 +131,7 @@ function transferToForm(t: Transfer): TransferFormState {
     platform: t.platform,
     destination: t.destination,
     transferType: t.transferType,
+    moneyStatus: t.moneyStatus ?? "redeployed",
     notes: t.notes,
   };
 }
@@ -139,6 +146,7 @@ function buildTransfer(id: string, form: TransferFormState): Transfer {
     platform: form.platform.trim().toUpperCase(),
     destination: form.destination.trim().toUpperCase(),
     transferType: form.transferType,
+    moneyStatus: form.moneyStatus,
     notes: form.notes.trim().toUpperCase(),
   };
 }
@@ -192,6 +200,7 @@ export default function TransfersPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [reviewOnly, setReviewOnly] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingWithdrawalDelete, setPendingWithdrawalDelete] = useState<
     string | null
@@ -212,17 +221,28 @@ export default function TransfersPage() {
     return map;
   }, [positions]);
 
+  // Transfers logged before Money Status existed. They behave as Redeployed
+  // everywhere, so nothing is wrong until the user says otherwise — this just
+  // surfaces them for a one-time pass.
+  const unclassifiedCount = useMemo(
+    () => (hydrated ? countUnclassifiedTransfers(transfers) : 0),
+    [hydrated, transfers],
+  );
+
   const sortedFiltered = useMemo(() => {
     if (!hydrated) return [];
-    const filtered = transfers.filter((t) =>
+    const byType = transfers.filter((t) =>
       typeFilter === "all" ? true : t.transferType === typeFilter,
     );
+    const filtered = reviewOnly
+      ? byType.filter((t) => t.moneyStatus === undefined)
+      : byType;
     return [...filtered].sort((a, b) => {
       const ta = new Date(a.date).getTime();
       const tb = new Date(b.date).getTime();
       return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
     });
-  }, [hydrated, transfers, typeFilter]);
+  }, [hydrated, transfers, typeFilter, reviewOnly]);
 
   const totals = useMemo(() => {
     let amount = 0;
@@ -438,10 +458,38 @@ export default function TransfersPage() {
             </div>
           )}
 
+          {unclassifiedCount > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4">
+              <p className="text-[13px] text-amber-300">
+                {unclassifiedCount}{" "}
+                {unclassifiedCount === 1 ? "transfer was" : "transfers were"}{" "}
+                logged before expense tracking existed and default to
+                Redeployed — review and reclassify any that were actually
+                expenses.
+              </p>
+              <p className="mt-1 text-[11px] text-[var(--muted)]">
+                Until reclassified they have no effect on Overall P&amp;L, so
+                nothing is being counted as a loss.
+              </p>
+              <button
+                type="button"
+                onClick={() => setReviewOnly((v) => !v)}
+                className="mt-2 rounded-md border border-amber-500/40 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+              >
+                {reviewOnly ? "Show all transfers" : "Show only these"}
+              </button>
+            </div>
+          )}
+
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
             <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm font-semibold tracking-tight">
                 All Transfers
+                {reviewOnly && (
+                  <span className="ml-2 text-[11px] font-normal text-amber-300">
+                    showing unreviewed only
+                  </span>
+                )}
               </h2>
               <TypeFilterToggle value={typeFilter} onChange={setTypeFilter} />
             </div>
@@ -491,6 +539,9 @@ export default function TransfersPage() {
                       <th className="px-4 py-3 text-left font-medium">
                         Transfer Type
                       </th>
+                      <th className="px-4 py-3 text-left font-medium">
+                        Money Status
+                      </th>
                       <th className="px-4 py-3 text-left font-medium">Notes</th>
                       <th className="px-4 py-3 text-right font-medium">
                         Actions
@@ -523,6 +574,9 @@ export default function TransfersPage() {
                         </td>
                         <td className="px-4 py-3">
                           <TypePill type={t.transferType} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <MoneyStatusPill status={t.moneyStatus} />
                         </td>
                         <td className="px-4 py-3 text-[var(--muted)] max-w-xs truncate">
                           {t.notes || "—"}
@@ -1121,6 +1175,16 @@ function TransferFormModal({
                 onChange={upper("destination")}
               />
             </Field>
+            <Field
+              label="Money Status"
+              htmlFor="moneyStatus"
+              hint="Redeployed = still working in the business (e.g. moved to AAVE). Expense = money that has left the business. Only expenses reduce Overall P&L."
+            >
+              <MoneyStatusToggle
+                value={form.moneyStatus}
+                onChange={(v) => set("moneyStatus", v)}
+              />
+            </Field>
             <Field label="Transfer Type" htmlFor="transferType">
               <TypeSegmentedToggle
                 value={form.transferType}
@@ -1230,6 +1294,75 @@ function WithdrawalFormModal({
         <FormActions onCancel={onCancel} submitLabel={submitLabel} />
       </form>
     </ModalShell>
+  );
+}
+
+function MoneyStatusToggle({
+  value,
+  onChange,
+}: {
+  value: MoneyStatus;
+  onChange: (next: MoneyStatus) => void;
+}) {
+  const options: Array<{ value: MoneyStatus; label: string }> = [
+    { value: "redeployed", label: "Redeployed" },
+    { value: "expense", label: "Expense" },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Money status"
+      className="inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
+    >
+      {options.map((opt, idx) => {
+        const selected = value === opt.value;
+        const selectedClass =
+          opt.value === "expense"
+            ? "bg-rose-500 text-white"
+            : "bg-[var(--accent)] text-white";
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(opt.value)}
+            className={`h-9 px-3 text-xs font-medium transition-colors ${
+              idx > 0 ? "border-l border-[var(--border-strong)]" : ""
+            } ${
+              selected
+                ? selectedClass
+                : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MoneyStatusPill({ status }: { status: Transfer["moneyStatus"] }) {
+  if (status === "expense") {
+    return (
+      <span className="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-rose-300">
+        Expense
+      </span>
+    );
+  }
+  if (status === "redeployed") {
+    return (
+      <span className="inline-flex items-center rounded-full border border-[var(--border-strong)] bg-[var(--surface-2)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+        Redeployed
+      </span>
+    );
+  }
+  // Never classified — shown distinctly so the review list is obvious.
+  return (
+    <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-300">
+      Needs review
+    </span>
   );
 }
 

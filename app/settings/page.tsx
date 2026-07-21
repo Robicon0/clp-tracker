@@ -34,6 +34,7 @@ const APP_VERSION = "v1.0.0";
 const DEFAULT_SETTINGS: AppSettings = {
   transfersEnabled: true,
   currency: "USD",
+  initialCapital: 0,
 };
 
 type ImportState =
@@ -149,6 +150,8 @@ function transferToCsvRow(
     Platform: t.platform,
     Destination: t.destination,
     "Transfer Type": t.transferType,
+    // Blank means never classified, which behaves as redeployed.
+    "Money Status": t.moneyStatus ?? "",
     Notes: t.notes,
   };
 }
