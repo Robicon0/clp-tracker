@@ -25,6 +25,8 @@ import {
   calcPositionProfit,
   calcPriceDiff,
   calcRangeHealth,
+  calcScalpFromWithdrawn,
+  findSuspectScalpPositions,
   calcClosedProfit,
   calcTotalFees,
   calcWideRangePercent,
@@ -39,6 +41,7 @@ import {
   splitDepositedIntoTokens,
   type EntryPriceFromTokens,
   type ILResult,
+  type SuspectScalpRow,
   type TokenSplit,
   type RangeHealth,
   type RangeStatus,
@@ -181,8 +184,16 @@ function formDeposited(
 // Token counts and Deposited are written back into number inputs when the
 // other side is edited, so they need trimming — a raw String(2.4000000000004)
 // is a legal but unreadable field value.
-function formatAmountInput(value: number, decimals: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0";
+// allowNegative must be set for Scalp, which is legitimately negative on a
+// position closed at a loss. Left off by default because the other callers
+// (token counts, deposited) have no meaningful negative value.
+function formatAmountInput(
+  value: number,
+  decimals: number,
+  allowNegative = false,
+): string {
+  if (!Number.isFinite(value)) return "0";
+  if (value <= 0 && !allowNegative) return "0";
   return String(Number(value.toFixed(decimals)));
 }
 
@@ -948,6 +959,7 @@ export default function PositionsPage() {
   const closed = hydrated
     ? derive(positions.filter((p) => p.status === "closed"), claims)
     : [];
+  const suspectScalp = hydrated ? findSuspectScalpPositions(positions) : [];
 
   const persistFull = (records: BuiltRecords, mode: "add" | "edit") => {
     if (mode === "add") {
@@ -1095,6 +1107,10 @@ export default function PositionsPage() {
           Add Position
         </button>
       </header>
+
+      {suspectScalp.length > 0 && (
+        <SuspectScalpBanner rows={suspectScalp} onEdit={(p) => setModal({ kind: "edit", position: p })} />
+      )}
 
       {active.length > 0 && (
         <RangeHealthSummary
@@ -1347,6 +1363,57 @@ interface RangeHealthSummaryProps {
   priceLoading: boolean;
   priceUpdatedAt: string | null;
   onRefresh: () => void;
+}
+
+// Surfaces the closed positions whose Profit is currently showing fees alone
+// because Scalp was left at 0. Lists them rather than repairing them — see
+// findSuspectScalpPositions.
+function SuspectScalpBanner({
+  rows,
+  onEdit,
+}: {
+  rows: SuspectScalpRow[];
+  onEdit: (p: Position) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4">
+      <h2 className="text-sm font-semibold text-amber-300">
+        {rows.length} closed{" "}
+        {rows.length === 1 ? "position has" : "positions have"} a missing Scalp
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        Scalp is the price difference (Final Withdrawn − Deposited). These have
+        it saved as 0 while the money actually moved, so their Profit is
+        showing fees only. Open each one and press Recalculate Scalp — nothing
+        is changed until you save. If a position genuinely broke even, leave it.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.position.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {r.position.pair}
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              {formatUsd(r.deposited)} → {formatUsd(r.withdrawn)}
+            </span>
+            <span className={`tabular-nums font-medium ${pnlColor(r.correctScalp)}`}>
+              Scalp should be {formatUsd(r.correctScalp)}
+            </span>
+            <button
+              type="button"
+              onClick={() => onEdit(r.position)}
+              className="rounded-md border border-amber-500/40 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+            >
+              Fix
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function RangeHealthSummary({
@@ -2272,6 +2339,39 @@ function PositionFormModal({
     [form.token1Count, form.entryPrice, form.token2Count, form.deposited],
   );
 
+  // Scalp is the price difference and is always knowable from the two figures
+  // already on screen, so it is filled in rather than left to sit at 0.
+  const setCloseBalanceAndScalp = (value: string) => {
+    const balance = Number(value);
+    setForm((prev) => ({
+      ...prev,
+      closeBalance: value,
+      scalp:
+        value.trim() !== "" && Number.isFinite(balance)
+          ? formatAmountInput(
+              calcScalpFromWithdrawn(balance, effectiveDeposited),
+              2,
+              true,
+            )
+          : prev.scalp,
+    }));
+  };
+
+  const suggestedScalp = calcScalpFromWithdrawn(
+    num(form.closeBalance),
+    effectiveDeposited,
+  );
+  // Explicit, never automatic — a real round-trip genuinely has Scalp 0, and
+  // only the user can tell that apart from the old blank-Scalp bug.
+  const recalcScalp = () => {
+    set("scalp", formatAmountInput(suggestedScalp, 2, true));
+  };
+  const scalpLooksWrong =
+    isEditing &&
+    editingStatus === "closed" &&
+    num(form.scalp) === 0 &&
+    Math.abs(suggestedScalp) > 0.01;
+
   const wideRangePct = useMemo(
     () => calcWideRangePercent(num(form.bottomRange), num(form.topRange)),
     [form.bottomRange, form.topRange],
@@ -2371,7 +2471,7 @@ function PositionFormModal({
                 <Field
                   label="Final Withdrawn Amount (USD)"
                   htmlFor="closeBalance"
-                  hint="What the position was worth when you closed it."
+                  hint={`What the position was worth when you closed it. Deposited was ${formatUsd(effectiveDeposited)}.`}
                 >
                   <input
                     id="closeBalance"
@@ -2380,7 +2480,7 @@ function PositionFormModal({
                     className={inputClass}
                     placeholder="0.00"
                     value={form.closeBalance}
-                    onChange={(e) => set("closeBalance", e.target.value)}
+                    onChange={(e) => setCloseBalanceAndScalp(e.target.value)}
                   />
                 </Field>
                 <Field
@@ -2396,11 +2496,22 @@ function PositionFormModal({
                     onChange={(e) => set("closeTxLink", e.target.value)}
                   />
                 </Field>
-                <Field
-                  label="Scalp (USD)"
-                  htmlFor="scalp"
-                  hint="Positive = gain at close. Negative = loss at close."
-                >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="scalp"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]"
+                    >
+                      Scalp (USD)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={recalcScalp}
+                      className="text-[11px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--accent)]"
+                    >
+                      Recalculate Scalp
+                    </button>
+                  </div>
                   <input
                     id="scalp"
                     type="number"
@@ -2410,7 +2521,18 @@ function PositionFormModal({
                     value={form.scalp}
                     onChange={(e) => set("scalp", e.target.value)}
                   />
-                </Field>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    The price difference: Final Withdrawn − Deposited. Edit only
+                    to correct it; nothing is saved until you press Save.
+                  </p>
+                  {scalpLooksWrong && (
+                    <p className="text-[11px] text-amber-300">
+                      Saved Scalp is 0 but this position moved{" "}
+                      {formatUsd(suggestedScalp)} in price — Profit is currently
+                      showing fees only. Recalculate to fix it.
+                    </p>
+                  )}
+                </div>
                 <ClosedProfitSummary
                   scalp={form.scalp}
                   totalFees={closedTotalFees}
@@ -3186,6 +3308,20 @@ function ClosePositionModal({
     num(claimTokens1) > 0 || num(claimTokens2) > 0 || num(claimUsdValue) > 0;
 
   const deposited = getEffectiveDeposited(position);
+
+  // Manual mode: Scalp is the price difference and is always knowable once
+  // the final balance is typed, so it is filled in rather than left blank —
+  // a blank Scalp silently reports Profit as fees alone. Still editable.
+  const setManualBalance = (value: string) => {
+    setCurrentBalance(value);
+    const balance = Number(value);
+    if (value.trim() !== "" && Number.isFinite(balance)) {
+      setScalp(
+        formatAmountInput(calcScalpFromWithdrawn(balance, deposited), 2, true),
+      );
+    }
+  };
+
   // Mode 2 results. Prices are whatever is in the (overridable) inputs, so an
   // edited price flows straight through without refetching.
   const tokensBalance =
@@ -3373,9 +3509,24 @@ function ClosePositionModal({
             ) : (
               <>
                 <Field
+                  label="Final Current Balance (USD)"
+                  htmlFor="c_balance"
+                  hint={`What the position was worth when you closed it. Deposited was ${formatUsd(deposited)}.`}
+                >
+                  <input
+                    id="c_balance"
+                    type="number"
+                    step="any"
+                    required
+                    className={inputClass}
+                    value={currentBalance}
+                    onChange={(e) => setManualBalance(e.target.value)}
+                  />
+                </Field>
+                <Field
                   label="Scalp (USD)"
                   htmlFor="c_scalp"
-                  hint="Positive = realized gain at close. Negative = realized loss at close. Leave blank if no scalp event."
+                  hint="The price difference: Final Withdrawn − Deposited. Filled in automatically — edit only to correct it."
                 >
                   <input
                     id="c_scalp"
@@ -3385,17 +3536,6 @@ function ClosePositionModal({
                     placeholder="0.00"
                     value={scalp}
                     onChange={(e) => setScalp(e.target.value)}
-                  />
-                </Field>
-                <Field label="Final Current Balance (USD)" htmlFor="c_balance">
-                  <input
-                    id="c_balance"
-                    type="number"
-                    step="any"
-                    required
-                    className={inputClass}
-                    value={currentBalance}
-                    onChange={(e) => setCurrentBalance(e.target.value)}
                   />
                 </Field>
               </>

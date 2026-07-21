@@ -1012,6 +1012,61 @@ export function countUnclassifiedTransfers(transfers: Transfer[]): number {
   return transfers.filter((t) => t.moneyStatus === undefined).length;
 }
 
+// Scalp is ALWAYS the price difference on a closed position:
+//   Scalp = Final Withdrawn Amount − Deposited
+// Fees are tracked entirely separately and never belong here.
+export function calcScalpFromWithdrawn(
+  currentBalance: number,
+  deposited: number,
+): number {
+  return toFinite(currentBalance) - toFinite(deposited);
+}
+
+export interface SuspectScalpRow {
+  position: Position;
+  deposited: number;
+  withdrawn: number;
+  storedScalp: number;
+  correctScalp: number;
+  profitOverstatedBy: number;
+}
+
+// Closed positions whose stored Scalp is zero/unset while the money actually
+// moved — the signature of the old blank-Scalp bug, where Profit showed fees
+// alone and ignored a real price gain or loss.
+//
+// Reports rather than repairs: a genuine round-trip really does have Scalp 0,
+// and those are indistinguishable from the bug by value alone. Only the user
+// can say which is which, so this feeds a prompt, never an automatic rewrite.
+export function findSuspectScalpPositions(
+  positions: Position[],
+  toleranceUsd = 0.01,
+): SuspectScalpRow[] {
+  const rows: SuspectScalpRow[] = [];
+  for (const p of positions) {
+    if (p.status !== "closed") continue;
+    const storedScalp = toFinite(p.scalp);
+    if (storedScalp !== 0) continue;
+    const deposited = getEffectiveDeposited(p);
+    const withdrawn = toFinite(p.currentBalance);
+    const correctScalp = calcScalpFromWithdrawn(withdrawn, deposited);
+    if (Math.abs(correctScalp) <= toleranceUsd) continue;
+    rows.push({
+      position: p,
+      deposited,
+      withdrawn,
+      storedScalp,
+      correctScalp,
+      // Profit currently reads as fees alone, so it is overstated by exactly
+      // the missing scalp (understated when the scalp is a gain).
+      profitOverstatedBy: -correctScalp,
+    });
+  }
+  return rows.sort(
+    (a, b) => Math.abs(b.correctScalp) - Math.abs(a.correctScalp),
+  );
+}
+
 export function calcPortfolioSummary(
   positions: Position[],
   allClaims: FeeClaim[] = [],
