@@ -665,6 +665,44 @@ at the plan gate.
   Closed breakdown still shows 2 positions, $6,953.10 invested,
   $264.40 fees. tsc/lint/build clean.
 
+- Initial Capital + Overall Business P&L (2026-07-21) [e7b274a]:
+  Added Initial Capital (manual input) and Overall P&L card on
+  Dashboard + Total P&L page. Overall P&L = active positions'
+  current value + all-time converted/claimed fees − Expense-tagged
+  transfers − Initial Capital. Added moneyStatus (Redeployed/
+  Expense) classification to Transfers; legacy transfers default
+  to Redeployed (no P&L impact) with a review prompt. Token
+  holdings (unconverted fees, Business P&L page) intentionally
+  excluded — kept as a separate view per user preference.
+  IMPLEMENTATION NOTES: (1) Overall P&L is the SECOND
+  conversion-gated metric in the app — it sums stableAmount only
+  where convertedToStable === true, unlike getEffectiveClaimed /
+  getEffectiveTotalFees which count it regardless (Invariant #10).
+  Expect Dashboard "Total Fees Earned" to exceed Overall P&L's fee
+  component whenever unconverted claims exist; in verification
+  $1,728.22 vs $1,428.22. This is correct, not a bug. (2)
+  moneyStatus is OPTIONAL on the Transfer type and is NOT
+  backfilled by getTransfers. undefined means "never reviewed",
+  behaves exactly as redeployed in every calculation (so legacy
+  data can never manufacture a loss), and stays countable — that
+  is what powers countUnclassifiedTransfers, the review banner and
+  its filter. Do not "tidy" this by backfilling; it would make
+  legacy records indistinguishable from actively-classified ones
+  and silently break the review flow. (3) initialCapital lives on
+  the existing clp_settings key (merges with DEFAULT_SETTINGS, so
+  old saved settings load fine); AppSettings has two literal
+  definitions — lib/storage.ts and app/settings/page.tsx — both
+  must be updated together. (4) Both cards are one shared
+  component, components/CapitalCards.tsx, used by Dashboard and
+  Total P&L so they cannot drift (Invariant #6). Verified on
+  localhost:3001: capital $20,000 persisted and matched on both
+  pages; $500 Expense moved Overall $11,009.75 → $10,509.75;
+  $500 Redeployed changed nothing; 3 legacy transfers flagged
+  "Needs review"; hand calc 29,581.53 + 1,428.22 = $31,009.75
+  matched exactly; Total Invested (Active), Lifetime, Net P&L, LP
+  P&L and Business P&L holdings all unaffected. tsc/lint/build
+  clean.
+
 ## Known Issues
 
 - None currently tracked. (Current Balance gap in the Edit-mode
