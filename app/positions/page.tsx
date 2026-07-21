@@ -3151,7 +3151,7 @@ function CloseModeTabs({
       </div>
       <p className="text-[11px] text-[var(--muted)]">
         {mode === "manual"
-          ? "Type the final balance and scalp yourself."
+          ? "Type the final balance — Scalp is calculated automatically from it (you can still correct it if needed)."
           : "Type the tokens you actually received; the app prices them at your exit time and works out the rest."}
       </p>
     </div>
