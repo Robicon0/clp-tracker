@@ -12,8 +12,8 @@ import {
 } from "../../lib/calculations";
 import {
   HYPOTHETICAL_DIM,
-  HYPOTHETICAL_LABEL,
   HypotheticalNotice,
+  HypotheticalTag,
 } from "../../components/Hypothetical";
 import { useHydrated } from "../../lib/useHydrated";
 import type { FeeClaim, Position } from "../../lib/types";
@@ -545,7 +545,6 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
           className={`px-4 py-3 text-right tabular-nums ${
             rowIsClosed ? HYPOTHETICAL_DIM : ""
           }`}
-          title={rowIsClosed ? HYPOTHETICAL_LABEL : undefined}
         >
           {oorUp === null || upsideProfit === null ? (
             <span className="text-[var(--muted)]">—</span>
@@ -557,6 +556,7 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
               >
                 {formatUsd(upsideProfit)}
               </div>
+              {rowIsClosed && <HypotheticalTag className="mt-1" />}
             </div>
           )}
         </td>
@@ -564,7 +564,6 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
           className={`px-4 py-3 text-right tabular-nums ${
             rowIsClosed ? HYPOTHETICAL_DIM : ""
           }`}
-          title={rowIsClosed ? HYPOTHETICAL_LABEL : undefined}
         >
           {oorDown === null || downsideProfit === null ? (
             <span className="text-[var(--muted)]">—</span>
@@ -576,6 +575,7 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
               >
                 {formatUsd(downsideProfit)}
               </div>
+              {rowIsClosed && <HypotheticalTag className="mt-1" />}
             </div>
           )}
         </td>

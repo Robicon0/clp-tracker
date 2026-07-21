@@ -838,7 +838,10 @@ at the plan gate.
   result.
   Shared via components/Hypothetical.tsx (HYPOTHETICAL_DIM,
   HypotheticalNotice, HypotheticalTag) so the surfaces cannot drift
-  — do not inline copies per page. Verified: closed Edit showed the
+  — do not inline copies per page. FOLLOW-UP [3a30a09]: the Pool
+  P&L table cells first shipped with a hover-only title, invisible
+  on mobile; they now render the visible HypotheticalTag instead,
+  so all three surfaces show the warning without hovering. Verified: closed Edit showed the
   notice with both grids at opacity-60; open Edit unchanged with
   identical class strings; closed table row had exactly 2 dimmed
   titled cells vs 0 on the open row; lib/calculations.ts not in the
