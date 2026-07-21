@@ -847,32 +847,28 @@ at the plan gate.
   titled cells vs 0 on the open row; lib/calculations.ts not in the
   diff. tsc/lint/build clean.
 
+- Pool P&L summary-card toggle fix (2026-07-22) [741ac8a]: Fixed
+  Pool P&L summary cards (Total Invested, Current Value, LP P&L,
+  Net P&L, Short P&L) to respect the existing Active/Closed toggle
+  — previously always computed from all positions regardless of
+  toggle, while the table beneath correctly filtered, causing a
+  mismatch with the Sidebar's Net P&L (Invariant #6). No change to
+  the By Token section. The table and cards now share one
+  filteredPositions memo so they cannot describe different scopes;
+  every card follows the toggle (none is intentionally
+  all-positions the way Dashboard's earned-money cards are — that
+  exception does not apply here). Verified with the 4-active /
+  2-closed Phase A set: Active $28,003.03 / $29,581.53 / $1,578.50;
+  All $34,956.13 / $36,678.18 / $1,722.05; Closed $6,953.10 /
+  $7,096.65 / $143.55; By Position row count tracks the cards
+  (6/4/2); Sidebar Net P&L matched Pool P&L's $1,578.50 in Active;
+  By Token identical across all three toggle states. tsc/lint/build
+  clean. Closes the Phase A Known Issue logged in 636b9d0.
+
 ## Known Issues
 
-- **Pool P&L summary cards ignore both the status filter and the
-  active-only scope rule** [Phase A completed 2026-07-21, fix NOT
-  yet approved]. app/pool-pnl/page.tsx:145-166 `totals` loops the
-  raw `positions` array, not the filtered `rows` (line 132-143), so
-  the five cards always span every position regardless of the
-  All/Active/Closed toggle. Two consequences: (1) same
-  closed-position double-count that 7ae0e50 fixed on Dashboard and
-  Total P&L, and (2) selecting "Active" changes the table but not
-  the cards, which is actively misleading. Evidence with 4 active +
-  2 closed: cards read Total Invested $34,956.13 / Current Value
-  $36,678.18 / LP P&L $1,722.05 / Net P&L $1,722.05 in BOTH the All
-  and Active views, while the Active table showed only the 4
-  positions totalling $28,003.03 → $29,581.53 → $1,578.50. Pool
-  P&L's "Net P&L" card ($1,722.05) also disagreed with the Sidebar's
-  Net P&L ($1,578.50) on the same screen — a direct Invariant #6
-  breach. NOT a bug: the By Token section (calcTokenPnL) explicitly
-  splits Realized vs Unrealized and labels counts, which is the
-  Sprint 6 design and should not change. Recommended fix: make
-  `totals` derive from the same filtered set as `rows`, so the cards
-  follow the toggle; no Lifetime-card pattern needed here since the
-  toggle already exposes closed positions on demand.
-
-- None currently tracked. (Current Balance gap in the Edit-mode
-  recalculation closed 2026-07-20 by 63aa5c8 — see above.)
+- None currently tracked. (Pool P&L summary-card toggle bug closed
+  2026-07-22 by 741ac8a — see above.)
 
 ## Architecture Notes
 
