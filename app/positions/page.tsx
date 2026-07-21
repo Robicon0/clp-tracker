@@ -50,6 +50,10 @@ import {
   ClaimFormModal,
   persistNewClaim,
 } from "../../components/ClaimFormModal";
+import {
+  HYPOTHETICAL_DIM,
+  HypotheticalNotice,
+} from "../../components/Hypothetical";
 import { useHydrated } from "../../lib/useHydrated";
 import type { FeeClaim } from "../../lib/types";
 import type {
@@ -2366,6 +2370,9 @@ function PositionFormModal({
   const recalcScalp = () => {
     set("scalp", formatAmountInput(suggestedScalp, 2, true));
   };
+  // Projections are a live decision aid while open; once closed the real
+  // result is recorded and these become reference figures only.
+  const isClosedPosition = editingStatus === "closed";
   const scalpLooksWrong =
     isEditing &&
     editingStatus === "closed" &&
@@ -2955,7 +2962,13 @@ function PositionFormModal({
             </Field>
           </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {isClosedPosition && <HypotheticalNotice className="mt-6" />}
+
+          <div
+            className={`mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+              isClosedPosition ? HYPOTHETICAL_DIM : ""
+            }`}
+          >
             <OutOfRangeBox
               label="Out of Range — Upside"
               il={upsideIL}
@@ -2972,7 +2985,11 @@ function PositionFormModal({
             />
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div
+            className={`mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+              isClosedPosition ? HYPOTHETICAL_DIM : ""
+            }`}
+          >
             <NetCoverageBox
               label="Net Downside Coverage"
               shortPresent={shortTotal !== null}

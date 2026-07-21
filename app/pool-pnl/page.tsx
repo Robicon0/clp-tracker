@@ -10,6 +10,11 @@ import {
   type ILResult,
   type TokenPnLRow,
 } from "../../lib/calculations";
+import {
+  HYPOTHETICAL_DIM,
+  HYPOTHETICAL_LABEL,
+  HypotheticalNotice,
+} from "../../components/Hypothetical";
 import { useHydrated } from "../../lib/useHydrated";
 import type { FeeClaim, Position } from "../../lib/types";
 
@@ -495,6 +500,9 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
   const oorDown = downsideIL
     ? downsideIL.lpValue
     : position.outOfRangeDownside;
+  // Projections stay visible on a closed row but step back visually, so the
+  // real Net P&L beside them reads as the answer.
+  const rowIsClosed = position.status === "closed";
   return (
     <>
       <tr
@@ -533,7 +541,12 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
         >
           {formatUsd(netPnl)}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">
+        <td
+          className={`px-4 py-3 text-right tabular-nums ${
+            rowIsClosed ? HYPOTHETICAL_DIM : ""
+          }`}
+          title={rowIsClosed ? HYPOTHETICAL_LABEL : undefined}
+        >
           {oorUp === null || upsideProfit === null ? (
             <span className="text-[var(--muted)]">—</span>
           ) : (
@@ -547,7 +560,12 @@ function PositionRow({ row, isOpen, onToggle }: PositionRowProps) {
             </div>
           )}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">
+        <td
+          className={`px-4 py-3 text-right tabular-nums ${
+            rowIsClosed ? HYPOTHETICAL_DIM : ""
+          }`}
+          title={rowIsClosed ? HYPOTHETICAL_LABEL : undefined}
+        >
           {oorDown === null || downsideProfit === null ? (
             <span className="text-[var(--muted)]">—</span>
           ) : (
@@ -592,6 +610,7 @@ interface ExpandedDetailProps {
 function ExpandedDetail({ row }: ExpandedDetailProps) {
   const { position, shortTotal, upsideIL, downsideIL, upsideProfit, downsideProfit } =
     row;
+  const isClosed = position.status === "closed";
 
   const hasShort =
     position.shortDateStart !== null ||
@@ -691,7 +710,12 @@ function ExpandedDetail({ row }: ExpandedDetailProps) {
       </DetailSection>
 
       <DetailSection title="Out of Range Scenarios">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {isClosed && <HypotheticalNotice className="mb-4" />}
+        <div
+          className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+            isClosed ? HYPOTHETICAL_DIM : ""
+          }`}
+        >
           <ScenarioBox
             label="Upside"
             il={upsideIL}
@@ -707,7 +731,11 @@ function ExpandedDetail({ row }: ExpandedDetailProps) {
             quoteSymbol={position.token2Symbol}
           />
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div
+          className={`mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+            isClosed ? HYPOTHETICAL_DIM : ""
+          }`}
+        >
           <CoverageBox
             label="Net Upside Coverage"
             shortPresent={shortTotal !== null}
