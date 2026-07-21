@@ -703,7 +703,51 @@ at the plan gate.
   P&L and Business P&L holdings all unaffected. tsc/lint/build
   clean.
 
+- Closed-position Edit fields + Close Transaction Link
+  (2026-07-21) [1b8bea1]: Closed position Edit modal now shows and
+  allows editing Exit Date, final withdrawn amount, and Scalp, plus
+  a read-only Profit/Loss summary. Added optional Close Transaction
+  Link field, mirroring the existing LP Transaction Link.
+  FIELD MAP (investigated, not assumed): Exit Date = exitDatetime;
+  final withdrawn amount = currentBalance, which does DOUBLE DUTY —
+  live value on open positions, value-at-close on closed ones;
+  Scalp = scalp; Profit/Loss = derived via calcClosedProfit(scalp,
+  totalFees), never stored, hence read-only. Only closeTxLink was
+  missing and is the sole additive field (optional, absent on
+  positions closed earlier). buildRecords gained an isClosed branch
+  so exitDatetime / currentBalance / closeTxLink are writable ONLY
+  when editing a closed position — open positions keep the
+  currentBalanceOverride fall-through from 63aa5c8 untouched. The
+  exit-before-entry warning is reused and now reads the editable
+  field, so it fires while typing. Verified: Profit/Loss $220.53 =
+  81.32 + 139.21 matched the card; scalp→200 + withdrawn→4300 gave
+  $339.21 on the card; date warning fired and cleared; closing SUI
+  stored closeTxLink and reopened editable; open-position Edit
+  unchanged. tsc/lint/build clean.
+
 ## Known Issues
+
+- **Pool P&L summary cards ignore both the status filter and the
+  active-only scope rule** [Phase A completed 2026-07-21, fix NOT
+  yet approved]. app/pool-pnl/page.tsx:145-166 `totals` loops the
+  raw `positions` array, not the filtered `rows` (line 132-143), so
+  the five cards always span every position regardless of the
+  All/Active/Closed toggle. Two consequences: (1) same
+  closed-position double-count that 7ae0e50 fixed on Dashboard and
+  Total P&L, and (2) selecting "Active" changes the table but not
+  the cards, which is actively misleading. Evidence with 4 active +
+  2 closed: cards read Total Invested $34,956.13 / Current Value
+  $36,678.18 / LP P&L $1,722.05 / Net P&L $1,722.05 in BOTH the All
+  and Active views, while the Active table showed only the 4
+  positions totalling $28,003.03 → $29,581.53 → $1,578.50. Pool
+  P&L's "Net P&L" card ($1,722.05) also disagreed with the Sidebar's
+  Net P&L ($1,578.50) on the same screen — a direct Invariant #6
+  breach. NOT a bug: the By Token section (calcTokenPnL) explicitly
+  splits Realized vs Unrealized and labels counts, which is the
+  Sprint 6 design and should not change. Recommended fix: make
+  `totals` derive from the same filtered set as `rows`, so the cards
+  follow the toggle; no Lifetime-card pattern needed here since the
+  toggle already exposes closed positions on demand.
 
 - None currently tracked. (Current Balance gap in the Edit-mode
   recalculation closed 2026-07-20 by 63aa5c8 — see above.)
