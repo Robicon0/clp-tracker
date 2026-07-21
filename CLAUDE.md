@@ -778,6 +778,41 @@ at the plan gate.
   fallback; exit-before-entry warning fired in token mode.
   tsc/lint/build clean.
 
+- Scalp auto-calculation + old-record repair (2026-07-22)
+  [c372b30]: Fixed Scalp silently defaulting to 0 instead of being
+  calculated in the manual Close flow. Scalp now auto-fills as
+  Final Withdrawn Amount − Deposited (still editable/overridable)
+  the moment Final Withdrawn Amount is known, in both the Close
+  modal and closed-position Edit modal. Added an explicit
+  "Recalculate Scalp" action in Edit mode to fix old records
+  without silently rewriting saved data.
+  DEFINITION (confirmed with Osho 2026-07-22): Scalp is ALWAYS the
+  price difference, nothing more — fees are tracked separately.
+  There is no legitimate case where it differs from
+  (currentBalance − getEffectiveDeposited), so the old "Leave blank
+  if no scalp event" hint was wrong and is removed. Helper:
+  calcScalpFromWithdrawn in lib/calculations.ts.
+  SCOPE ANSWER: the affected-position count could NOT be produced
+  externally — user data lives in the user's own browser
+  localStorage, which the automation profile does not share. Built
+  findSuspectScalpPositions + a banner on the Positions page
+  instead, which lists every closed position with Scalp 0 whose
+  withdrawn differs from deposited by >$0.01, names the correct
+  value, and links to Edit. This answers the scope question in-app,
+  for every user, permanently. It REPORTS and never repairs: a
+  genuine round-trip legitimately has Scalp 0 and is
+  indistinguishable from the bug by value alone, so only the user
+  can decide. Nothing persists until Save.
+  TRAP FIXED: formatAmountInput returned "0" for any value <= 0,
+  which would have silently zeroed exactly the loss case this fix
+  targets. It now takes allowNegative, set only for Scalp — do not
+  remove that flag. Verified: WETH/USDC $3,482.27 → $3,004.27 with
+  fees $484.61 flagged correctly, recalculated to −$478.00, Profit
+  $484.61 → $6.61; genuine break-even and already-correct positions
+  not flagged; manual close auto-filled −400 and +250 and stayed
+  overridable; Mode 2 and open-position Edit unaffected.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - **Pool P&L summary cards ignore both the status filter and the
