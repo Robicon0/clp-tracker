@@ -131,10 +131,14 @@ export default function ClaimsPage() {
     });
   }, [hydrated, claims, filters]);
 
+  // Summary cards describe the same claims the table shows, so they read from
+  // the filtered set — not the raw list. Computing over all claims while the
+  // table filtered was the recurring "cards ignore the filter" bug already
+  // fixed on Dashboard (7ae0e50) and Pool P&L (741ac8a).
   const totals = useMemo(() => {
     let convertedCount = 0;
     let stableSum = 0;
-    for (const c of claims) {
+    for (const c of filteredSorted) {
       if (c.convertedToStable) convertedCount += 1;
       // USD value counts regardless of conversion status (Invariant #10)
       if (c.stableAmount !== null && Number.isFinite(c.stableAmount)) {
@@ -142,11 +146,11 @@ export default function ClaimsPage() {
       }
     }
     return {
-      total: claims.length,
+      total: filteredSorted.length,
       stableSum,
       converted: convertedCount,
     };
-  }, [claims]);
+  }, [filteredSorted]);
 
   const positionById = useMemo(() => {
     const map = new Map<string, Position>();
@@ -154,18 +158,24 @@ export default function ClaimsPage() {
     return map;
   }, [positions]);
 
-  // Deposit-weighted average APR across positions that have at least one claim.
-  // Reuses calcPortfolioSummary so this matches the Dashboard "Average Fee APR"
-  // card exactly (Invariant #6) when both pages cover the same positions.
+  // Deposit-weighted average APR across the positions represented in the
+  // FILTERED claims, so this card follows the filters like the other three.
+  // The APR uses the full claim list for each included position's fee total
+  // (getEffectiveTotalFees inside calcPortfolioSummary) — a position's APR is
+  // a property of the position, not of a claim subset, so it must not be
+  // computed from a sliced fee history (Invariant #10). The filter decides
+  // WHICH positions are in scope; each position's APR stays whole.
   const averagePositionApr = useMemo<number | null>(() => {
-    if (claims.length === 0) return null;
-    const claimedPositionIds = new Set(claims.map((c) => c.positionId));
+    if (filteredSorted.length === 0) return null;
+    const claimedPositionIds = new Set(
+      filteredSorted.map((c) => c.positionId),
+    );
     const claimedPositions = positions.filter((p) =>
       claimedPositionIds.has(p.id),
     );
     if (claimedPositions.length === 0) return null;
     return calcPortfolioSummary(claimedPositions, claims).averageAPR;
-  }, [claims, positions]);
+  }, [filteredSorted, positions, claims]);
 
   const handleAdd = (claim: FeeClaim) => {
     persistNewClaim(claim);
