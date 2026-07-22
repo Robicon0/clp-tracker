@@ -129,7 +129,7 @@ export function Sidebar() {
   );
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-[var(--border)] bg-[var(--surface)] md:h-screen md:w-64 md:border-b-0 md:border-r">
+    <aside className="flex w-full shrink-0 flex-col border-b border-[var(--border)] bg-[var(--surface)] md:sticky md:top-0 md:h-screen md:w-64 md:border-b-0 md:border-r">
       <div className="flex items-center gap-2 px-5 py-5 md:px-6 md:py-6">
         <div className="h-7 w-7 rounded-md bg-[var(--accent)]/15 ring-1 ring-inset ring-[var(--accent)]/30" />
         <div className="flex flex-col leading-tight">
