@@ -2,6 +2,7 @@
 
 import { type ChangeEvent, useRef, useState } from "react";
 import {
+  DEFAULT_SETTINGS,
   getClaims,
   getPositions,
   getSettings,
@@ -30,12 +31,6 @@ const STORAGE_KEYS = [
 ] as const;
 
 const APP_VERSION = "v1.0.0";
-
-const DEFAULT_SETTINGS: AppSettings = {
-  transfersEnabled: true,
-  currency: "USD",
-  initialCapital: 0,
-};
 
 type ImportState =
   | { kind: "idle" }

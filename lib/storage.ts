@@ -21,7 +21,10 @@ const KEYS = {
   positionPrices: "clp_position_prices",
 } as const;
 
-const DEFAULT_SETTINGS: AppSettings = {
+// Single source of truth for settings defaults. The Settings page imports
+// this rather than keeping its own copy — a duplicate previously drifted when
+// initialCapital was added and only one copy was updated.
+export const DEFAULT_SETTINGS: AppSettings = {
   transfersEnabled: true,
   currency: "USD",
   initialCapital: 0,

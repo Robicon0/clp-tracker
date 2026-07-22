@@ -967,6 +967,18 @@ export interface OverallPnL {
 //
 // Closed positions contribute only through their converted fees: their
 // principal was withdrawn and is not held anywhere the app can see.
+// A claim marked converted to stablecoin but saved without a USD value. It
+// silently contributes $0 to Overall P&L, so the Claims page surfaces these
+// for the user to fill in. Single predicate shared with calcOverallPnL's
+// count so the banner and the P&L figure can never disagree about which
+// claims are affected.
+export function isUnvaluedConvertedClaim(claim: FeeClaim): boolean {
+  return (
+    claim.convertedToStable === true &&
+    (claim.stableAmount === null || !Number.isFinite(claim.stableAmount))
+  );
+}
+
 export function calcOverallPnL(
   positions: Position[],
   claims: FeeClaim[],
@@ -982,11 +994,11 @@ export function calcOverallPnL(
   let unvaluedConvertedClaims = 0;
   for (const c of claims) {
     if (!c.convertedToStable) continue;
-    if (c.stableAmount === null || !Number.isFinite(c.stableAmount)) {
+    if (isUnvaluedConvertedClaim(c)) {
       unvaluedConvertedClaims += 1;
       continue;
     }
-    convertedFees += c.stableAmount;
+    convertedFees += c.stableAmount as number;
   }
 
   let expenses = 0;
