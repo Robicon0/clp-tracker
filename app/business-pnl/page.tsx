@@ -1,13 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   getBusinessPnLSettings,
   getClaims,
-  getPriceCache,
   saveBusinessPnLSettings,
-  savePriceCache,
   type BusinessPnLSettings,
 } from "../../lib/storage";
 import {
@@ -16,6 +14,7 @@ import {
   calcYieldAfter,
 } from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
+import { mergePrices, useTokenPrices } from "../../lib/useTokenPrices";
 import type { FeeClaim } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -87,62 +86,21 @@ export default function BusinessPnlPage() {
     checkpoints: [],
   });
   const [newCheckpoint, setNewCheckpoint] = useState("");
-  const [fetchedPrices, setFetchedPrices] = useState<Record<string, number>>(
-    {},
-  );
-  const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | null>(null);
-  const [priceLoading, setPriceLoading] = useState(false);
-  const [priceError, setPriceError] = useState<string | null>(null);
-
-  // Auto-fetch current prices for every token symbol seen in claims, then
-  // cache them. Manual entries in settings.prices always override a fetched
-  // price (see effectivePrices below), so this never clobbers a user value.
-  const refreshPrices = useCallback(async (allClaims: FeeClaim[]) => {
-    const symbols = new Set<string>();
-    for (const c of allClaims) {
-      const t1 = c.token1Symbol.trim().toUpperCase();
-      const t2 = c.token2Symbol.trim().toUpperCase();
-      if (t1) symbols.add(t1);
-      if (t2) symbols.add(t2);
-    }
-    if (symbols.size === 0) return;
-    setPriceLoading(true);
-    setPriceError(null);
-    try {
-      const res = await fetch(
-        `/api/prices?symbols=${encodeURIComponent([...symbols].join(","))}`,
-        { cache: "no-store" },
-      );
-      if (!res.ok) throw new Error(`Price service returned ${res.status}`);
-      const data = (await res.json()) as {
-        prices: Record<string, number>;
-        updatedAt: string;
-        error?: string;
-      };
-      setFetchedPrices(data.prices ?? {});
-      setPriceUpdatedAt(data.updatedAt ?? new Date().toISOString());
-      savePriceCache({
-        prices: data.prices ?? {},
-        updatedAt: data.updatedAt ?? new Date().toISOString(),
-      });
-      if (data.error) setPriceError(data.error);
-    } catch (err) {
-      setPriceError(
-        err instanceof Error ? err.message : "Could not reach price service.",
-      );
-    } finally {
-      setPriceLoading(false);
-    }
-  }, []);
+  // Current prices for every reward token seen in claims. Manual entries in
+  // settings.prices always override a fetched price (see effectivePrices
+  // below), so auto-refresh never clobbers a user value. Shared with the
+  // Growth Target card via the hook so both value fees identically.
+  const {
+    fetchedPrices,
+    updatedAt: priceUpdatedAt,
+    loading: priceLoading,
+    error: priceError,
+    refresh: refreshPrices,
+  } = useTokenPrices(claims);
 
   const hydrated = useHydrated(() => {
-    const loadedClaims = getClaims();
-    setClaims(loadedClaims);
+    setClaims(getClaims());
     setSettings(getBusinessPnLSettings());
-    const cache = getPriceCache();
-    setFetchedPrices(cache.prices);
-    setPriceUpdatedAt(cache.updatedAt);
-    void refreshPrices(loadedClaims);
   });
 
   const persist = (next: BusinessPnLSettings) => {
@@ -170,13 +128,10 @@ export default function BusinessPnlPage() {
   };
 
   // What every calculation and input uses: manual override, else fetched.
-  const effectivePrices = useMemo(() => {
-    const merged: Record<string, number> = { ...fetchedPrices };
-    for (const [token, price] of Object.entries(settings.prices)) {
-      merged[token] = price;
-    }
-    return merged;
-  }, [fetchedPrices, settings.prices]);
+  const effectivePrices = useMemo(
+    () => mergePrices(fetchedPrices, settings.prices),
+    [fetchedPrices, settings.prices],
+  );
 
   const addCheckpoint = () => {
     if (newCheckpoint.trim() === "") return;
@@ -294,7 +249,7 @@ export default function BusinessPnlPage() {
             </span>
             <button
               type="button"
-              onClick={() => void refreshPrices(claims)}
+              onClick={() => void refreshPrices()}
               disabled={priceLoading}
               className="inline-flex h-8 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 text-xs font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)] disabled:opacity-50"
             >

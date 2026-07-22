@@ -23,6 +23,7 @@ import {
   InitialCapitalCard,
   OverallPnLCard,
 } from "../../components/CapitalCards";
+import { GrowthTargetSection } from "../../components/GrowthTarget";
 import { useHydrated } from "../../lib/useHydrated";
 import type { FeeClaim, Position, Transfer } from "../../lib/types";
 
@@ -289,12 +290,15 @@ export default function TotalPnlPage() {
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [initialCapital, setInitialCapital] = useState(0);
+  const [targetMonthlyPercent, setTargetMonthlyPercent] = useState(0);
 
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
-    setInitialCapital(getSettings().initialCapital);
+    const settings = getSettings();
+    setInitialCapital(settings.initialCapital);
+    setTargetMonthlyPercent(settings.targetMonthlyPercent);
   });
 
   // Portfolio Summary describes what is deployed right now, so it spans open
@@ -324,6 +328,11 @@ export default function TotalPnlPage() {
   const handleSaveInitialCapital = (next: number) => {
     saveSettings({ ...getSettings(), initialCapital: next });
     setInitialCapital(next);
+  };
+
+  const handleSaveTarget = (next: number) => {
+    saveSettings({ ...getSettings(), targetMonthlyPercent: next });
+    setTargetMonthlyPercent(next);
   };
 
   const overall = useMemo(
@@ -410,6 +419,13 @@ export default function TotalPnlPage() {
             overall={overall}
             initialCapital={initialCapital}
             onSaveInitialCapital={handleSaveInitialCapital}
+          />
+          <GrowthTargetSection
+            positions={positions}
+            claims={claims}
+            initialCapital={initialCapital}
+            targetMonthlyPercent={targetMonthlyPercent}
+            onSaveTarget={handleSaveTarget}
           />
           <PerformanceBreakdownSection
             active={activeSummary}

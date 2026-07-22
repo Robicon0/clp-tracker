@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   transfersEnabled: true,
   currency: "USD",
   initialCapital: 0,
+  targetMonthlyPercent: 0,
 };
 
 function isBrowser(): boolean {

@@ -905,6 +905,48 @@ at the plan gate.
   when in doubt the earned-money/accounting ones stay whole while
   the current-scope ones follow the filter.
 
+- Growth Target (2026-07-22) [0bfa669]: Added "Growth Target" — user
+  sets a Target Monthly % (of Initial Capital); app shows Combined
+  Earnings (all positions' price P&L + all fees at current value,
+  reusing Business P&L's All Total) since the user's very first
+  position, compared against a cumulative target. Deliberately
+  broader in scope than Overall P&L (includes closed positions and
+  held token fees) — labeled clearly to avoid confusion between the
+  two.
+  DETAIL: calcGrowthTarget in lib/calculations.ts takes
+  businessAllTotal as a PARAMETER rather than recomputing fees — the
+  caller passes calcBusinessPnL(claims, prices).allTotal, so the
+  Growth card and the Business P&L page can never disagree
+  (Invariant #6). Start date is derived live as the earliest
+  entryDatetime across ALL positions (active + closed), never
+  stored, so it stays correct if older positions are added later.
+  Months elapsed = days / 30.44 as a decimal (DAYS_PER_MONTH),
+  matching the app's existing decimal Days Active style.
+  SHARED PRICE HOOK: valuing fees at current prices needs the same
+  fetched+manual price merge the Business P&L page already had, so
+  that logic moved into lib/useTokenPrices.ts (collectClaimSymbols,
+  mergePrices, useTokenPrices) and the Business P&L page was
+  refactored onto it — one copy, not two. The hook keys its fetch on
+  the token-set string rather than running mount-only, because the
+  Growth card receives claims as props AFTER its parent hydrates.
+  EDGE CASES: unset Initial Capital, unset target, and no positions
+  each render a prompt instead of a divide-by-zero (Invariant #8);
+  a brand-new position still computes (large rate shown as-is).
+  Shared component components/GrowthTarget.tsx used by both
+  Dashboard and Total P&L, same pattern as CapitalCards.
+  Verified on localhost:3001 with seeded data (3 positions incl. 1
+  closed, 3 claims): start date 25 Feb 2026 → moved to 5 Jan 2026
+  when the CLOSED position's entry was backdated, proving closed
+  positions count; Combined Earnings $1,969.96 = $550 position P&L +
+  $1,419.95 All Total (matched the Business P&L page, including a
+  manual ETH price override of $2,000, proving the shared prices);
+  4% → target $3,873.86, rate 2.03%, "$1,903.90 behind" (amber);
+  1% → target $968.47, "$1,001.49 ahead" (green), and Total
+  Deposited (Active) $12,400 / Lifetime $16,400 / Overall P&L
+  −$6,980 / Net P&L $1,520 all unmoved; value persisted across
+  reload and matched on both pages; zero console errors; seeds
+  removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked. (Pool P&L summary-card toggle bug closed

@@ -13,6 +13,7 @@ import {
   InitialCapitalCard,
   OverallPnLCard,
 } from "../components/CapitalCards";
+import { GrowthTargetSection } from "../components/GrowthTarget";
 import { useHydrated } from "../lib/useHydrated";
 import {
   calcDaysActive,
@@ -207,17 +208,25 @@ export default function DashboardPage() {
 
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [initialCapital, setInitialCapital] = useState(0);
+  const [targetMonthlyPercent, setTargetMonthlyPercent] = useState(0);
 
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
-    setInitialCapital(getSettings().initialCapital);
+    const settings = getSettings();
+    setInitialCapital(settings.initialCapital);
+    setTargetMonthlyPercent(settings.targetMonthlyPercent);
   });
 
   const handleSaveInitialCapital = (next: number) => {
     saveSettings({ ...getSettings(), initialCapital: next });
     setInitialCapital(next);
+  };
+
+  const handleSaveTarget = (next: number) => {
+    saveSettings({ ...getSettings(), targetMonthlyPercent: next });
+    setTargetMonthlyPercent(next);
   };
 
   const overall = useMemo(
@@ -313,6 +322,14 @@ export default function DashboardPage() {
             />
             <OverallPnLCard result={overall} />
           </div>
+
+          <GrowthTargetSection
+            positions={positions}
+            claims={claims}
+            initialCapital={initialCapital}
+            targetMonthlyPercent={targetMonthlyPercent}
+            onSaveTarget={handleSaveTarget}
+          />
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">

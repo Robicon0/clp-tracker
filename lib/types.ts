@@ -132,6 +132,10 @@ export interface AppSettings {
   // Real capital the business started with. Manually entered, never derived
   // from position records, and never changed automatically.
   initialCapital: number;
+  // Personal monthly earning goal, as a percentage of initialCapital (e.g. 4
+  // means "4% a month"). Manually entered; 0 means "no target set yet" and the
+  // Growth Target card prompts instead of computing against zero.
+  targetMonthlyPercent: number;
 }
 
 export interface PortfolioSummary {

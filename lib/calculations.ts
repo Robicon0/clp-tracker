@@ -1125,3 +1125,112 @@ export function calcPortfolioSummary(
 
   return summary;
 }
+
+// ---------------------------------------------------------------------------
+// Growth Target
+// ---------------------------------------------------------------------------
+
+// Average days in a calendar month (365.25 / 12). Months elapsed is a decimal
+// so the running average reads the same way "Days Active" already does
+// elsewhere in the app — not rounded to whole calendar months.
+export const DAYS_PER_MONTH = 30.44;
+
+export interface GrowthTarget {
+  // Earliest entryDatetime across ALL positions, active and closed. Derived
+  // live, never stored, so it stays correct if older positions are added later.
+  startDate: string | null;
+  monthsElapsed: number;
+  // Price P&L across every position ever: scalp when closed, current − deposited
+  // when open.
+  positionEarnings: number;
+  // Business P&L's "All Total" — every fee ever claimed, all tokens, valued at
+  // today's price. Passed in rather than recomputed so the two surfaces can
+  // never disagree (Invariant #6).
+  feeEarnings: number;
+  combinedEarnings: number;
+  initialCapital: number;
+  targetMonthlyPercent: number;
+  cumulativeTarget: number;
+  // Running average monthly rate actually achieved, as a percent of capital.
+  averageMonthlyRate: number;
+  // combinedEarnings − cumulativeTarget. Positive = ahead of target.
+  difference: number;
+  // Why the numbers can't be computed yet, so the UI prompts instead of
+  // rendering NaN / a division by zero (Invariant #8).
+  missing: {
+    initialCapital: boolean;
+    target: boolean;
+    startDate: boolean;
+  };
+}
+
+// How the LP business is tracking against a personal monthly growth goal,
+// measured as a running average since the very first position was opened.
+//
+//   Combined Earnings = Σ (closed ? scalp : currentBalance − deposited)
+//                     + Business P&L All Total (all fees, valued today)
+//   Cumulative Target = Initial Capital × (Target % / 100) × Months Elapsed
+//   Average Monthly Rate = (Combined Earnings / Initial Capital) / Months × 100
+//
+// SCOPE NOTE: deliberately BROADER than Overall P&L. This counts every
+// position ever opened (not just active) and every fee earned including tokens
+// still held un-converted (not just cashed-out ones). The two numbers are
+// expected to differ; the UI labels both so they can't be confused.
+export function calcGrowthTarget(
+  positions: Position[],
+  businessAllTotal: number,
+  initialCapital: number,
+  targetMonthlyPercent: number,
+  now: Date = new Date(),
+): GrowthTarget {
+  let positionEarnings = 0;
+  let earliest: number | null = null;
+  let startDate: string | null = null;
+
+  for (const p of positions) {
+    positionEarnings +=
+      p.status === "closed"
+        ? toFinite(p.scalp)
+        : toFinite(p.currentBalance) - getEffectiveDeposited(p);
+
+    const t = new Date(p.entryDatetime).getTime();
+    if (Number.isFinite(t) && (earliest === null || t < earliest)) {
+      earliest = t;
+      startDate = p.entryDatetime;
+    }
+  }
+
+  const feeEarnings = toFinite(businessAllTotal);
+  const combinedEarnings = positionEarnings + feeEarnings;
+  const capital = toFinite(initialCapital);
+  const targetPct = toFinite(targetMonthlyPercent);
+
+  const monthsElapsed =
+    earliest === null
+      ? 0
+      : Math.max(0, (now.getTime() - earliest) / 86400000 / DAYS_PER_MONTH);
+
+  const cumulativeTarget = capital * (targetPct / 100) * monthsElapsed;
+  const averageMonthlyRate =
+    capital > 0 && monthsElapsed > 0
+      ? (combinedEarnings / capital / monthsElapsed) * 100
+      : 0;
+
+  return {
+    startDate,
+    monthsElapsed,
+    positionEarnings,
+    feeEarnings,
+    combinedEarnings,
+    initialCapital: capital,
+    targetMonthlyPercent: targetPct,
+    cumulativeTarget,
+    averageMonthlyRate,
+    difference: combinedEarnings - cumulativeTarget,
+    missing: {
+      initialCapital: capital <= 0,
+      target: targetPct <= 0,
+      startDate: earliest === null,
+    },
+  };
+}
