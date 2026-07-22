@@ -865,6 +865,21 @@ at the plan gate.
   By Token identical across all three toggle states. tsc/lint/build
   clean. Closes the Phase A Known Issue logged in 636b9d0.
 
+- Claims "needs USD value" filter + AppSettings consolidation
+  (2026-07-22) [78ff8a8]: Added a filter to quickly find claims
+  missing a converted USD value (previously silently counted as $0
+  toward Overall P&L). Consolidated the duplicate AppSettings type
+  declaration into a single source (lib/types.ts). Detail: the
+  AppSettings interface was already single-source in lib/types; the
+  real duplicate was the DEFAULT_SETTINGS literal in lib/storage
+  AND app/settings/page — the pair that drifted when initialCapital
+  was added (noted in the Initial Capital entry above). Now exported
+  once from lib/storage. The Claims banner predicate is
+  isUnvaluedConvertedClaim in lib/calculations, shared with
+  calcOverallPnL's unvaluedConvertedClaims count so the two can
+  never disagree — do not inline a second copy of the
+  converted-but-null test. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked. (Pool P&L summary-card toggle bug closed
