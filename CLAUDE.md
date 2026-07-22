@@ -880,6 +880,31 @@ at the plan gate.
   never disagree — do not inline a second copy of the
   converted-but-null test. tsc/lint/build clean.
 
+- Fee Claims summary-card filter fix (2026-07-22) [4ac704f]:
+  Fixed Fee Claims summary cards (Total Claims, Total Fees Earned,
+  Total Converted to Stable, Average Position APR) to respect the
+  Position/Platform/Chain filters — previously always computed from
+  all claims regardless of filter, same pattern as the earlier
+  Dashboard and Pool P&L fixes. totals now loops filteredSorted;
+  Average Position APR scopes to positions in the filtered claims
+  but computes each one's APR from the FULL claim list (a
+  position's APR is a property of the position, not a claim subset
+  — Invariant #10). BROADER SWEEP (asked for): three pages have
+  filters — Pool P&L (fixed 741ac8a), Fee Claims (this), and
+  Transfers. Transfers has the SAME code shape (totals/byToken/
+  byDestination loop raw transfers while the table uses
+  sortedFiltered) but is NOT the same bug: its cards are Money Flow
+  accounting invariants ("Lifetime Earned never decreases",
+  "Transfers Net Total = Σ all money moved out"), lifetime by
+  definition — the deliberate-exception case like Dashboard's Total
+  Fees/Profit/APR. Filtering them would breach Money Flow invariant
+  #2. Left as-is on purpose; do not "fix" it to follow the type
+  filter. PATTERN NOTE for future filtered pages: summary cards
+  must read the same filtered list as the table UNLESS the card is
+  an explicitly lifetime/accounting figure — decide per card, and
+  when in doubt the earned-money/accounting ones stay whole while
+  the current-scope ones follow the filter.
+
 ## Known Issues
 
 - None currently tracked. (Pool P&L summary-card toggle bug closed
