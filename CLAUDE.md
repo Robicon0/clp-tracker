@@ -905,7 +905,7 @@ at the plan gate.
   when in doubt the earned-money/accounting ones stay whole while
   the current-scope ones follow the filter.
 
-- Growth Target (2026-07-22) [0bfa669]: Added "Growth Target" — user
+- Growth Target (2026-07-22) [60fcb74]: Added "Growth Target" — user
   sets a Target Monthly % (of Initial Capital); app shows Combined
   Earnings (all positions' price P&L + all fees at current value,
   reusing Business P&L's All Total) since the user's very first
