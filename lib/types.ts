@@ -77,6 +77,13 @@ export interface Transfer {
   // manufacture a loss, while still being countable for the review prompt.
   // Saving a transfer through the form always writes an explicit value.
   moneyStatus?: "redeployed" | "expense";
+  // Idempotency links back to the event that auto-created this Transfer, so a
+  // future save/backfill can tell "this claim/close already has an auto
+  // transfer" without the fragile position+day+type heuristic. Both optional
+  // and absent on manually-created and legacy records — their presence is the
+  // signal that automation, not a person, made the row.
+  sourceClaimId?: string;
+  sourceCloseId?: string;
   notes: string;
 }
 

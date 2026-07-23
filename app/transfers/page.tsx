@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import {
+  getClaims,
   getPositions,
   getSettings,
   getTransfers,
@@ -18,9 +19,17 @@ import {
   saveWithdrawals,
 } from "../../lib/storage";
 import { countUnclassifiedTransfers } from "../../lib/calculations";
+import {
+  buildClaimTransfers,
+  createUpsideTransfer,
+  eligibleClaimsForBackfill,
+  eligibleClosesForBackfill,
+  reconcileClaimTransfers,
+} from "../../lib/transferAutomation";
 import { useHydrated } from "../../lib/useHydrated";
 import type {
   AppSettings,
+  FeeClaim,
   Position,
   Transfer,
   Withdrawal,
@@ -198,6 +207,7 @@ export default function TransfersPage() {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [reviewOnly, setReviewOnly] = useState(false);
@@ -211,6 +221,7 @@ export default function TransfersPage() {
     setTransfers(getTransfers());
     setWithdrawals(getWithdrawals());
     setPositions(getPositions());
+    setClaims(getClaims());
   };
 
   const hydrated = useHydrated(refresh);
@@ -400,6 +411,13 @@ export default function TransfersPage() {
               Add Transfer
             </button>
           </div>
+
+          <BackfillReview
+            claims={claims}
+            positions={positions}
+            transfers={transfers}
+            onDone={refresh}
+          />
 
           {/* Money Flow ledger: earned (grows forever) − withdrawn = available now. */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -1421,5 +1439,185 @@ function EmptyIcon() {
       <path d="M5 7l7-4 7 4v6c0 4-3 7-7 8-4-1-7-4-7-8V7z" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M9 12l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+const backfillDateFmt = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+});
+
+function formatBackfillDate(iso: string): string {
+  const d = new Date((iso ?? "").slice(0, 10));
+  return Number.isNaN(d.getTime()) ? iso : backfillDateFmt.format(d);
+}
+
+// One-line preview of what a claim's auto transfer(s) will look like, without
+// fetching prices (the dual-token split resolves on confirm).
+function claimPreview(claim: FeeClaim): string {
+  const built = buildClaimTransfers(claim);
+  if (built.needsPrices) {
+    return `2 transfers · ${built.dualSymbols.join(" + ")} split by price on ${formatBackfillDate(
+      claim.date,
+    )}`;
+  }
+  const t = built.transfers[0];
+  return t ? `${formatUsd(t.amount)} · ${t.token}` : "—";
+}
+
+interface BackfillReviewProps {
+  claims: FeeClaim[];
+  positions: Position[];
+  transfers: Transfer[];
+  onDone: () => void;
+}
+
+// Safe, reviewable backfill of historical fee claims and above-range closes.
+// Never writes without an explicit confirmation, and only lists records that
+// have no matching transfer yet (dedup by sourceClaimId/sourceCloseId, or the
+// position+day+type heuristic), so re-running cannot create duplicates.
+function BackfillReview({
+  claims,
+  positions,
+  transfers,
+  onDone,
+}: BackfillReviewProps) {
+  const [excludedClaims, setExcludedClaims] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  const eligibleClaims = useMemo(
+    () => eligibleClaimsForBackfill(claims, transfers),
+    [claims, transfers],
+  );
+  const eligibleCloses = useMemo(
+    () => eligibleClosesForBackfill(positions, transfers),
+    [positions, transfers],
+  );
+
+  if (eligibleClaims.length === 0 && eligibleCloses.length === 0) return null;
+
+  const toInclude = eligibleClaims.filter((c) => !excludedClaims.has(c.id));
+
+  const toggleClaim = (id: string) =>
+    setExcludedClaims((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const runClaimBackfill = async () => {
+    setBusy(true);
+    for (const c of toInclude) {
+      // reconcile keys off sourceClaimId; these are eligible (none), so it
+      // creates. Sequential so the dual-token price fetches don't stampede.
+      await reconcileClaimTransfers(c);
+    }
+    setBusy(false);
+    setExcludedClaims(new Set());
+    onDone();
+  };
+
+  const confirmClose = (p: Position) => {
+    createUpsideTransfer(p);
+    onDone();
+  };
+
+  return (
+    <div className="space-y-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-5">
+      <div>
+        <h2 className="text-sm font-semibold tracking-tight text-amber-200">
+          Backfill transfers from history
+        </h2>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">
+          Records with no matching transfer yet. Nothing is created until you
+          confirm — anything already covered by a transfer is hidden, so this
+          can&apos;t make duplicates.
+        </p>
+      </div>
+
+      {eligibleClaims.length > 0 && (
+        <div className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              Fee claims ({eligibleClaims.length})
+            </h3>
+            <button
+              type="button"
+              disabled={busy || toInclude.length === 0}
+              onClick={() => void runClaimBackfill()}
+              className="inline-flex h-8 items-center justify-center rounded-md bg-[var(--accent)] px-3 text-xs font-medium text-white transition-colors hover:bg-[var(--accent)]/90 disabled:opacity-50"
+            >
+              {busy
+                ? "Creating…"
+                : `Create ${toInclude.length} transfer${toInclude.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
+          <ul className="mt-3 divide-y divide-[var(--border)]">
+            {eligibleClaims.map((c) => (
+              <li
+                key={c.id}
+                className="flex items-center justify-between gap-3 py-2 text-sm"
+              >
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!excludedClaims.has(c.id)}
+                    onChange={() => toggleClaim(c.id)}
+                    className="h-3.5 w-3.5 accent-[var(--accent)]"
+                  />
+                  <span className="text-[var(--foreground)]">
+                    {c.pair || "—"}
+                  </span>
+                  <span className="text-[11px] text-[var(--muted)]">
+                    {formatBackfillDate(c.date)}
+                  </span>
+                </label>
+                <span className="text-[11px] tabular-nums text-[var(--muted)]">
+                  {claimPreview(c)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {eligibleCloses.length > 0 && (
+        <div className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Above-range closes to confirm ({eligibleCloses.length})
+          </h3>
+          <p className="mt-1 text-[11px] text-[var(--muted)]">
+            Exit side can&apos;t be detected from stored data — confirm only the
+            positions you closed <em>above</em> range. Their scalp is set aside
+            as an Out-of-Range-Upside transfer.
+          </p>
+          <ul className="mt-3 divide-y divide-[var(--border)]">
+            {eligibleCloses.map((p) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between gap-3 py-2 text-sm"
+              >
+                <span>
+                  <span className="text-[var(--foreground)]">{p.pair}</span>{" "}
+                  <span className="text-[11px] text-[var(--muted)]">
+                    closed {formatBackfillDate(p.exitDatetime ?? "")} · scalp{" "}
+                    {formatUsd(p.scalp ?? 0)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => confirmClose(p)}
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 text-xs font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)]"
+                >
+                  Yes, above range → set aside {formatUsd(p.scalp ?? 0)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }

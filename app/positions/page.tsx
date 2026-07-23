@@ -19,6 +19,7 @@ import {
   savePositionPrices,
   saveRanges,
 } from "../../lib/storage";
+import { createUpsideTransfer } from "../../lib/transferAutomation";
 import {
   calcDaysActive,
   calcFeeAPR,
@@ -1043,6 +1044,7 @@ export default function PositionsPage() {
       currentBalance: number;
       scalp: number | null;
       closeTxLink: string | null;
+      rangeExit: "above" | "below" | "in" | "";
       feeClaim?: {
         token1Amount: number;
         token2Amount: number;
@@ -1077,19 +1079,28 @@ export default function PositionsPage() {
       });
     }
 
+    const closedPosition: Position = {
+      ...target,
+      exitDatetime: next.exitDatetime,
+      currentBalance: next.currentBalance,
+      scalp: next.scalp,
+      closeTxLink: next.closeTxLink,
+      status: "closed" as const,
+    };
     const updated = getPositions().map((p) =>
-      p.id === target.id
-        ? {
-            ...p,
-            exitDatetime: next.exitDatetime,
-            currentBalance: next.currentBalance,
-            scalp: next.scalp,
-            closeTxLink: next.closeTxLink,
-            status: "closed" as const,
-          }
-        : p,
+      p.id === target.id ? closedPosition : p,
     );
     savePositions(updated);
+
+    // Above-range exit with a real profit -> set that profit aside as an
+    // Out-of-Range-Upside transfer (Transfers automation, Phase B). Gated on
+    // an explicit user choice because exit side is otherwise undetectable, and
+    // skipped when scalp <= 0 (nothing to set aside). Idempotent by
+    // sourceCloseId, so re-closing never duplicates.
+    if (next.rangeExit === "above" && (next.scalp ?? 0) > 0) {
+      createUpsideTransfer(closedPosition);
+    }
+
     refresh();
     setModal({ kind: "none" });
   };
@@ -3281,6 +3292,7 @@ interface ClosePositionModalProps {
     currentBalance: number;
     scalp: number | null;
     closeTxLink: string | null;
+    rangeExit: "above" | "below" | "in" | "";
     feeClaim?: {
       token1Amount: number;
       token2Amount: number;
@@ -3303,6 +3315,12 @@ function ClosePositionModal({
     String(position.currentBalance ?? 0),
   );
   const [closeTxLink, setCloseTxLink] = useState("");
+  // Which side the position exited on. Undetectable from stored data after the
+  // fact (Phase A), so it is an explicit choice; only "above" + a positive
+  // scalp creates the Out-of-Range-Upside transfer. "" until chosen/derived.
+  const [rangeExitOverride, setRangeExitOverride] = useState<
+    "above" | "below" | "in" | ""
+  >("");
   // Mode 2: token amounts received, priced at the exit moment. Both modes
   // save the same scalp/currentBalance — this one just does the arithmetic.
   const [closeMode, setCloseMode] = useState<"manual" | "tokens">("manual");
@@ -3345,6 +3363,21 @@ function ClosePositionModal({
     num(baseReceived) * num(basePrice) + num(quoteReceived) * num(quotePrice);
   const tokensScalp = tokensBalance - deposited;
   const usingTokens = closeMode === "tokens";
+
+  // In token mode a CLMM close is 100% quote above range and 100% base below,
+  // so the received split reveals the exit side — pre-fill from it, but let the
+  // user override. Manual mode has no such signal, so no suggestion.
+  const EPS = 1e-9;
+  const suggestedRange: "above" | "below" | "in" | "" = (() => {
+    if (!usingTokens) return "";
+    const b = num(baseReceived);
+    const q = num(quoteReceived);
+    if (b <= EPS && q > EPS) return "above";
+    if (q <= EPS && b > EPS) return "below";
+    if (b > EPS && q > EPS) return "in";
+    return "";
+  })();
+  const rangeExit = rangeExitOverride || suggestedRange;
 
   // The datetime-local input holds LOCAL wall-clock time. new Date() parses it
   // in the device's zone, so getTime() is already the correct absolute moment
@@ -3408,6 +3441,7 @@ function ClosePositionModal({
       currentBalance: usingTokens ? tokensBalance : num(currentBalance),
       scalp: usingTokens ? tokensScalp : optionalNum(scalp),
       closeTxLink: closeTxLink.trim() === "" ? null : closeTxLink.trim(),
+      rangeExit,
       feeClaim: shouldCreateClaim
         ? {
             token1Amount: num(claimTokens1),
@@ -3570,6 +3604,48 @@ function ClosePositionModal({
                 onChange={(e) => setCloseTxLink(e.target.value)}
               />
             </Field>
+            <div className="space-y-1.5 sm:col-span-2">
+              <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                Position closed
+              </span>
+              <div
+                role="radiogroup"
+                aria-label="Which side did the position exit on?"
+                className="inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
+              >
+                {(
+                  [
+                    ["above", "Above range"],
+                    ["below", "Below range"],
+                    ["in", "Still in range"],
+                  ] as const
+                ).map(([value, label], i) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={rangeExit === value}
+                    onClick={() => setRangeExitOverride(value)}
+                    className={`h-8 px-3 text-xs font-medium transition-colors ${
+                      i > 0 ? "border-l border-[var(--border-strong)]" : ""
+                    } ${
+                      rangeExit === value
+                        ? "bg-[var(--accent)] text-white"
+                        : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-[var(--muted)]">
+                {usingTokens && suggestedRange && !rangeExitOverride
+                  ? "Pre-filled from the tokens you received — override if wrong. "
+                  : ""}
+                Choosing “Above range” with a profit sets that profit aside as
+                an Out-of-Range-Upside transfer.
+              </p>
+            </div>
           </div>
         </Section>
         <Section title="Claim Fees at Close (Optional)">

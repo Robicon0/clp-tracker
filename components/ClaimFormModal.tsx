@@ -14,6 +14,7 @@ import {
   savePositions,
 } from "../lib/storage";
 import { getEffectiveDeposited } from "../lib/calculations";
+import { reconcileClaimTransfers } from "../lib/transferAutomation";
 import type { FeeClaim, Position } from "../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -168,15 +169,21 @@ function applyPositionValueUpdate(claim: FeeClaim): void {
 }
 
 // Shared save paths so /claims and /positions persist claims identically
-// (Invariant #6 — never duplicate this logic per page).
+// (Invariant #6 — never duplicate this logic per page). Both also reconcile
+// the claim's auto Transfer (Transfers automation, Phase B): a single-token
+// claim needs no network so its transfer appears synchronously; a two-token
+// claim fetches a historical split, hence fire-and-forget. An auto transfer
+// the user has since edited is left untouched (reconcile detects this).
 export function persistNewClaim(claim: FeeClaim): void {
   saveClaims([...getClaims(), claim]);
   applyPositionValueUpdate(claim);
+  void reconcileClaimTransfers(claim);
 }
 
 export function persistUpdatedClaim(claim: FeeClaim): void {
   saveClaims(getClaims().map((c) => (c.id === claim.id ? claim : c)));
   applyPositionValueUpdate(claim);
+  void reconcileClaimTransfers(claim);
 }
 
 interface ModalShellProps {

@@ -1063,6 +1063,71 @@ at the plan gate.
   Growth Target's). Entirely additive: no calculated total anywhere
   changed. tsc/lint/build clean; zero console errors; seeds removed.
 
+- Transfers automation: Fee-claim + upside-close + safe backfill
+  (2026-07-24) [PENDING]: Automated Transfers for Fee claims
+  (converted AND unconverted, going forward) and Out-of-Range-Upside
+  closes (gated by a new close-time range selector, since exit-side
+  data was previously computed but discarded). Added safe, reviewable
+  in-app backfill for historical claims/closes — never silent, always
+  user-confirmed, deduped by position+day+type. Added optional
+  sourceClaimId/sourceCloseId to Transfer for future idempotency.
+  Undeployed Tokens and Expenses remain fully manual, unchanged.
+  ARCHITECTURE: all automation lives in lib/transferAutomation.ts
+  (pure builders + one async reconcile + backfill-eligibility
+  helpers). Part 1 hooks into persistNewClaim AND persistUpdatedClaim
+  in components/ClaimFormModal.tsx (the shared claim-persistence path,
+  Invariant #10) so BOTH the /claims form and the close-with-fees flow
+  auto-create transfers with no duplicated logic.
+  KEY BEHAVIOURS:
+  • moneyStatus is OMITTED on auto rows (undefined = "needs review",
+    per Invariant/e7b274a) — never guessed as redeployed. platform and
+    destination are blank; notes carry an AUTO stamp used as the
+    "untouched" tell-tale.
+  • Single reward leg → one transfer, amount = stableAmount, token =
+    non-stable symbol (else stableSymbol). TWO non-stable legs (e.g.
+    ETH+WBTC) → two transfers split by REAL historical value on the
+    claim date via the existing /api/prices/historical route (DeFiLlama
+    cascade, Invariant #2 — no second price path), second leg = usd −
+    first so they sum to stableAmount exactly.
+  • Close: a range selector (Above/Below/Still in range) on both modes.
+    Token mode pre-fills from the base≈0/quote>0 heuristic
+    (overridable); manual mode requires an explicit pick. Upside
+    transfer (amount = scalp, sourceCloseId) is created ONLY when
+    "Above range" AND scalp > 0.
+  • Backfill: a reviewable banner on /transfers. Eligible = claims/
+    closes with NO matching transfer (by sourceClaimId/sourceCloseId OR
+    the position+day+type heuristic). Fee claims: bulk "Create N" +
+    per-row exclude. Closes: per-row "Yes, above range" confirm (never
+    pre-guessed from scalp sign — Phase A established that is
+    unreliable).
+  EDIT-AFTER-CREATION (Part 1 edge, the flagged decision):
+  reconcileClaimTransfers keys off sourceClaimId. If the claim's auto
+  transfer is UNTOUCHED (platform/destination blank, moneyStatus unset,
+  auto note intact) it is deleted + rebuilt to match the edited claim;
+  if the user has edited it, it is left exactly as-is and reported
+  skipped-touched (no silent divergence). A claim with NO auto transfer
+  but a colliding manual same-day fees transfer returns skipped-existing
+  so editing a legacy claim can never manufacture a duplicate — this
+  guard was ADDED mid-build after live testing showed the sourceClaimId-
+  only check would have duplicated a hand-logged transfer on legacy-claim
+  edit.
+  REAL-DATA COUNTS (verification G): the user's positions/claims/
+  transfers live in their browser localStorage, which the automation
+  profile does not share (same limit as c372b30). The backfill screen
+  produces the real counts in-app on the user's machine; verified here
+  against a representative seed (1 eligible claim / 1 eligible close,
+  with 1 claim + 1 close correctly EXCLUDED as already-covered).
+  Verified live on localhost:3001: single converted ($300→ETH),
+  single unconverted ($500→ETH), and dual ETH+WBTC ($1000 → $359.9991 +
+  $640.0009, summing to exactly $1000 via real DeFiLlama prices) all
+  auto-created with blank platform + unset moneyStatus; Mode-2 close
+  base0/quote6000 pre-filled "Above range" → $1000 upside transfer;
+  Below-range and scalp≤0 closes created none; backfill created the two
+  eligible records and hid the two already-covered ones; claim-edit
+  updated an untouched transfer, preserved a user-edited one, and did
+  not duplicate a legacy manual transfer. Seeds removed. tsc/lint/build
+  clean; zero console errors.
+
 ## Known Issues
 
 - None currently tracked. (Pool P&L summary-card toggle bug closed
