@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
+  getBusinessPnLSettings,
   getClaims,
   getPositions,
   getSettings,
@@ -15,6 +16,7 @@ import {
   calcOverallPnL,
   calcPositionProfit,
   calcPriceDiff,
+  calcUnconvertedHoldings,
   getEffectiveDeposited,
   getEffectiveTotalFees,
   type OverallPnL,
@@ -23,8 +25,10 @@ import {
   InitialCapitalCard,
   OverallPnLCard,
 } from "../../components/CapitalCards";
+import { Breakdown } from "../../components/Breakdown";
 import { GrowthTargetSection } from "../../components/GrowthTarget";
 import { useHydrated } from "../../lib/useHydrated";
+import { mergePrices, useTokenPrices } from "../../lib/useTokenPrices";
 import type { FeeClaim, Position, Transfer } from "../../lib/types";
 
 const EMPTY_OVERALL: OverallPnL = {
@@ -347,6 +351,22 @@ export default function TotalPnlPage() {
     [hydrated, positions, claims],
   );
 
+  // LP P&L split into active price movement vs closed-position scalp, drawn
+  // from the SAME arithmetic as totals.lpPnL (Σ currentBalance − deposited)
+  // so the two parts add up to it exactly. For a closed position
+  // currentBalance is the final withdrawn amount, so (final − deposited) is
+  // that position's scalp by the app's definition (c372b30).
+  const lpSplit = useMemo(() => {
+    let active = 0;
+    let closed = 0;
+    for (const p of positions) {
+      const v = p.currentBalance - getEffectiveDeposited(p);
+      if (p.status === "active") active += v;
+      else closed += v;
+    }
+    return { active, closed };
+  }, [positions]);
+
   const handleSaveInitialCapital = (next: number) => {
     saveSettings({ ...getSettings(), initialCapital: next });
     setInitialCapital(next);
@@ -438,8 +458,10 @@ export default function TotalPnlPage() {
           <PortfolioSummarySection
             totals={totals}
             activeCapital={activeCapital}
+            lpSplit={lpSplit}
             lifetimeDeposited={lifetimeDeposited}
             overall={overall}
+            claims={claims}
             initialCapital={initialCapital}
             onSaveInitialCapital={handleSaveInitialCapital}
           />
@@ -481,8 +503,10 @@ function EmptyIcon() {
 interface PortfolioSummarySectionProps {
   totals: PortfolioTotals;
   activeCapital: PortfolioTotals;
+  lpSplit: { active: number; closed: number };
   lifetimeDeposited: number;
   overall: OverallPnL;
+  claims: FeeClaim[];
   initialCapital: number;
   onSaveInitialCapital: (next: number) => void;
 }
@@ -490,8 +514,10 @@ interface PortfolioSummarySectionProps {
 function PortfolioSummarySection({
   totals,
   activeCapital,
+  lpSplit,
   lifetimeDeposited,
   overall,
+  claims,
   initialCapital,
   onSaveInitialCapital,
 }: PortfolioSummarySectionProps) {
@@ -522,11 +548,10 @@ function PortfolioSummarySection({
         {/* Scoped labels on purpose: the Dashboard carries the open-only
             versions of these figures, so neither page may reuse the other's
             label for a different scope (Invariant #6). */}
-        <BigStat
-          label="Total Fees Earned"
-          value={formatUsd(totals.totalFees)}
-          valueClass={pnlColor(totals.totalFees)}
-          hint="Your whole LP business, active and closed positions combined."
+        <FeesEarnedCard
+          totalFees={totals.totalFees}
+          convertedFees={overall.convertedFees}
+          claims={claims}
         />
         <BigStat
           label="Total Short P&L"
@@ -539,13 +564,68 @@ function PortfolioSummarySection({
           value={formatUsd(totals.lpPnL)}
           valueClass={pnlColor(totals.lpPnL)}
           hint="Sum of (current value − deposited) across all positions, active and closed. Price movement only, before fees."
+          breakdown={
+            <Breakdown
+              rows={[
+                {
+                  label: "Active positions (price movement)",
+                  value: formatUsd(lpSplit.active),
+                },
+                {
+                  label: "+ Closed positions (Scalp)",
+                  value: formatUsd(lpSplit.closed),
+                },
+                { label: "=", value: formatUsd(totals.lpPnL), isTotal: true },
+              ]}
+            />
+          }
         />
-        <NetPnlCard value={totals.netPnL} />
+        <NetPnlCard
+          value={totals.netPnL}
+          breakdown={
+            <Breakdown
+              rows={[
+                { label: "LP P&L", value: formatUsd(totals.lpPnL) },
+                {
+                  label: "+ Total Fees Earned",
+                  value: formatUsd(totals.totalFees),
+                },
+                {
+                  label: "+ Short P&L",
+                  value: formatUsd(totals.totalShortPnL),
+                },
+                { label: "=", value: formatUsd(totals.netPnL), isTotal: true },
+              ]}
+            />
+          }
+        />
         <InitialCapitalCard
           value={initialCapital}
           onSave={onSaveInitialCapital}
         />
-        <OverallPnLCard result={overall} />
+        <OverallPnLCard
+          result={overall}
+          breakdown={
+            <Breakdown
+              rows={[
+                {
+                  label: "Current Value (active)",
+                  value: formatUsd(overall.activeCurrentValue),
+                },
+                {
+                  label: "+ Converted Fees (realized, all-time)",
+                  value: formatUsd(overall.convertedFees),
+                },
+                { label: "− Expenses", value: formatUsd(overall.expenses) },
+                {
+                  label: "− Initial Capital",
+                  value: formatUsd(overall.initialCapital),
+                },
+                { label: "=", value: formatUsd(overall.overall), isTotal: true },
+              ]}
+            />
+          }
+        />
       </div>
     </div>
   );
@@ -556,9 +636,10 @@ interface BigStatProps {
   value: string;
   valueClass?: string;
   hint?: string;
+  breakdown?: ReactNode;
 }
 
-function BigStat({ label, value, valueClass, hint }: BigStatProps) {
+function BigStat({ label, value, valueClass, hint, breakdown }: BigStatProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
@@ -570,15 +651,69 @@ function BigStat({ label, value, valueClass, hint }: BigStatProps) {
         {value}
       </div>
       {hint && <p className="mt-2 text-[11px] text-[var(--muted)]">{hint}</p>}
+      {breakdown}
+    </div>
+  );
+}
+
+// Total Fees Earned with a converted-vs-still-held note. The converted figure
+// is Overall P&L's realized convertedFees (converted-to-stable claims only);
+// the still-held figure is Business P&L's Unconverted Holdings current value,
+// computed with the same calcUnconvertedHoldings + merged prices so the two
+// pages show the same number (Invariant #6). Not recomputed here beyond
+// calling that shared helper.
+function FeesEarnedCard({
+  totalFees,
+  convertedFees,
+  claims,
+}: {
+  totalFees: number;
+  convertedFees: number;
+  claims: FeeClaim[];
+}) {
+  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
+  useHydrated(() => setManualPrices(getBusinessPnLSettings().prices));
+  const { fetchedPrices } = useTokenPrices(claims);
+  const prices = useMemo(
+    () => mergePrices(fetchedPrices, manualPrices),
+    [fetchedPrices, manualPrices],
+  );
+  const holdings = useMemo(
+    () => calcUnconvertedHoldings(claims, prices),
+    [claims, prices],
+  );
+
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+        Total Fees Earned
+      </div>
+      <div
+        className={`mt-2 text-2xl font-semibold tracking-tight ${pnlColor(totalFees)}`}
+      >
+        {formatUsd(totalFees)}
+      </div>
+      <p className="mt-2 text-[11px] text-[var(--muted)]">
+        Your whole LP business, active and closed positions combined.
+      </p>
+      <p className="mt-1 text-[11px] tabular-nums text-[var(--muted)]">
+        {formatUsd(convertedFees)} converted · {formatUsd(holdings.totalCurrentValue)}{" "}
+        still held at today&apos;s value (
+        <Link href="/business-pnl" className="text-[var(--accent)] hover:underline">
+          see Business P&amp;L
+        </Link>
+        )
+      </p>
     </div>
   );
 }
 
 interface NetPnlCardProps {
   value: number;
+  breakdown?: ReactNode;
 }
 
-function NetPnlCard({ value }: NetPnlCardProps) {
+function NetPnlCard({ value, breakdown }: NetPnlCardProps) {
   return (
     <div
       className={`rounded-lg border-2 ${pnlBorder(value)} bg-[var(--surface)] p-6 shadow-lg`}
@@ -595,6 +730,7 @@ function NetPnlCard({ value }: NetPnlCardProps) {
         LP P&amp;L + Total Fees + Short P&amp;L, across every position ever
         opened
       </p>
+      {breakdown}
     </div>
   );
 }

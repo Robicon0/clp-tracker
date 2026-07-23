@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { OverallPnL } from "../lib/calculations";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -100,7 +100,16 @@ export function InitialCapitalCard({
   );
 }
 
-export function OverallPnLCard({ result }: { result: OverallPnL }) {
+export function OverallPnLCard({
+  result,
+  breakdown,
+}: {
+  result: OverallPnL;
+  // Optional live formula breakdown, rendered only where it's passed. The
+  // Dashboard omits it (keeps the compact card); the Total P&L page supplies
+  // one so the number is auditable there.
+  breakdown?: ReactNode;
+}) {
   return (
     <div className={cardClass}>
       <div className={labelClass}>Overall P&amp;L</div>
@@ -112,6 +121,7 @@ export function OverallPnLCard({ result }: { result: OverallPnL }) {
         Initial Capital. Excludes tokens you&apos;re still holding (see Business
         P&amp;L for that).
       </p>
+      {breakdown}
       {result.unvaluedConvertedClaims > 0 && (
         <p className="mt-2 text-[11px] text-amber-300">
           {result.unvaluedConvertedClaims} converted{" "}

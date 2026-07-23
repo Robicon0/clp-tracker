@@ -6,6 +6,7 @@ import { calcBusinessPnL, calcGrowthTarget } from "../lib/calculations";
 import { getBusinessPnLSettings } from "../lib/storage";
 import { useHydrated } from "../lib/useHydrated";
 import { mergePrices, useTokenPrices } from "../lib/useTokenPrices";
+import { Breakdown } from "./Breakdown";
 import type { FeeClaim, Position } from "../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -23,14 +24,18 @@ function formatPercent(value: number): string {
   return `${Number.isFinite(value) ? value.toFixed(2) : "0.00"}%`;
 }
 
-// "25 Feb 2026" — plain and unambiguous in any locale, unlike 02/25/2026.
-function formatPlainDate(iso: string): string {
+// "25 Feb 2026, 10:00" — plain and unambiguous in any locale, unlike
+// 02/25/2026, and with the time so the exact start instant is visible for
+// hand-checking the months-elapsed figure.
+function formatPlainDateTime(iso: string): string {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", {
+  return d.toLocaleString("en-GB", {
     day: "numeric",
     month: "short",
     year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -93,8 +98,8 @@ export function GrowthTargetSection({
         <h2 className="text-sm font-semibold tracking-tight">Growth Target</h2>
         {growth.startDate && (
           <span className="text-xs text-[var(--muted)]">
-            Since {formatPlainDate(growth.startDate)} (
-            {growth.monthsElapsed.toFixed(1)} months ago)
+            Since {formatPlainDateTime(growth.startDate)} (
+            {growth.monthsElapsed.toFixed(2)} months ago)
           </span>
         )}
       </div>
@@ -151,7 +156,7 @@ export function GrowthTargetSection({
               <p className={`${hintClass} tabular-nums`}>
                 {formatUsd(growth.initialCapital)} (Initial Capital) ×{" "}
                 {formatPercent(growth.targetMonthlyPercent)} ×{" "}
-                {growth.monthsElapsed.toFixed(2)} months ={" "}
+                {growth.monthsElapsed.toFixed(6)} months ={" "}
                 {formatUsd(growth.cumulativeTarget)}
               </p>
             )}
@@ -169,21 +174,27 @@ export function GrowthTargetSection({
               {formatUsd(growth.combinedEarnings)}
             </div>
             {/* The two halves the total is made of, so the number is auditable
-                at a glance rather than a lump sum (North Star). */}
-            <dl className="mt-2 space-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
-              <div className="flex items-baseline justify-between gap-2">
-                <dt>LP price gain/loss (all positions)</dt>
-                <dd>{formatUsd(growth.positionEarnings)}</dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-2">
-                <dt>+ Fees earned, all-time, at today&apos;s prices</dt>
-                <dd>{formatUsd(growth.feeEarnings)}</dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-2 border-t border-[var(--border)] pt-0.5 font-medium text-[var(--foreground)]">
-                <dt>=</dt>
-                <dd>{formatUsd(growth.combinedEarnings)}</dd>
-              </div>
-            </dl>
+                rather than a lump sum (North Star) — collapsed by default so
+                this card stays the same height as the other three. The fees
+                half is Business P&L's All Total verbatim (growth.feeEarnings is
+                that exact value, passed into calcGrowthTarget). */}
+            <Breakdown
+              rows={[
+                {
+                  label: "LP price gain/loss (all positions)",
+                  value: formatUsd(growth.positionEarnings),
+                },
+                {
+                  label: "+ Fees earned, all-time (= Business P&L All Total)",
+                  value: formatUsd(growth.feeEarnings),
+                },
+                {
+                  label: "=",
+                  value: formatUsd(growth.combinedEarnings),
+                  isTotal: true,
+                },
+              ]}
+            />
             <p className={hintClass}>
               Includes every position ever opened and every fee earned, valued
               today — a different, broader number than Overall P&amp;L.

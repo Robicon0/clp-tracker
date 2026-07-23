@@ -1007,6 +1007,62 @@ at the plan gate.
   $300/5.95% and 1/$4,000/$120/$470). Zero console errors; seeds
   removed. tsc/lint/build clean.
 
+- Live number breakdowns + toggles (2026-07-24) [PENDING]: Added
+  live, real-number breakdowns (with collapse/expand toggles) to
+  Growth Target's Combined Earnings and Total P&L's LP P&L / Net
+  P&L / Overall P&L cards, so users can see exactly how each figure
+  was calculated without asking. Added a converted-vs-held split
+  note to Total Fees Earned. Growth Target now shows precise
+  months-elapsed instead of a rounded figure.
+  SHARED PRIMITIVE: components/Breakdown.tsx — one collapsible
+  line-item list (collapsed by default so a card keeps its
+  neighbours' height until expanded), reused by every "how this
+  number was made" card so they behave identically. Rows carry a
+  pre-formatted value string; the final row is isTotal (top rule +
+  bold). Do not inline copies per card.
+  EACH BREAKDOWN RECONCILES BY CONSTRUCTION (verification hand-
+  checked all): LP P&L = active(current−deposited) + closed(final−
+  deposited, i.e. Scalp), both drawn from the SAME arithmetic as
+  totals.lpPnL via lpSplit, so they always sum to it; a closed
+  position's (final−deposited) is its scalp by the c372b30
+  definition. Net P&L = LP P&L + Total Fees + Short P&L (the exact
+  addends of netPnL). Overall P&L = activeCurrentValue + Converted
+  Fees − Expenses − Initial Capital, read straight off calcOverallPnL.
+  PART 4/E — THE FEE FIGURE: Overall P&L's breakdown uses
+  overall.convertedFees (Σ stableAmount where convertedToStable ===
+  true — realized, cashed-out fees only), which is DELIBERATELY a
+  different number from Growth Target's fee half (business.allTotal,
+  every fee at current market value including still-held tokens). In
+  the seed verification convertedFees = $420 vs allTotal = $1,419.90.
+  They are not the same and must not be swapped. Confirmed against
+  the code path, not assumed.
+  PART 5 — CONVERTED VS HELD: the Total Fees Earned card now shows
+  "$X converted · $Y still held at today's value". X = convertedFees
+  (same figure Overall P&L uses); Y = calcUnconvertedHoldings(...).
+  totalCurrentValue — the exact number Business P&L's Unconverted
+  Holdings "Current Value" card shows (same helper, same merged
+  fetched+manual prices via useTokenPrices/mergePrices). Verified $420
+  / $1,000.00 matched Business P&L to the cent. FeesEarnedCard does
+  its own price fetch through the shared hook rather than recomputing
+  the merge. Note these two are different valuation bases (realized
+  claim-time vs current market) and are not claimed to sum to the
+  card total — it is a "how much converted vs still held" note, not a
+  decomposition.
+  PART 1 — PRECISE MONTHS: the Cumulative Target formula prints
+  months to 6 decimals (was 2, which was off by dollars) and the
+  header shows the exact start date+time plus months to 2dp.
+  6dp is what makes capital × target% × months reproduce the
+  displayed total to the cent for realistic capital; because months
+  advances with wall-clock time, penny-exactness is momentary by
+  nature (any rounded intermediate can land on a half-cent boundary),
+  but 6dp keeps the gap sub-cent. Verified: $20,000 × 4.00% ×
+  4.890738 months = $3,912.59, reproduced exactly.
+  OverallPnLCard (shared with Dashboard) gained an OPTIONAL breakdown
+  prop — only Total P&L passes it, so the Dashboard's Overall P&L
+  card is unchanged (confirmed: Dashboard shows exactly one toggle,
+  Growth Target's). Entirely additive: no calculated total anywhere
+  changed. tsc/lint/build clean; zero console errors; seeds removed.
+
 ## Known Issues
 
 - None currently tracked. (Pool P&L summary-card toggle bug closed
