@@ -1064,7 +1064,7 @@ at the plan gate.
   changed. tsc/lint/build clean; zero console errors; seeds removed.
 
 - Transfers automation: Fee-claim + upside-close + safe backfill
-  (2026-07-24) [PENDING]: Automated Transfers for Fee claims
+  (2026-07-24) [666ec71]: Automated Transfers for Fee claims
   (converted AND unconverted, going forward) and Out-of-Range-Upside
   closes (gated by a new close-time range selector, since exit-side
   data was previously computed but discarded). Added safe, reviewable
