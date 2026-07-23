@@ -139,10 +139,22 @@ export function GrowthTargetSection({
                 ? "—"
                 : formatUsd(growth.cumulativeTarget)}
             </div>
-            <p className={hintClass}>
-              Initial Capital × target % × {growth.monthsElapsed.toFixed(2)}{" "}
-              months.
-            </p>
+            {/* The formula with the user's own numbers substituted in, so the
+                card never has to be explained. Recomputes with every input. */}
+            {growth.missing.initialCapital ||
+            growth.missing.target ||
+            growth.missing.startDate ? (
+              <p className={hintClass}>
+                Initial Capital × target % × months since your first position.
+              </p>
+            ) : (
+              <p className={`${hintClass} tabular-nums`}>
+                {formatUsd(growth.initialCapital)} (Initial Capital) ×{" "}
+                {formatPercent(growth.targetMonthlyPercent)} ×{" "}
+                {growth.monthsElapsed.toFixed(2)} months ={" "}
+                {formatUsd(growth.cumulativeTarget)}
+              </p>
+            )}
           </div>
 
           <div className={tileClass}>
@@ -156,6 +168,22 @@ export function GrowthTargetSection({
             >
               {formatUsd(growth.combinedEarnings)}
             </div>
+            {/* The two halves the total is made of, so the number is auditable
+                at a glance rather than a lump sum (North Star). */}
+            <dl className="mt-2 space-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
+              <div className="flex items-baseline justify-between gap-2">
+                <dt>LP price gain/loss (all positions)</dt>
+                <dd>{formatUsd(growth.positionEarnings)}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <dt>+ Fees earned, all-time, at today&apos;s prices</dt>
+                <dd>{formatUsd(growth.feeEarnings)}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-2 border-t border-[var(--border)] pt-0.5 font-medium text-[var(--foreground)]">
+                <dt>=</dt>
+                <dd>{formatUsd(growth.combinedEarnings)}</dd>
+              </div>
+            </dl>
             <p className={hintClass}>
               Includes every position ever opened and every fee earned, valued
               today — a different, broader number than Overall P&amp;L.
