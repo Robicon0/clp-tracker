@@ -1007,7 +1007,7 @@ at the plan gate.
   $300/5.95% and 1/$4,000/$120/$470). Zero console errors; seeds
   removed. tsc/lint/build clean.
 
-- Live number breakdowns + toggles (2026-07-24) [PENDING]: Added
+- Live number breakdowns + toggles (2026-07-24) [e56ec29]: Added
   live, real-number breakdowns (with collapse/expand toggles) to
   Growth Target's Combined Earnings and Total P&L's LP P&L / Net
   P&L / Overall P&L cards, so users can see exactly how each figure
