@@ -301,13 +301,35 @@ export default function TotalPnlPage() {
     setTargetMonthlyPercent(settings.targetMonthlyPercent);
   });
 
-  // Portfolio Summary describes what is deployed right now, so it spans open
-  // positions only — capital in a closed position has been withdrawn. Net P&L
-  // is a sum of the cards beside it, so every one of them must share that
-  // scope or the row stops adding up. Closed positions are not hidden: their
-  // realised numbers keep their own column in the Active/Closed breakdown
-  // below, and Lifetime Total Deposited spans everything ever opened.
+  // This page is the whole-business view, so the PROFIT figures it computes —
+  // Fees Earned, LP P&L, Short P&L and the Net P&L that sums them — span every
+  // position ever opened, closed included. Money already earned does not stop
+  // counting because the position that earned it was closed. The CAPITAL cards
+  // beside them stay open-only and are computed separately (see
+  // activeCapital below): capital in a closed position has been withdrawn and
+  // redeployed, so counting it again would double-count it. The Dashboard
+  // carries the open-only view of profit.
   const totals = useMemo(
+    () =>
+      hydrated
+        ? computeTotals(positions, claims)
+        : {
+            totalInvested: 0,
+            totalCurrentValue: 0,
+            totalFees: 0,
+            totalShortPnL: 0,
+            lpPnL: 0,
+            netPnL: 0,
+          },
+    [hydrated, positions, claims],
+  );
+
+  // Capital deployed RIGHT NOW. Deliberately a separate, open-only pass:
+  // `totals` above went whole-business for the profit figures, but Total
+  // Invested and Total Current Value must keep describing money currently in
+  // pools — a closed position's principal was withdrawn and redeployed, and
+  // counting it again double-counts it.
+  const activeCapital = useMemo(
     () =>
       hydrated
         ? computeTotals(
@@ -415,6 +437,7 @@ export default function TotalPnlPage() {
         <>
           <PortfolioSummarySection
             totals={totals}
+            activeCapital={activeCapital}
             lifetimeDeposited={lifetimeDeposited}
             overall={overall}
             initialCapital={initialCapital}
@@ -457,6 +480,7 @@ function EmptyIcon() {
 
 interface PortfolioSummarySectionProps {
   totals: PortfolioTotals;
+  activeCapital: PortfolioTotals;
   lifetimeDeposited: number;
   overall: OverallPnL;
   initialCapital: number;
@@ -465,6 +489,7 @@ interface PortfolioSummarySectionProps {
 
 function PortfolioSummarySection({
   totals,
+  activeCapital,
   lifetimeDeposited,
   overall,
   initialCapital,
@@ -474,13 +499,14 @@ function PortfolioSummarySection({
     <div className="space-y-3">
       <SectionHeading title="Portfolio Summary" />
       <p className="-mt-1 text-xs text-[var(--muted)]">
-        Open positions only — closed positions keep their own column in the
-        Active vs Closed breakdown below.
+        Profit figures cover your whole LP business, active and closed
+        positions combined. The two capital figures stay open-only — a closed
+        position&apos;s capital was withdrawn and redeployed.
       </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <BigStat
           label="Total Invested (Active)"
-          value={formatUsd(totals.totalInvested)}
+          value={formatUsd(activeCapital.totalInvested)}
           hint="Capital currently deployed in open positions."
         />
         <BigStat
@@ -490,28 +516,29 @@ function PortfolioSummarySection({
         />
         <BigStat
           label="Total Current Value"
-          value={formatUsd(totals.totalCurrentValue)}
+          value={formatUsd(activeCapital.totalCurrentValue)}
+          hint="Open positions only."
         />
-        {/* Scoped label on purpose: the Dashboard's "Total Fees Earned" spans
-            every position ever, so reusing that exact name here — where it is
-            an addend of an active-only Net P&L — would put two different
-            numbers under one label and break Invariant #6. */}
+        {/* Scoped labels on purpose: the Dashboard carries the open-only
+            versions of these figures, so neither page may reuse the other's
+            label for a different scope (Invariant #6). */}
         <BigStat
-          label="Fees Earned (Active)"
+          label="Total Fees Earned"
           value={formatUsd(totals.totalFees)}
           valueClass={pnlColor(totals.totalFees)}
-          hint="Fees on open positions. Closed-position fees appear in the breakdown below."
+          hint="Your whole LP business, active and closed positions combined."
         />
         <BigStat
           label="Total Short P&L"
           value={formatUsd(totals.totalShortPnL)}
           valueClass={pnlColor(totals.totalShortPnL)}
+          hint="Every short ever recorded — a short is logged on its position and has no separate open/closed state."
         />
         <BigStat
           label="LP P&L"
           value={formatUsd(totals.lpPnL)}
           valueClass={pnlColor(totals.lpPnL)}
-          hint="Sum of (current value − deposited) across open positions. Price movement only, before fees."
+          hint="Sum of (current value − deposited) across all positions, active and closed. Price movement only, before fees."
         />
         <NetPnlCard value={totals.netPnL} />
         <InitialCapitalCard
@@ -565,7 +592,8 @@ function NetPnlCard({ value }: NetPnlCardProps) {
         {formatUsd(value)}
       </div>
       <p className="mt-2 text-[11px] text-[var(--muted)]">
-        LP P&amp;L + Total Fees + Short P&amp;L
+        LP P&amp;L + Total Fees + Short P&amp;L, across every position ever
+        opened
       </p>
     </div>
   );

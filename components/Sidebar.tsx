@@ -47,11 +47,11 @@ function computePortfolioStatus(
   if (positions.length === 0) {
     return { state: "neutral", netPnl: 0, hasData: false };
   }
-  // Mirrors the Total P&L page's Net P&L exactly (Invariant #6), which scopes
-  // to open positions only — so this must filter identically or the two
-  // numbers drift apart.
+  // Mirrors the Total P&L page's Net P&L exactly (Invariant #6), which spans
+  // every position ever opened, closed included — so this must not filter, or
+  // the two numbers drift apart.
   let netPnl = 0;
-  for (const p of positions.filter((pos) => pos.status === "active")) {
+  for (const p of positions) {
     netPnl += p.currentBalance - getEffectiveDeposited(p);
     netPnl += getEffectiveTotalFees(p, allClaims);
     if (p.shortTotal !== null && Number.isFinite(p.shortTotal)) {

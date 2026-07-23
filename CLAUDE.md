@@ -147,23 +147,33 @@ wallet connection, live price feeds, and on-chain reads.
    LP P&L, position detail, docs, about pages must all show
    consistent data. Same protocol's value in two places must
    agree. Same formula in two pages must produce same number.
-   SCOPE RULE (2026-07-21): "current standing" totals scope to
-   ACTIVE positions only — Dashboard Total Deposited (Active) and
-   Current Value; Total P&L's Total Invested (Active), Total
-   Current Value, Fees Earned (Active), Total Short P&L, LP P&L
-   and Net P&L; and Sidebar Net P&L, which must always equal Total
-   P&L's Net P&L. Capital in a closed position has been withdrawn
-   and redeployed, so counting it again double-counts. Metrics
-   that describe money EARNED still span all positions: Dashboard
-   Total Fees Earned, Total Profit and Average Fee APR. Because
-   the two scopes now coexist, a label may not be reused across
-   scopes — Total P&L's fees card is deliberately "Fees Earned
-   (Active)" rather than "Total Fees Earned", since the Dashboard
-   card of that name spans everything and the two figures differ
-   ($1,163.82 vs $1,428.22 in verification). Closed positions are
-   never hidden: they keep their own column in Total P&L's
-   Active/Closed breakdown, and Lifetime Total Deposited on both
-   pages spans every position ever opened.
+   SCOPE RULE (2026-07-21, PROFIT HALF REVISED 2026-07-23 — see the
+   scope-swap entry in Recent Shipped Sprints):
+
+   CAPITAL figures scope to ACTIVE positions only, on BOTH pages —
+   Dashboard Total Deposited (Active) and Current Value; Total P&L's
+   Total Invested (Active) and Total Current Value. Capital in a
+   closed position has been withdrawn and redeployed, so counting it
+   again double-counts. This half is unchanged since 7ae0e50.
+
+   PROFIT figures split by PAGE, matching what each page's name
+   promises:
+     - Dashboard = current standing → ACTIVE only: Fees Earned
+       (Active), Total Profit (Active), Average Fee APR (Active).
+     - Total P&L = the whole business ever → ALL positions, closed
+       included: Total Fees Earned, LP P&L, Total Short P&L, Net
+       P&L. Sidebar Net P&L must always equal Total P&L's Net P&L,
+       so it is all-positions too.
+
+   Because the two scopes coexist, a label may not be reused across
+   scopes. The qualifiers therefore live on the DASHBOARD now
+   ("Fees Earned (Active)" etc.) and Total P&L carries the plain
+   "Total Fees Earned" — the exact opposite of the 7ae0e50
+   arrangement, which is the point of the swap.
+
+   Closed positions are never hidden: they keep their own column in
+   Total P&L's Active/Closed breakdown, and Lifetime Total Deposited
+   on both pages spans every position ever opened.
 
 7. [ASPIRATIONAL] **Wallet Security** — Per-chain disconnected
    flags (localStorage). Wallets only connect when actively
@@ -945,6 +955,56 @@ at the plan gate.
   Deposited (Active) $12,400 / Lifetime $16,400 / Overall P&L
   −$6,980 / Net P&L $1,520 all unmoved; value persisted across
   reload and matched on both pages; zero console errors; seeds
+  removed. tsc/lint/build clean.
+
+- Profit-scope swap between Dashboard and Total P&L (2026-07-23)
+  [PENDING]: Swapped profit-figure scope between Dashboard and Total
+  P&L. Dashboard's Total Profit/Fees Earned/Average Fee APR are now
+  active-only (current standing). Total P&L's Fees Earned/LP P&L/Net
+  P&L/Short P&L are now all-positions including closed (whole
+  business, ever). Capital figures (Total Deposited, Current Value,
+  Lifetime Total Deposited) are unchanged on both pages — still
+  active-only, per the earlier double-counting fix. Sidebar Net P&L
+  and Invariant #6 updated to match Total P&L's new all-positions
+  scope.
+  LABELS FLIPPED WITH THE SCOPES (Invariant #6 forbids one label
+  covering two scopes): Dashboard now reads "Fees Earned (Active)" /
+  "Total Profit (Active)" / "Average Fee APR (Active)"; Total P&L's
+  card is now plainly "Total Fees Earned". Leaving the old labels
+  would have pointed each qualifier at the wrong page.
+  SEPARATE CAPITAL PASS: computeTotals on Total P&L now runs TWICE —
+  `totals` over all positions for the profit cards, `activeCapital`
+  over open positions only for Total Invested (Active) and Total
+  Current Value. Do not "simplify" these back into one call; the
+  page deliberately mixes two scopes and the capital half must not
+  follow the profit half.
+  SHORT P&L INVESTIGATION (asked for before assuming): a short has
+  NO independent open/closed state. It is a set of fields ON the
+  Position record (shortDateStart/shortDateEnd/shortGain/shortLoss/
+  shortFundingFees/shortTotal), not a separate entity;
+  shortDateEnd is a descriptive date only — nothing in the codebase
+  branches on it, and shortTotal = gain − loss + funding is a
+  realised figure the user types. So a short's P&L can only follow
+  its position's scope, which is why Total Short P&L now spans all
+  positions.
+  DASHBOARD PROFIT SIMPLIFICATION: Total Profit (Active) still flows
+  through calcPositionProfit, whose closed-position "scalp + fees"
+  branch is simply unreachable now that only active positions are
+  passed. The helper was deliberately NOT changed — Total P&L's
+  Active/Closed breakdown still needs that branch for its closed
+  column.
+  Verified on localhost:3001 with seeded data (2 active + 1 closed,
+  2 claims, shorts on one active +$150 and one closed −$80), before
+  numbers captured by stashing the diff and re-reading the live
+  pages: Dashboard Fees $420 → $300, Total Profit $970 → $500, Avg
+  APR 7.40% → 5.95% (matching the OLD Total P&L active figures
+  exactly); Total P&L Fees $300 → $420 (matching the OLD Dashboard),
+  LP P&L $200 → $550, Short $150 → $70, Net $650 → $1,040; Sidebar
+  $650 → $1,040, equal to Net P&L; Total Deposited $12,400 /
+  Lifetime $16,400 / Current Value $12,600 / Initial Capital
+  $20,000 / Overall P&L −$6,980 / Growth Target all byte-identical
+  before and after; Active/Closed breakdown unchanged (2/$12,400/
+  $300/5.95% and 1/$4,000/$120/$470). Zero console errors; seeds
   removed. tsc/lint/build clean.
 
 ## Known Issues

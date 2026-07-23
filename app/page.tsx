@@ -237,12 +237,11 @@ export default function DashboardPage() {
     [hydrated, positions, claims, transfers, initialCapital],
   );
 
-  // Two scopes, deliberately kept apart. `summary` spans every position ever
-  // opened and feeds the metrics where closed positions still count — fees
-  // earned, profit realised, historical APR. `activeSummary` spans only open
-  // positions and feeds the "what is deployed right now" cards, so those
-  // agree with the Active Positions count beside them: capital in a closed
-  // position has been withdrawn and is not sitting in any pool.
+  // Two scopes, deliberately kept apart. The Dashboard answers "where do I
+  // stand right now", so every headline card — capital AND profit — reads
+  // `activeSummary` (open positions only). `summary` spans every position
+  // ever opened and now feeds exactly one card: Lifetime Total Deposited.
+  // The whole-business view of profit lives on the Total P&L page.
   const summary = hydrated
     ? calcPortfolioSummary(positions, claims)
     : EMPTY_SUMMARY;
@@ -297,24 +296,29 @@ export default function DashboardPage() {
               value={formatUsd(activeSummary.totalCurrentValue)}
               hint="Open positions only."
             />
+            {/* Scoped labels on purpose: the Total P&L page carries the
+                whole-business versions of these three figures, and Invariant #6
+                forbids the same label standing for two different scopes. */}
             <SummaryCard
-              label="Total Fees Earned"
-              value={formatUsd(summary.totalFees)}
-              valueClass={pnlColor(summary.totalFees)}
+              label="Fees Earned (Active)"
+              value={formatUsd(activeSummary.totalFees)}
+              valueClass={pnlColor(activeSummary.totalFees)}
+              hint="Active positions only — see Total P&L for your whole business, including closed positions."
             />
             <SummaryCard
-              label="Total Profit"
-              value={formatUsd(summary.totalProfit)}
-              valueClass={pnlColor(summary.totalProfit)}
-              hint="Active: price change + fees. Closed: scalp + fees."
+              label="Total Profit (Active)"
+              value={formatUsd(activeSummary.totalProfit)}
+              valueClass={pnlColor(activeSummary.totalProfit)}
+              hint="Price change + fees on open positions. See Total P&L for your whole business, including closed positions."
             />
             <SummaryCard
-              label="Average Fee APR"
-              value={formatPercent(summary.averageAPR)}
+              label="Average Fee APR (Active)"
+              value={formatPercent(activeSummary.averageAPR)}
+              hint="Deposit-weighted across open positions only."
             />
             <SummaryCard
               label="Active Positions"
-              value={String(summary.activePositions)}
+              value={String(activeSummary.activePositions)}
             />
             <InitialCapitalCard
               value={initialCapital}
