@@ -420,6 +420,12 @@ export default function TotalPnlPage() {
             initialCapital={initialCapital}
             onSaveInitialCapital={handleSaveInitialCapital}
           />
+          <PerformanceBreakdownSection
+            active={activeSummary}
+            closed={closedSummary}
+          />
+          <FeeIncomeSection rows={tokenRows} />
+          <MonthlyPerformanceSection rows={monthRows} />
           <GrowthTargetSection
             positions={positions}
             claims={claims}
@@ -427,12 +433,6 @@ export default function TotalPnlPage() {
             targetMonthlyPercent={targetMonthlyPercent}
             onSaveTarget={handleSaveTarget}
           />
-          <PerformanceBreakdownSection
-            active={activeSummary}
-            closed={closedSummary}
-          />
-          <FeeIncomeSection rows={tokenRows} />
-          <MonthlyPerformanceSection rows={monthRows} />
         </>
       )}
     </section>

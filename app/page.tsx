@@ -323,14 +323,6 @@ export default function DashboardPage() {
             <OverallPnLCard result={overall} />
           </div>
 
-          <GrowthTargetSection
-            positions={positions}
-            claims={claims}
-            initialCapital={initialCapital}
-            targetMonthlyPercent={targetMonthlyPercent}
-            onSaveTarget={handleSaveTarget}
-          />
-
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
               <h2 className="text-sm font-semibold tracking-tight">
@@ -521,6 +513,14 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+
+          <GrowthTargetSection
+            positions={positions}
+            claims={claims}
+            initialCapital={initialCapital}
+            targetMonthlyPercent={targetMonthlyPercent}
+            onSaveTarget={handleSaveTarget}
+          />
         </>
       )}
     </section>
