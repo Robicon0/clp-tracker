@@ -958,7 +958,7 @@ at the plan gate.
   removed. tsc/lint/build clean.
 
 - Profit-scope swap between Dashboard and Total P&L (2026-07-23)
-  [PENDING]: Swapped profit-figure scope between Dashboard and Total
+  [7121f8d]: Swapped profit-figure scope between Dashboard and Total
   P&L. Dashboard's Total Profit/Fees Earned/Average Fee APR are now
   active-only (current standing). Total P&L's Fees Earned/LP P&L/Net
   P&L/Short P&L are now all-positions including closed (whole
