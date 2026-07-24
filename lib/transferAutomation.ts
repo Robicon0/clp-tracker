@@ -19,6 +19,22 @@ function dayOf(date: string): string {
   return (date ?? "").slice(0, 10);
 }
 
+// Local calendar day (YYYY-MM-DD) of a full datetime. A closed position stores
+// exitDatetime as a UTC ISO string, but the Positions page shows it in local
+// time (formatDateTime24). Slicing the UTC portion would put the transfer on a
+// different day than the position for any close whose local and UTC dates
+// differ (e.g. a morning close in UTC+10). Deriving the local day keeps the
+// two in agreement (Invariant #2 timezone note). A bare "YYYY-MM-DD" (the
+// manual/claim date format, no time) round-trips unchanged.
+function localDayOf(datetime: string): string {
+  const s = datetime ?? "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s.slice(0, 10);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 // A transfer the automation made and the user has not since edited. platform,
 // destination and moneyStatus are all left in their auto state (blank / blank
 // / unset), and the auto note is intact. If any of those changed, the user has
@@ -187,13 +203,16 @@ export async function reconcileClaimTransfers(
     // it exactly as they left it and report skipped so nothing diverges.
     if (!own.every(isUntouchedAuto)) return { status: "skipped-touched" };
   } else if (
-    // No auto transfer yet, but a manual (or other) fee transfer already
-    // covers this claim's position+day — don't duplicate it. This is what
-    // makes editing a legacy claim safe: it won't manufacture a second row
-    // beside a hand-logged one.
+    // No auto transfer yet, but a MANUAL fee transfer already covers this
+    // claim's position+day — don't duplicate a hand-logged row. Restricted to
+    // manual transfers (no sourceClaimId): auto transfers are deduped
+    // precisely by sourceClaimId, so an auto row for a *different* claim on the
+    // same position+day must NOT block this one — that false match dropped
+    // legitimate same-day claims during backfill.
     all.some(
       (t) =>
         t.transferType === "fees" &&
+        t.sourceClaimId === undefined &&
         t.positionId === claim.positionId &&
         dayOf(t.date) === dayOf(claim.date),
     )
@@ -225,7 +244,7 @@ export function buildUpsideTransfer(position: Position): Transfer | null {
   return {
     id: newId(),
     positionId: position.id,
-    date: dayOf(position.exitDatetime ?? ""),
+    date: localDayOf(position.exitDatetime ?? ""),
     token: position.token2Symbol.trim().toUpperCase() || position.pair,
     amount: scalp,
     platform: "",
@@ -249,9 +268,12 @@ export function createUpsideTransfer(position: Position): boolean {
 
 // ── Backfill eligibility (pure) ─────────────────────────────────────────────
 
-// A claim already has a fee transfer if an auto row points at it, OR a
-// manual row lands on the same position and calendar day tagged "fees" — the
-// safe heuristic from Phase A that avoids duplicating a hand-logged transfer.
+// A claim already has a fee transfer if an auto row points at it (by
+// sourceClaimId), OR a MANUAL row lands on the same position and calendar day
+// tagged "fees" — the safe heuristic from Phase A that avoids duplicating a
+// hand-logged transfer. The manual restriction matters: two legitimate fee
+// claims on one position on one day would otherwise falsely mark the second as
+// covered by the first's auto transfer and drop it from the backfill.
 export function claimHasFeeTransfer(
   claim: FeeClaim,
   transfers: Transfer[],
@@ -260,6 +282,7 @@ export function claimHasFeeTransfer(
     (t) =>
       t.sourceClaimId === claim.id ||
       (t.transferType === "fees" &&
+        t.sourceClaimId === undefined &&
         t.positionId === claim.positionId &&
         dayOf(t.date) === dayOf(claim.date)),
   );

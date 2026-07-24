@@ -1128,6 +1128,43 @@ at the plan gate.
   not duplicate a legacy manual transfer. Seeds removed. tsc/lint/build
   clean; zero console errors.
 
+- Transfers-automation bug fixes: upside-transfer date + same-day
+  backfill (2026-07-24) [PENDING]: Two real bugs found and fixed in
+  the Phase B Transfers automation (label/wording tweaks shipped in
+  the same commit are not invariants).
+  BUG 1 — upside transfer date off by a day (timezone). buildUpside
+  Transfer set the transfer date via dayOf(exitDatetime) = a UTC
+  SLICE of the stored ISO string, while the Positions page shows the
+  close date in LOCAL time (formatDateTime24). For any close whose
+  local and UTC calendar days differ (e.g. a 09:00 close in
+  Australia/Brisbane UTC+10 stores 2026-06-01T23:00Z → position shows
+  02/06/2026, transfer sliced to 2026-06-01), the auto transfer
+  landed a day earlier than the position. Exactly the class the
+  Invariant #2 timezone note warns about. Fix: new localDayOf() in
+  lib/transferAutomation.ts derives the LOCAL YYYY-MM-DD (bare dates
+  pass through unchanged), used for the upside transfer date. Claim
+  transfers were unaffected — claim.date is already a bare local date
+  from the date input, never a UTC datetime. Verified: same close now
+  writes transfer date 2026-06-02, matching the card.
+  BUG 2 — backfill dropped legitimate same-day claims (91 claims → 90
+  transfers). The position+day+type dedup heuristic counted AUTO
+  transfers too, so when two fee claims sat on the SAME position on
+  the SAME calendar day, the first claim's freshly-created auto
+  transfer falsely matched the second (different sourceClaimId), and
+  reconcile returned skipped-existing — the second claim silently got
+  no transfer. Fix: the day+position heuristic in BOTH claimHasFee
+  Transfer and reconcileClaimTransfers' skipped-existing guard now
+  only counts MANUAL transfers (sourceClaimId === undefined). Auto
+  transfers are already deduped precisely by sourceClaimId, so an auto
+  row for a different claim no longer blocks. The legacy-duplicate
+  guard is preserved: a hand-logged (manual) same-day fees transfer
+  still blocks. Verified: two same-day claims ($100 + $150) now both
+  backfill (2 transfers); a third same-day claim with a MANUAL
+  transfer stays excluded; re-run creates no duplicates.
+  No calculation changed (only a date string and the eligibility
+  predicate); diff is app/transfers/page.tsx + lib/transferAutomation
+  .ts only. tsc/lint/build clean; zero console errors.
+
 ## Known Issues
 
 - None currently tracked. (Pool P&L summary-card toggle bug closed

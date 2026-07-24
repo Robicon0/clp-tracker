@@ -480,10 +480,12 @@ export default function TransfersPage() {
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4">
               <p className="text-[13px] text-amber-300">
                 {unclassifiedCount}{" "}
-                {unclassifiedCount === 1 ? "transfer was" : "transfers were"}{" "}
-                logged before expense tracking existed and default to
-                Redeployed — review and reclassify any that were actually
-                expenses.
+                {unclassifiedCount === 1 ? "transfer needs" : "transfers need"}{" "}
+                review — tell the app whether{" "}
+                {unclassifiedCount === 1 ? "it was" : "each was"} redeployed
+                elsewhere or an actual expense. Until reviewed,{" "}
+                {unclassifiedCount === 1 ? "it's" : "they're"} treated as
+                redeployed (not counted as a loss).
               </p>
               <p className="mt-1 text-[11px] text-[var(--muted)]">
                 Until reclassified they have no effect on Overall P&amp;L, so
@@ -918,9 +920,9 @@ interface TypePillProps {
 function TypePill({ type }: TypePillProps) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider ring-1 ring-inset ${TYPE_PILL[type]}`}
+      className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider ring-1 ring-inset ${TYPE_PILL[type]}`}
     >
-      {TYPE_LABELS[type]}
+      {SHORT_TYPE_LABELS[type]}
     </span>
   );
 }
