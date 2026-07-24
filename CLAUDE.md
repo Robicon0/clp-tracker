@@ -1129,7 +1129,7 @@ at the plan gate.
   clean; zero console errors.
 
 - Transfers-automation bug fixes: upside-transfer date + same-day
-  backfill (2026-07-24) [PENDING]: Two real bugs found and fixed in
+  backfill (2026-07-24) [06146fa]: Two real bugs found and fixed in
   the Phase B Transfers automation (label/wording tweaks shipped in
   the same commit are not invariants).
   BUG 1 — upside transfer date off by a day (timezone). buildUpside
