@@ -1292,6 +1292,47 @@ at the plan gate.
   ignored), C (20× flagged, 2× not, 2-record not, missing-zero low), D
   (total 5 = 1+2+1+1+0). tsc/lint/build clean.
 
+- b25281e: Six-part batch (2026-07-25):
+  1. Outlier "Mark confirmed" — persisted dismissal (clp_outlier_dismissals,
+     OutlierDismissal {kind,id,amount}) hides a reviewed outlier flag even
+     though the same math would still flag it. Keyed by id + EXACT amount
+     (±0.005), so a later amount edit no longer matches and the flag
+     re-triggers. Applied in findClaim/TransferAmountOutliers (optional
+     dismissals param) + computeDataHealth; "Mark confirmed" button on
+     OutlierBanner; dismissals in Settings backup keys.
+  2. Average Fee APR timeframe toggle on Dashboard — Daily(/365)/Weekly(/52)/
+     Monthly(/12)/Yearly(default, unchanged). Pure display conversion of the
+     one computed APR; no calc change (AverageFeeAprCard in app/page.tsx).
+  3. Delete position with cascade — Delete on active + closed cards AND list
+     rows. linkedRecords(positionId) unions transfers by positionId,
+     sourceCloseId, and sourceClaimId∈position's claims (all three link
+     types → no orphans), plus claims/ranges/poolPnL/positionPrices.
+     DeletePositionModal shows exact counts ("1 position, N claims, M
+     transfers") and requires typing the pair to enable a no-undo delete.
+  4. Positions Cards/List view toggle (ViewToggle). List = table-less,
+     inline-expandable PositionListRow (collapsed: Pair/Status/Profit;
+     expanded: Deposited/Current/Total Fees/Fee APR/Days + all actions).
+     Flex + truncate + overflow-hidden → zero horizontal scroll (the
+     b9f10df problem is not reintroduced).
+  5. Transfers grouped by chain — byChain memo over sortedFiltered (chain =
+     linked position's chain; expenses/unlinked → "UNLINKED"), rendered as
+     per-chain sections via extracted TransferTable, each respecting the
+     existing type filter + review-only (grouping is downstream of
+     sortedFiltered, so filters compose for free).
+  6. Log an Expense (position-less pool) — DECISION: a dedicated transferType
+     "expense" (not shoehorned into fees/undeployed/upside), positionId ""
+     (sentinel, not a type change — automation always sets a real id and
+     calcOverallPnL keys expenses off moneyStatus only, so "" is safe),
+     moneyStatus forced "expense". Separate ExpenseFormModal (Date/Amount/
+     Notes only) + "Log an Expense" button; edits route to editExpense, not
+     the position-required TransferFormModal. Subtracts from Overall P&L
+     exactly as before. Position-linked automation unchanged.
+  DATA SAFETY: only Part 3 is destructive and is fully gated (count preview
+  + typed confirmation + no-undo copy); everything else additive. Verified
+  against compiled modules: dismiss hides then re-triggers on edit; cascade
+  deletes all 3 transfer link types with 0 orphans; expense drops Overall
+  P&L by exactly its amount; APR conversions exact. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
