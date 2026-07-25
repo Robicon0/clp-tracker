@@ -16,6 +16,8 @@ import {
   type ClaimContaminationRow,
   type ClaimSymbolMismatchRow,
 } from "../../lib/calculations";
+import { findClaimAmountOutliers } from "../../lib/dataHealth";
+import { OutlierBanner } from "../../components/OutlierBanner";
 import {
   ClaimFormModal,
   persistNewClaim,
@@ -83,7 +85,10 @@ function ClaimSymbolMismatchBanner({
 }) {
   const [confirming, setConfirming] = useState(false);
   return (
-    <div className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4">
+    <div
+      id="claim-symbol-issues"
+      className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4"
+    >
       <h2 className="text-sm font-semibold text-red-300">
         {rows.length} {rows.length === 1 ? "claim has" : "claims have"} a token
         symbol that doesn&apos;t match its pair
@@ -259,6 +264,11 @@ export default function ClaimsPage() {
     () => summarizeClaimContamination(claimMismatches),
     [claimMismatches],
   );
+  // Unusual-amount outliers: claims 10× outside their position's usual range.
+  const claimOutliers = useMemo(
+    () => (hydrated ? findClaimAmountOutliers(claims, positions) : []),
+    [hydrated, claims, positions],
+  );
 
   const filteredSorted = useMemo(() => {
     if (!hydrated) return [];
@@ -379,6 +389,13 @@ export default function ClaimsPage() {
           onFixAll={() => handleFixAllSymbols(claimMismatches)}
         />
       )}
+
+      <OutlierBanner
+        id="claim-outliers"
+        rows={claimOutliers}
+        noun="claim"
+        onEdit={(row) => row.claim && setModal({ kind: "edit", claim: row.claim })}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryStat label="Total Claims" value={String(totals.total)} />

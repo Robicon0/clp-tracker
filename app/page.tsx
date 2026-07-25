@@ -14,6 +14,8 @@ import {
   OverallPnLCard,
 } from "../components/CapitalCards";
 import { GrowthTargetSection } from "../components/GrowthTarget";
+import { DataHealthCard } from "../components/DataHealthCard";
+import { computeDataHealth, type DataHealthReport } from "../lib/dataHealth";
 import { useHydrated } from "../lib/useHydrated";
 import {
   calcDaysActive,
@@ -41,6 +43,22 @@ const EMPTY_OVERALL: OverallPnL = {
   initialCapital: 0,
   overall: 0,
   unvaluedConvertedClaims: 0,
+};
+
+const EMPTY_DATA_HEALTH: DataHealthReport = {
+  positionSymbol: [],
+  claimSymbol: [],
+  transferSymbol: [],
+  claimOutliers: [],
+  transferOutliers: [],
+  counts: {
+    positionSymbol: 0,
+    claimSymbol: 0,
+    transferSymbol: 0,
+    claimOutliers: 0,
+    transferOutliers: 0,
+    total: 0,
+  },
 };
 
 const EMPTY_SUMMARY: PortfolioSummary = {
@@ -237,6 +255,14 @@ export default function DashboardPage() {
     [hydrated, positions, claims, transfers, initialCapital],
   );
 
+  const dataHealth = useMemo(
+    () =>
+      hydrated
+        ? computeDataHealth(positions, claims, transfers)
+        : EMPTY_DATA_HEALTH,
+    [hydrated, positions, claims, transfers],
+  );
+
   // Two scopes, deliberately kept apart. The Dashboard answers "where do I
   // stand right now", so every headline card — capital AND profit — reads
   // `activeSummary` (open positions only). `summary` spans every position
@@ -275,6 +301,8 @@ export default function DashboardPage() {
           </p>
         )}
       </header>
+
+      {hydrated && !isEmpty && <DataHealthCard report={dataHealth} />}
 
       {isEmpty ? (
         <WelcomeEmptyState />

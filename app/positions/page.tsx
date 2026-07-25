@@ -1452,7 +1452,10 @@ function SymbolMismatchBanner({
   onEdit: (p: Position) => void;
 }) {
   return (
-    <div className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4">
+    <div
+      id="position-symbol-issues"
+      className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4"
+    >
       <h2 className="text-sm font-semibold text-red-300">
         {rows.length}{" "}
         {rows.length === 1 ? "position has" : "positions have"} a token symbol

@@ -20,6 +20,13 @@ import {
 } from "../../lib/storage";
 import { countUnclassifiedTransfers } from "../../lib/calculations";
 import {
+  correctTransferSymbol,
+  findTransferAmountOutliers,
+  findTransferSymbolMismatches,
+  type TransferSymbolMismatchRow,
+} from "../../lib/dataHealth";
+import { OutlierBanner } from "../../components/OutlierBanner";
+import {
   buildClaimTransfers,
   createUpsideTransfer,
   eligibleClaimsForBackfill,
@@ -202,6 +209,99 @@ function buildWithdrawal(id: string, form: WithdrawalFormState): Withdrawal {
   };
 }
 
+// A transfer's token must belong to its linked position's pair (same substring
+// test as the Position/Claim detectors). Offers a confirmed one-click fix that
+// rewrites to the pair-derived symbol, plus per-row Edit. Detection-only until
+// the user confirms.
+function TransferSymbolBanner({
+  rows,
+  onEdit,
+  onFixAll,
+}: {
+  rows: TransferSymbolMismatchRow[];
+  onEdit: (t: Transfer) => void;
+  onFixAll: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const fixable = rows.filter((r) => r.suggestedSymbol !== "").length;
+  return (
+    <div
+      id="transfer-symbol-issues"
+      className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-red-300">
+        {rows.length} {rows.length === 1 ? "transfer has" : "transfers have"} a
+        token that doesn&apos;t match its position&apos;s pair
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        A transfer&apos;s token should belong to the pair of the position it is
+        linked to (e.g. SOL on a SUI/USDC position is wrong). Fixing rewrites it
+        to the pair token. Nothing changes until you confirm.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.transfer.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {formatDateDDMMYYYY(r.transfer.date)} · {r.position.pair}
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              <span className="font-medium text-red-300">{r.token}</span>
+              {r.suggestedSymbol && <> → {r.suggestedSymbol}</>}
+            </span>
+            <button
+              type="button"
+              onClick={() => onEdit(r.transfer)}
+              className="rounded-md border border-red-500/50 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/10"
+            >
+              Edit
+            </button>
+          </li>
+        ))}
+      </ul>
+      {fixable > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {confirming ? (
+            <>
+              <span className="text-[12px] text-red-300">
+                Rewrite the token on {fixable}{" "}
+                {fixable === 1 ? "transfer" : "transfers"}?
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  onFixAll();
+                  setConfirming(false);
+                }}
+                className="rounded-md bg-red-500/90 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-red-500"
+              >
+                Yes, fix {fixable}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-[12px] font-medium text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)]"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              className="rounded-md border border-red-500/50 px-3 py-1.5 text-[12px] font-medium text-red-300 transition-colors hover:bg-red-500/10"
+            >
+              Fix all {fixable} {fixable === 1 ? "transfer" : "transfers"}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TransfersPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
@@ -238,6 +338,17 @@ export default function TransfersPage() {
   const unclassifiedCount = useMemo(
     () => (hydrated ? countUnclassifiedTransfers(transfers) : 0),
     [hydrated, transfers],
+  );
+
+  // Data Health: a transfer's token must belong to its linked position's pair,
+  // and its amount should sit within that position's usual range.
+  const transferMismatches = useMemo(
+    () => (hydrated ? findTransferSymbolMismatches(transfers, positions) : []),
+    [hydrated, transfers, positions],
+  );
+  const transferOutliers = useMemo(
+    () => (hydrated ? findTransferAmountOutliers(transfers, positions) : []),
+    [hydrated, transfers, positions],
   );
 
   const sortedFiltered = useMemo(() => {
@@ -321,6 +432,20 @@ export default function TransfersPage() {
     setPendingDelete(null);
   };
 
+  // Explicit, user-confirmed bulk correction of mismatched transfer tokens.
+  // Only rewrites rows with a determinable suggestion; others stay for manual
+  // Edit. Detection-only elsewhere — this runs solely on the confirm click.
+  const handleFixAllTransferSymbols = (rows: TransferSymbolMismatchRow[]) => {
+    const fixes = new Map(
+      rows
+        .filter((r) => r.suggestedSymbol !== "")
+        .map((r) => [r.transfer.id, correctTransferSymbol(r)]),
+    );
+    if (fixes.size === 0) return;
+    saveTransfers(getTransfers().map((t) => fixes.get(t.id) ?? t));
+    refresh();
+  };
+
   // Balance ledger (Money Flow invariant): Lifetime Earned = Σ transfers
   // (every fee moved to a destination), Withdrawn = Σ withdrawals taken out
   // for personal use, Available Balance = the difference. Withdrawals never
@@ -395,6 +520,23 @@ export default function TransfersPage() {
         </div>
       ) : (
         <>
+          {transferMismatches.length > 0 && (
+            <TransferSymbolBanner
+              rows={transferMismatches}
+              onEdit={(transfer) => setModal({ kind: "edit", transfer })}
+              onFixAll={() => handleFixAllTransferSymbols(transferMismatches)}
+            />
+          )}
+          <OutlierBanner
+            id="transfer-outliers"
+            rows={transferOutliers}
+            noun="transfer"
+            onEdit={(row) =>
+              row.transfer &&
+              setModal({ kind: "edit", transfer: row.transfer })
+            }
+          />
+
           <div className="flex justify-end gap-2">
             <button
               type="button"

@@ -1079,160 +1079,20 @@ export function findSuspectScalpPositions(
   );
 }
 
-export interface SymbolPairMismatchRow {
-  position: Position;
-  baseSymbol: string;
-  quoteSymbol: string;
-  // The symbols parsed from the Pair string itself (the likely-correct values).
-  pairBase: string;
-  pairQuote: string;
-  baseMismatch: boolean;
-  quoteMismatch: boolean;
-  // Closed positions carry the higher risk: a token-amount-mode close fetched a
-  // price FROM the wrong symbol and wrote it into Final Balance / Scalp, so the
-  // stored dollars — not just the label — can be wrong.
-  isClosed: boolean;
-}
-
-// Strips a trailing fee-tier suffix like " (0.05%)" so "ETH/USDC (0.05%)"
-// parses the same as "ETH/USDC". Positions store the tier separately, but
-// claims sometimes fold it into the pair string.
-function pairCore(pair: string): string {
-  const m = pair.match(/^(.+?)\s*\([^)]*\)\s*$/);
-  return (m ? m[1] : pair).trim().toUpperCase();
-}
-
-// Plausibility check (Invariant #8): a position's Base/Quote token symbol must
-// appear inside its own Pair string. "SOL" on a "SUI/USDC" pair is impossible
-// and means the symbol field holds the wrong token — which then drives every
-// price lookup (live range bar, and critically the token-amount-mode close
-// historical price) to the WRONG coin.
-//
-// Substring, not equality, on purpose: Base "ETH" on pair "WETH/USDC" is a
-// legitimate wrapper alias (ETH ⊂ WETH) and must not be flagged, while
-// "SOL" ⊄ "SUI/USDC" is caught. Reports rather than repairs — only the user
-// knows whether the Pair or the symbol is the typo.
-export function findSymbolPairMismatches(
-  positions: Position[],
-): SymbolPairMismatchRow[] {
-  const rows: SymbolPairMismatchRow[] = [];
-  for (const p of positions) {
-    const pair = pairCore(p.pair);
-    if (pair === "") continue;
-    const baseSymbol = p.token1Symbol.trim().toUpperCase();
-    const quoteSymbol = p.token2Symbol.trim().toUpperCase();
-    const baseMismatch = baseSymbol !== "" && !pair.includes(baseSymbol);
-    const quoteMismatch = quoteSymbol !== "" && !pair.includes(quoteSymbol);
-    if (!baseMismatch && !quoteMismatch) continue;
-    const [pairBase = "", pairQuote = ""] = pair
-      .split("/")
-      .map((s) => s.trim().toUpperCase());
-    rows.push({
-      position: p,
-      baseSymbol,
-      quoteSymbol,
-      pairBase,
-      pairQuote,
-      baseMismatch,
-      quoteMismatch,
-      isClosed: p.status === "closed",
-    });
-  }
-  // Closed (dollar-risk) positions first, then by pair for stable ordering.
-  return rows.sort((a, b) => {
-    if (a.isClosed !== b.isClosed) return a.isClosed ? -1 : 1;
-    return a.position.pair.localeCompare(b.position.pair);
-  });
-}
-
-// Claim-level counterpart of findSymbolPairMismatches. Fee claims freeze their
-// OWN token1Symbol/token2Symbol at creation (a static snapshot copied from the
-// position), so a position mislabeled "SOL" mints claims that ALSO store
-// "SOL" — and calcBusinessPnL sums the claim's stored symbol, inflating the
-// wrong token's total. Fixing the position does NOT fix these claims. The
-// position-level detector cannot see them, but each claim carries its own pair
-// string, so the same substring test catches it: token symbol must appear in
-// the claim's pair. Reports; the caller decides whether to correct.
-export interface ClaimSymbolMismatchRow {
-  claim: FeeClaim;
-  baseSymbol: string;
-  quoteSymbol: string;
-  pairBase: string;
-  pairQuote: string;
-  baseMismatch: boolean;
-  quoteMismatch: boolean;
-}
-
-export function findClaimSymbolMismatches(
-  claims: FeeClaim[],
-): ClaimSymbolMismatchRow[] {
-  const rows: ClaimSymbolMismatchRow[] = [];
-  for (const claim of claims) {
-    const pair = pairCore(claim.pair);
-    if (pair === "") continue;
-    const baseSymbol = claim.token1Symbol.trim().toUpperCase();
-    const quoteSymbol = claim.token2Symbol.trim().toUpperCase();
-    const baseMismatch = baseSymbol !== "" && !pair.includes(baseSymbol);
-    const quoteMismatch = quoteSymbol !== "" && !pair.includes(quoteSymbol);
-    if (!baseMismatch && !quoteMismatch) continue;
-    const [pairBase = "", pairQuote = ""] = pair
-      .split("/")
-      .map((s) => s.trim().toUpperCase());
-    rows.push({
-      claim,
-      baseSymbol,
-      quoteSymbol,
-      pairBase,
-      pairQuote,
-      baseMismatch,
-      quoteMismatch,
-    });
-  }
-  return rows;
-}
-
-// Real-vs-contamination subtotals: how much token quantity is filed under the
-// WRONG symbol and which symbol it should be, aggregated across all flagged
-// claims. This is the "X SOL is actually SUI" figure the Business P&L total is
-// inflated by. Only counts a side when its pair token is known (non-empty).
-export interface ClaimContaminationRow {
-  wrongSymbol: string;
-  correctSymbol: string;
-  amount: number;
-  claimCount: number;
-}
-
-export function summarizeClaimContamination(
-  rows: ClaimSymbolMismatchRow[],
-): ClaimContaminationRow[] {
-  const map = new Map<string, ClaimContaminationRow>();
-  const add = (wrong: string, correct: string, amount: number) => {
-    if (correct === "" || !Number.isFinite(amount) || amount <= 0) return;
-    const key = `${wrong}->${correct}`;
-    const existing = map.get(key);
-    if (existing) {
-      existing.amount += amount;
-      existing.claimCount += 1;
-    } else {
-      map.set(key, { wrongSymbol: wrong, correctSymbol: correct, amount, claimCount: 1 });
-    }
-  };
-  for (const r of rows) {
-    if (r.baseMismatch) add(r.baseSymbol, r.pairBase, r.claim.token1Amount);
-    if (r.quoteMismatch) add(r.quoteSymbol, r.pairQuote, r.claim.token2Amount);
-  }
-  return [...map.values()].sort((a, b) => b.amount - a.amount);
-}
-
-// The one-click correction: returns a copy of the claim with each mismatched
-// side rewritten to the pair-derived symbol. A side whose pair token is unknown
-// (empty) is left untouched — we never blank a symbol we cannot replace.
-export function correctClaimSymbols(row: ClaimSymbolMismatchRow): FeeClaim {
-  const next = { ...row.claim };
-  if (row.baseMismatch && row.pairBase !== "") next.token1Symbol = row.pairBase;
-  if (row.quoteMismatch && row.pairQuote !== "") next.token2Symbol = row.pairQuote;
-  return next;
-}
+// Data Health detectors moved to lib/dataHealth.ts (consolidated across
+// Positions, Claims, and Transfers). Re-exported here so existing import
+// sites keep working unchanged and results stay identical.
+export {
+  findSymbolPairMismatches,
+  findClaimSymbolMismatches,
+  summarizeClaimContamination,
+  correctClaimSymbols,
+} from "./dataHealth";
+export type {
+  SymbolPairMismatchRow,
+  ClaimSymbolMismatchRow,
+  ClaimContaminationRow,
+} from "./dataHealth";
 
 export function calcPortfolioSummary(
   positions: Position[],
