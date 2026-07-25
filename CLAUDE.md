@@ -1205,10 +1205,37 @@ at the plan gate.
   (SOL/SUI flagged, WETH/ETH not, fee-tier stripped, dual mismatch,
   empty symbol skipped). tsc/lint/build clean.
 
+- Business P&L per-chain reward totals (2026-07-25): each chain
+  ledger block's TOTAL row (app/business-pnl/page.tsx) now shows Total
+  Token Rewards and Total Quote Rewards alongside the existing USD
+  Value total (USD total logic byte-unchanged). Summed PER SYMBOL, not
+  as a raw column sum — a chain can hold several reward tokens (ETH +
+  AERO on Base), and adding those quantities is meaningless; one symbol
+  renders "12.5 ETH", a mixed chain renders each token on its own line.
+  ledgerBlocks memo gained token1Totals/token2Totals maps (skip empty/
+  ≤0 amounts); formatRewardTotals renders them. Verified arithmetic
+  against hand calc (ETH block 1.95 ETH / 180 USDC / $4,950; one-sided
+  rows excluded from the quote sum; mixed ETH+AERO split correctly).
+  tsc/lint/build clean.
+
 ## Known Issues
 
-- None currently tracked. (Pool P&L summary-card toggle bug closed
-  2026-07-22 by 741ac8a — see above.)
+- Business P&L Total Tokens can be inflated by claim-level symbol
+  typos (open, investigation 2026-07-25). Fee claims store their OWN
+  token1Symbol/token2Symbol as a STATIC snapshot at creation
+  (ClaimFormModal buildClaim; close-flow positions/page.tsx copies
+  target.token1Symbol) — calcBusinessPnL sums claim.token1Symbol
+  directly, never reading the position live. So a position mislabeled
+  "SOL" (the SUI/USDC case) minted claims ALSO storing "SOL", and
+  fixing the POSITION symbol does NOT retroactively fix those claims —
+  the SOL total stays inflated until the claims themselves are
+  corrected. The a1b7176 detector checks POSITION pair vs POSITION
+  symbols and does NOT catch claims. PROPOSED (awaiting gate approval,
+  not built): a claim-level findClaimSymbolMismatches reusing the same
+  substring test (claim.token1Symbol must appear in claim.pair) +
+  flag-and-confirm banner on /claims, reports never auto-repairs.
+  Exact real SOL-vs-SUI split runs in the user's own browser (their
+  localStorage is not accessible to the automation profile).
 
 ## Architecture Notes
 

@@ -37,6 +37,15 @@ function formatToken(value: number): string {
   return tokenFormatter.format(Number.isFinite(value) ? value : 0);
 }
 
+// Per-symbol reward totals for a chain block's footer. One symbol renders as
+// "12.5 ETH"; a chain mixing reward tokens renders each on its own line so no
+// two different tokens are ever silently added together.
+function formatRewardTotals(totals: Map<string, number>): string[] {
+  const entries = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return ["—"];
+  return entries.map(([sym, amt]) => `${formatToken(amt)} ${sym}`);
+}
+
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -183,12 +192,24 @@ export default function BusinessPnlPage() {
         return (Number.isFinite(ta) ? ta : 0) - (Number.isFinite(tb) ? tb : 0);
       });
       let usdTotal = 0;
+      // Token/Quote reward totals are summed PER SYMBOL, not as a raw column
+      // sum: a chain can hold several pairs with different reward tokens (e.g.
+      // ETH and WBTC), and adding those quantities together is meaningless.
+      const token1Totals = new Map<string, number>();
+      const token2Totals = new Map<string, number>();
+      const addTo = (m: Map<string, number>, symbol: string, amount: number) => {
+        const s = symbol.trim().toUpperCase();
+        if (s === "" || !Number.isFinite(amount) || amount <= 0) return;
+        m.set(s, (m.get(s) ?? 0) + amount);
+      };
       for (const claim of sorted) {
         if (claim.stableAmount !== null && Number.isFinite(claim.stableAmount)) {
           usdTotal += claim.stableAmount;
         }
+        addTo(token1Totals, claim.token1Symbol, claim.token1Amount);
+        addTo(token2Totals, claim.token2Symbol, claim.token2Amount);
       }
-      return { chain, claims: sorted, usdTotal };
+      return { chain, claims: sorted, usdTotal, token1Totals, token2Totals };
     });
     blocks.sort((a, b) => b.usdTotal - a.usdTotal);
     return blocks;
@@ -601,9 +622,19 @@ export default function BusinessPnlPage() {
                     ))}
                   </tbody>
                   <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
-                    <tr className="font-semibold">
+                    <tr className="font-semibold align-top">
                       <td className="px-4 py-3">TOTAL</td>
-                      <td className="px-4 py-3" colSpan={4} />
+                      <td className="px-4 py-3" colSpan={2} />
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {formatRewardTotals(block.token1Totals).map((line) => (
+                          <div key={line}>{line}</div>
+                        ))}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {formatRewardTotals(block.token2Totals).map((line) => (
+                          <div key={line}>{line}</div>
+                        ))}
+                      </td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {formatUsd(block.usdTotal)}
                       </td>
