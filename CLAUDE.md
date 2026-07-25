@@ -1249,6 +1249,49 @@ at the plan gate.
   in the user's own browser (localStorage not accessible to the
   automation profile). tsc/lint/build clean.
 
+- d9d4441: Consolidated the Position/Claim typo detectors into one
+  shared Data Health system, extended to Transfers, and added an
+  unusual-amount outlier flag (claims/transfers wildly bigger/smaller
+  than a position's typical range). One summary card surfaces the total
+  issue count across the whole app; detailed per-page banners remain.
+  Detection only — every fix is still an explicit, user-confirmed
+  action.
+  ARCHITECTURE: lib/dataHealth.ts is the single home for every "this
+  record looks wrong" check. findSymbolPairMismatches (positions) and
+  findClaimSymbolMismatches + summarizeClaimContamination +
+  correctClaimSymbols (claims) moved there verbatim; lib/calculations.ts
+  RE-EXPORTS them so existing import sites are unchanged and results
+  identical (Verification A confirmed no regression). Shared pairCore/
+  symbolMatchesPair/pairTokens primitives — do not re-inline the
+  substring test per page.
+  PART 2 (transfers): a Transfer stores positionId + a single token, so
+  findTransferSymbolMismatches checks token against the LINKED position's
+  pair (skips transfers with no resolvable position). Correction target
+  mirrors how automation assigns the token — outOfRangeUpside → quote
+  (buildUpsideTransfer), fees/undeployed → base (buildClaimTransfer);
+  correctTransferSymbol never rewrites when the target is unknown.
+  PART 3 (outliers): OUTLIER_MULTIPLIER=10 compared against the MAX
+  (high) / MIN (low) of the OTHER records on the same position,
+  OUTLIER_MIN_SIBLINGS=2. Rationale: an extra/missing zero is a 10×
+  shift; comparing to the max (not mean/median) means even the position's
+  largest legitimate record must be dwarfed tenfold, so normal 2–3×
+  variation never trips it; ≥2 siblings stops one data point defining
+  "typical". Claims use stableAmount, transfers use amount; records with
+  empty positionId or non-positive amount are excluded. Flag only — never
+  corrected (a big claim can be real); Review opens the Edit modal.
+  PART 4: components/DataHealthCard.tsx on the Dashboard shows the total
+  count and per-category deep links (/positions#position-symbol-issues,
+  /claims#claim-symbol-issues, /transfers#transfer-symbol-issues,
+  /claims#claim-outliers, /transfers#transfer-outliers — anchor ids added
+  to each banner); green "no issues" state when total is 0. Shared
+  components/OutlierBanner.tsx used by Claims and Transfers.
+  DATA SAFETY: no path mutates without a click — symbol "Fix all" is a
+  two-step confirm, outliers are Edit-only, the card is links-only.
+  Verified against the compiled module: A (P1/C1,C2 flagged, WETH/ETH &
+  genuine SOL/USDC not, 155 SOL→SUI), B (TR1 SOL→SUI, in-pair transfers
+  ignored), C (20× flagged, 2× not, 2-record not, missing-zero low), D
+  (total 5 = 1+2+1+1+0). tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
