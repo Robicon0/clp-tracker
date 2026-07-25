@@ -30,11 +30,14 @@ export function OutlierBanner({
   rows,
   noun,
   onEdit,
+  onConfirm,
 }: {
   id?: string;
   rows: OutlierRow[];
   noun: "claim" | "transfer";
   onEdit: (row: OutlierRow) => void;
+  // Persisted "I checked this, it's correct" dismissal (Part 1).
+  onConfirm: (row: OutlierRow) => void;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -71,13 +74,23 @@ export function OutlierBanner({
               vs usual {usd(r.typicalMin)}–{usd(r.typicalMax)} ({r.siblingCount}{" "}
               others)
             </span>
-            <button
-              type="button"
-              onClick={() => onEdit(r)}
-              className="rounded-md border border-amber-500/40 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
-            >
-              Review
-            </button>
+            <span className="inline-flex gap-2">
+              <button
+                type="button"
+                onClick={() => onConfirm(r)}
+                className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10"
+                title="Hide this flag — the amount is correct"
+              >
+                Mark confirmed
+              </button>
+              <button
+                type="button"
+                onClick={() => onEdit(r)}
+                className="rounded-md border border-amber-500/40 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+              >
+                Review
+              </button>
+            </span>
           </li>
         ))}
       </ul>

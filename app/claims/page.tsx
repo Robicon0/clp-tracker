@@ -1,7 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { getClaims, getPositions, saveClaims } from "../../lib/storage";
+import {
+  getClaims,
+  getOutlierDismissals,
+  getPositions,
+  saveClaims,
+  saveOutlierDismissals,
+} from "../../lib/storage";
 import { useHydrated } from "../../lib/useHydrated";
 import {
   calcDaysActive,
@@ -16,7 +22,11 @@ import {
   type ClaimContaminationRow,
   type ClaimSymbolMismatchRow,
 } from "../../lib/calculations";
-import { findClaimAmountOutliers } from "../../lib/dataHealth";
+import {
+  dismissalFor,
+  findClaimAmountOutliers,
+  type OutlierRow,
+} from "../../lib/dataHealth";
 import { OutlierBanner } from "../../components/OutlierBanner";
 import {
   ClaimFormModal,
@@ -24,7 +34,7 @@ import {
   persistUpdatedClaim,
   positionOptionLabel,
 } from "../../components/ClaimFormModal";
-import type { FeeClaim, Position } from "../../lib/types";
+import type { FeeClaim, OutlierDismissal, Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -229,9 +239,12 @@ export default function ClaimsPage() {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
+  const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
+
   const refresh = () => {
     setClaims(getClaims());
     setPositions(getPositions());
+    setDismissals(getOutlierDismissals());
   };
 
   const hydrated = useHydrated(refresh);
@@ -266,9 +279,15 @@ export default function ClaimsPage() {
   );
   // Unusual-amount outliers: claims 10× outside their position's usual range.
   const claimOutliers = useMemo(
-    () => (hydrated ? findClaimAmountOutliers(claims, positions) : []),
-    [hydrated, claims, positions],
+    () =>
+      hydrated ? findClaimAmountOutliers(claims, positions, dismissals) : [],
+    [hydrated, claims, positions, dismissals],
   );
+
+  const handleConfirmOutlier = (row: OutlierRow) => {
+    saveOutlierDismissals([...getOutlierDismissals(), dismissalFor(row)]);
+    setDismissals(getOutlierDismissals());
+  };
 
   const filteredSorted = useMemo(() => {
     if (!hydrated) return [];
@@ -395,6 +414,7 @@ export default function ClaimsPage() {
         rows={claimOutliers}
         noun="claim"
         onEdit={(row) => row.claim && setModal({ kind: "edit", claim: row.claim })}
+        onConfirm={handleConfirmOutlier}
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   getClaims,
+  getOutlierDismissals,
   getPositions,
   getSettings,
   getTransfers,
@@ -31,6 +32,7 @@ import {
 } from "../lib/calculations";
 import type {
   FeeClaim,
+  OutlierDismissal,
   PortfolioSummary,
   Position,
   Transfer,
@@ -160,6 +162,67 @@ function SummaryCard({ label, value, valueClass, hint }: SummaryCardProps) {
   );
 }
 
+// Average Fee APR with a timeframe toggle (Part 2). Pure display conversion of
+// the one underlying yearly APR — yearly as-is, monthly /12, weekly /52,
+// daily /365. No change to how APR is computed.
+const APR_TIMEFRAMES = [
+  { key: "daily", label: "Daily", divisor: 365 },
+  { key: "weekly", label: "Weekly", divisor: 52 },
+  { key: "monthly", label: "Monthly", divisor: 12 },
+  { key: "yearly", label: "Yearly", divisor: 1 },
+] as const;
+
+type AprTimeframe = (typeof APR_TIMEFRAMES)[number]["key"];
+
+function AverageFeeAprCard({ yearlyApr }: { yearlyApr: number }) {
+  const [timeframe, setTimeframe] = useState<AprTimeframe>("yearly");
+  const divisor =
+    APR_TIMEFRAMES.find((t) => t.key === timeframe)?.divisor ?? 1;
+  const value = (Number.isFinite(yearlyApr) ? yearlyApr : 0) / divisor;
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+          Average Fee APR (Active)
+        </div>
+      </div>
+      <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
+        {formatPercent(value)}
+      </div>
+      <div
+        role="radiogroup"
+        aria-label="APR timeframe"
+        className="mt-3 inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
+      >
+        {APR_TIMEFRAMES.map((t, idx) => {
+          const selected = t.key === timeframe;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => setTimeframe(t.key)}
+              className={`h-7 px-2.5 text-[11px] font-medium transition-colors ${
+                idx > 0 ? "border-l border-[var(--border-strong)]" : ""
+              } ${
+                selected
+                  ? "bg-[var(--accent)] text-white"
+                  : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
+              }`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[11px] text-[var(--muted)]">
+        Deposit-weighted across open positions only.
+      </p>
+    </div>
+  );
+}
+
 interface DerivedRow {
   position: Position;
   deposited: number;
@@ -227,11 +290,13 @@ export default function DashboardPage() {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [initialCapital, setInitialCapital] = useState(0);
   const [targetMonthlyPercent, setTargetMonthlyPercent] = useState(0);
+  const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
 
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
+    setDismissals(getOutlierDismissals());
     const settings = getSettings();
     setInitialCapital(settings.initialCapital);
     setTargetMonthlyPercent(settings.targetMonthlyPercent);
@@ -258,9 +323,9 @@ export default function DashboardPage() {
   const dataHealth = useMemo(
     () =>
       hydrated
-        ? computeDataHealth(positions, claims, transfers)
+        ? computeDataHealth(positions, claims, transfers, dismissals)
         : EMPTY_DATA_HEALTH,
-    [hydrated, positions, claims, transfers],
+    [hydrated, positions, claims, transfers, dismissals],
   );
 
   // Two scopes, deliberately kept apart. The Dashboard answers "where do I
@@ -339,11 +404,7 @@ export default function DashboardPage() {
               valueClass={pnlColor(activeSummary.totalProfit)}
               hint="Price change + fees on open positions. See Total P&L for your whole business, including closed positions."
             />
-            <SummaryCard
-              label="Average Fee APR (Active)"
-              value={formatPercent(activeSummary.averageAPR)}
-              hint="Deposit-weighted across open positions only."
-            />
+            <AverageFeeAprCard yearlyApr={activeSummary.averageAPR} />
             <SummaryCard
               label="Active Positions"
               value={String(activeSummary.activePositions)}

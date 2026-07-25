@@ -8,7 +8,7 @@
 // confirmed action in the UI. A genuinely large claim or an intentional token
 // can be real, so every result is a "please double-check", never a rewrite.
 
-import type { FeeClaim, Position, Transfer } from "./types";
+import type { FeeClaim, OutlierDismissal, Position, Transfer } from "./types";
 
 // ---------------------------------------------------------------------------
 // Shared pair parsing
@@ -328,9 +328,27 @@ function findAmountOutliers(
   return out;
 }
 
+// A dismissal suppresses a flag only while the amount is UNCHANGED. Matching on
+// kind+id+amount (to the cent) means a later edit to the amount no longer
+// matches, so the record is re-flagged for a fresh review.
+function isDismissed(
+  dismissals: OutlierDismissal[],
+  kind: "claim" | "transfer",
+  id: string,
+  amount: number,
+): boolean {
+  return dismissals.some(
+    (d) =>
+      d.kind === kind &&
+      d.id === id &&
+      Math.abs(d.amount - amount) <= 0.005,
+  );
+}
+
 export function findClaimAmountOutliers(
   claims: FeeClaim[],
   positions: Position[] = [],
+  dismissals: OutlierDismissal[] = [],
 ): OutlierRow[] {
   const positionById = new Map(positions.map((p) => [p.id, p]));
   const records: AmountRecord[] = claims
@@ -343,6 +361,7 @@ export function findClaimAmountOutliers(
     }));
   const claimById = new Map(claims.map((c) => [c.id, c]));
   return findAmountOutliers(records)
+    .filter((r) => !isDismissed(dismissals, "claim", r.id, r.amount))
     .map((r) => {
       const claim = claimById.get(r.id);
       const position = positionById.get(r.positionId) ?? null;
@@ -367,6 +386,7 @@ export function findClaimAmountOutliers(
 export function findTransferAmountOutliers(
   transfers: Transfer[],
   positions: Position[] = [],
+  dismissals: OutlierDismissal[] = [],
 ): OutlierRow[] {
   const positionById = new Map(positions.map((p) => [p.id, p]));
   const records: AmountRecord[] = transfers.map((t) => ({
@@ -377,6 +397,7 @@ export function findTransferAmountOutliers(
   }));
   const transferById = new Map(transfers.map((t) => [t.id, t]));
   return findAmountOutliers(records)
+    .filter((r) => !isDismissed(dismissals, "transfer", r.id, r.amount))
     .map((r) => {
       const transfer = transferById.get(r.id);
       const position = positionById.get(r.positionId) ?? null;
@@ -397,6 +418,12 @@ export function findTransferAmountOutliers(
       };
     })
     .sort((a, b) => b.amount - a.amount);
+}
+
+// Builds the dismissal record for a flagged row — captures the exact amount so
+// a later edit re-triggers the flag.
+export function dismissalFor(row: OutlierRow): OutlierDismissal {
+  return { kind: row.kind, id: row.id, amount: row.amount };
 }
 
 // ---------------------------------------------------------------------------
@@ -425,12 +452,17 @@ export function computeDataHealth(
   positions: Position[],
   claims: FeeClaim[],
   transfers: Transfer[],
+  dismissals: OutlierDismissal[] = [],
 ): DataHealthReport {
   const positionSymbol = findSymbolPairMismatches(positions);
   const claimSymbol = findClaimSymbolMismatches(claims);
   const transferSymbol = findTransferSymbolMismatches(transfers, positions);
-  const claimOutliers = findClaimAmountOutliers(claims, positions);
-  const transferOutliers = findTransferAmountOutliers(transfers, positions);
+  const claimOutliers = findClaimAmountOutliers(claims, positions, dismissals);
+  const transferOutliers = findTransferAmountOutliers(
+    transfers,
+    positions,
+    dismissals,
+  );
   const counts: DataHealthCounts = {
     positionSymbol: positionSymbol.length,
     claimSymbol: claimSymbol.length,

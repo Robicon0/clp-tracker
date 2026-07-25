@@ -28,6 +28,7 @@ const STORAGE_KEYS = [
   "clp_business_pnl",
   "clp_withdrawals",
   "clp_position_prices",
+  "clp_outlier_dismissals",
 ] as const;
 
 const APP_VERSION = "v1.0.0";

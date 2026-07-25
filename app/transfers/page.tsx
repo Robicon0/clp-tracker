@@ -11,18 +11,22 @@ import {
 } from "react";
 import {
   getClaims,
+  getOutlierDismissals,
   getPositions,
   getSettings,
   getTransfers,
   getWithdrawals,
+  saveOutlierDismissals,
   saveTransfers,
   saveWithdrawals,
 } from "../../lib/storage";
 import { countUnclassifiedTransfers } from "../../lib/calculations";
 import {
   correctTransferSymbol,
+  dismissalFor,
   findTransferAmountOutliers,
   findTransferSymbolMismatches,
+  type OutlierRow,
   type TransferSymbolMismatchRow,
 } from "../../lib/dataHealth";
 import { OutlierBanner } from "../../components/OutlierBanner";
@@ -37,6 +41,7 @@ import { useHydrated } from "../../lib/useHydrated";
 import type {
   AppSettings,
   FeeClaim,
+  OutlierDismissal,
   Position,
   Transfer,
   Withdrawal,
@@ -49,18 +54,21 @@ const TYPE_LABELS: Record<TransferType, string> = {
   fees: "Fees",
   undeployed: "Undeployed Tokens",
   outOfRangeUpside: "Out of Range Upside",
+  expense: "Expense",
 };
 
 const SHORT_TYPE_LABELS: Record<TransferType, string> = {
   fees: "Fees",
   undeployed: "Undeployed",
   outOfRangeUpside: "OOR Upside",
+  expense: "Expense",
 };
 
 const TYPE_PILL: Record<TransferType, string> = {
   fees: "bg-blue-500/10 text-blue-300 ring-blue-500/30",
   undeployed: "bg-purple-500/10 text-purple-300 ring-purple-500/30",
   outOfRangeUpside: "bg-orange-500/10 text-orange-300 ring-orange-500/30",
+  expense: "bg-rose-500/10 text-rose-300 ring-rose-500/30",
 };
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -167,10 +175,51 @@ function buildTransfer(id: string, form: TransferFormState): Transfer {
   };
 }
 
+// Expenses are position-less: money that has left the business. They reuse the
+// Transfer record (positionId "", token "", transferType/moneyStatus "expense")
+// but have their own minimal form — Date, Amount, Notes — since picking a
+// position/token/platform makes no sense for them.
+interface ExpenseFormState {
+  date: string;
+  amount: string;
+  notes: string;
+}
+
+const EMPTY_EXPENSE_FORM: ExpenseFormState = {
+  date: "",
+  amount: "",
+  notes: "",
+};
+
+function expenseToForm(t: Transfer): ExpenseFormState {
+  return {
+    date: t.date.slice(0, 10),
+    amount: String(t.amount),
+    notes: t.notes,
+  };
+}
+
+function buildExpense(id: string, form: ExpenseFormState): Transfer {
+  return {
+    id,
+    positionId: "",
+    date: form.date,
+    token: "",
+    amount: num(form.amount),
+    platform: "",
+    destination: "",
+    transferType: "expense",
+    moneyStatus: "expense",
+    notes: form.notes.trim().toUpperCase(),
+  };
+}
+
 type ModalState =
   | { kind: "none" }
   | { kind: "add" }
   | { kind: "edit"; transfer: Transfer }
+  | { kind: "addExpense" }
+  | { kind: "editExpense"; transfer: Transfer }
   | { kind: "addWithdrawal" }
   | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
@@ -207,6 +256,124 @@ function buildWithdrawal(id: string, form: WithdrawalFormState): Withdrawal {
     method: form.method.trim().toUpperCase(),
     notes: form.notes.trim().toUpperCase(),
   };
+}
+
+// One transfers table (header + rows), rendered once per chain section (Part 5).
+// The type-filter and review-only filtering happen upstream in sortedFiltered,
+// so each chain section already shows only the rows the filter allows.
+function TransferTable({
+  rows,
+  positionPairById,
+  pendingDelete,
+  onDeleteRequest,
+  onDeleteConfirm,
+  onDeleteCancel,
+  onEdit,
+}: {
+  rows: Transfer[];
+  positionPairById: Map<string, string>;
+  pendingDelete: string | null;
+  onDeleteRequest: (id: string) => void;
+  onDeleteConfirm: (id: string) => void;
+  onDeleteCancel: () => void;
+  onEdit: (t: Transfer) => void;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+        <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
+          <tr>
+            <th className="px-4 py-3 text-left font-medium">Date</th>
+            <th className="px-4 py-3 text-left font-medium">Position</th>
+            <th className="px-4 py-3 text-left font-medium">Token</th>
+            <th className="px-4 py-3 text-right font-medium">Amount</th>
+            <th className="px-4 py-3 text-left font-medium">Platform</th>
+            <th className="px-4 py-3 text-left font-medium">Destination</th>
+            <th className="px-4 py-3 text-left font-medium">Transfer Type</th>
+            <th className="px-4 py-3 text-left font-medium">Money Status</th>
+            <th className="px-4 py-3 text-left font-medium">Notes</th>
+            <th className="px-4 py-3 text-right font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--border)]">
+          {rows.map((t) => (
+            <tr
+              key={t.id}
+              className="transition-colors hover:bg-[var(--surface-2)]/60"
+            >
+              <td className="px-4 py-3 text-[var(--muted)] tabular-nums">
+                {formatDateDDMMYYYY(t.date)}
+              </td>
+              <td className="px-4 py-3 font-medium text-[var(--foreground)]">
+                {t.transferType === "expense"
+                  ? "—"
+                  : positionPairById.get(t.positionId) ?? "—"}
+              </td>
+              <td className="px-4 py-3 text-[var(--muted)]">{t.token || "—"}</td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {formatToken(t.amount)}
+              </td>
+              <td className="px-4 py-3 text-[var(--muted)]">
+                {t.platform || "—"}
+              </td>
+              <td className="px-4 py-3 font-medium text-[var(--foreground)]">
+                {t.destination || "—"}
+              </td>
+              <td className="px-4 py-3">
+                <TypePill type={t.transferType} />
+              </td>
+              <td className="px-4 py-3">
+                <MoneyStatusPill status={t.moneyStatus} />
+              </td>
+              <td className="px-4 py-3 text-[var(--muted)] max-w-xs truncate">
+                {t.notes || "—"}
+              </td>
+              <td className="px-4 py-3 text-right">
+                {pendingDelete === t.id ? (
+                  <div className="inline-flex items-center gap-2">
+                    <span className="text-xs text-[var(--muted)]">
+                      Delete this transfer?
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteConfirm(t.id)}
+                      className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                    >
+                      Yes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onDeleteCancel}
+                      className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="inline-flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onEdit(t)}
+                      className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteRequest(t.id)}
+                      className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // A transfer's token must belong to its linked position's pair (same substring
@@ -316,12 +483,15 @@ export default function TransfersPage() {
     string | null
   >(null);
 
+  const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
+
   const refresh = () => {
     setSettings(getSettings());
     setTransfers(getTransfers());
     setWithdrawals(getWithdrawals());
     setPositions(getPositions());
     setClaims(getClaims());
+    setDismissals(getOutlierDismissals());
   };
 
   const hydrated = useHydrated(refresh);
@@ -347,8 +517,11 @@ export default function TransfersPage() {
     [hydrated, transfers, positions],
   );
   const transferOutliers = useMemo(
-    () => (hydrated ? findTransferAmountOutliers(transfers, positions) : []),
-    [hydrated, transfers, positions],
+    () =>
+      hydrated
+        ? findTransferAmountOutliers(transfers, positions, dismissals)
+        : [],
+    [hydrated, transfers, positions, dismissals],
   );
 
   const sortedFiltered = useMemo(() => {
@@ -372,6 +545,7 @@ export default function TransfersPage() {
       fees: 0,
       undeployed: 0,
       outOfRangeUpside: 0,
+      expense: 0,
     };
     for (const t of transfers) {
       amount += t.amount;
@@ -410,6 +584,50 @@ export default function TransfersPage() {
     }
     return [...map.values()].sort((a, b) => b.amount - a.amount);
   }, [transfers]);
+
+  // Chain of a transfer = its linked position's chain (transfers store no chain
+  // of their own). Expenses and any unlinked rows fall under "Unlinked". Sorted
+  // by total moved so the busiest chains lead — mirrors Business P&L's blocks.
+  const positionChainById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of positions) map.set(p.id, p.chain.trim().toUpperCase() || "OTHER");
+    return map;
+  }, [positions]);
+
+  const byChain = useMemo(() => {
+    const map = new Map<string, Transfer[]>();
+    for (const t of sortedFiltered) {
+      const chain = positionChainById.get(t.positionId) ?? "UNLINKED";
+      const list = map.get(chain);
+      if (list) list.push(t);
+      else map.set(chain, [t]);
+    }
+    const amountOf = (list: Transfer[]) =>
+      list.reduce((sum, t) => sum + t.amount, 0);
+    return [...map.entries()]
+      .map(([chain, list]) => ({ chain, list, amount: amountOf(list) }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [sortedFiltered, positionChainById]);
+
+  const handleConfirmOutlier = (row: OutlierRow) => {
+    saveOutlierDismissals([...getOutlierDismissals(), dismissalFor(row)]);
+    setDismissals(getOutlierDismissals());
+  };
+
+  const handleAddExpense = (form: ExpenseFormState) => {
+    saveTransfers([...getTransfers(), buildExpense(newId(), form)]);
+    refresh();
+    setModal({ kind: "none" });
+  };
+
+  const handleEditExpense = (target: Transfer, form: ExpenseFormState) => {
+    const updated = buildExpense(target.id, form);
+    saveTransfers(
+      getTransfers().map((t) => (t.id === target.id ? updated : t)),
+    );
+    refresh();
+    setModal({ kind: "none" });
+  };
 
   const handleAdd = (form: TransferFormState) => {
     saveTransfers([...getTransfers(), buildTransfer(newId(), form)]);
@@ -533,11 +751,23 @@ export default function TransfersPage() {
             noun="transfer"
             onEdit={(row) =>
               row.transfer &&
-              setModal({ kind: "edit", transfer: row.transfer })
+              setModal(
+                row.transfer.transferType === "expense"
+                  ? { kind: "editExpense", transfer: row.transfer }
+                  : { kind: "edit", transfer: row.transfer },
+              )
             }
+            onConfirm={handleConfirmOutlier}
           />
 
           <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setModal({ kind: "addExpense" })}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-rose-500/40 bg-rose-500/10 px-4 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/20"
+            >
+              Log an Expense
+            </button>
             <button
               type="button"
               onClick={() => setModal({ kind: "addWithdrawal" })}
@@ -646,7 +876,7 @@ export default function TransfersPage() {
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
             <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm font-semibold tracking-tight">
-                All Transfers
+                Transfers by Chain
                 {reviewOnly && (
                   <span className="ml-2 text-[11px] font-normal text-amber-300">
                     showing unreviewed only
@@ -680,115 +910,36 @@ export default function TransfersPage() {
                 </div>
               )
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-[var(--border)] text-sm">
-                  <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
-                    <tr>
-                      <th className="px-4 py-3 text-left font-medium">Date</th>
-                      <th className="px-4 py-3 text-left font-medium">
-                        Position
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium">Token</th>
-                      <th className="px-4 py-3 text-right font-medium">
-                        Amount
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium">
-                        Platform
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium">
-                        Destination
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium">
-                        Transfer Type
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium">
-                        Money Status
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium">Notes</th>
-                      <th className="px-4 py-3 text-right font-medium">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border)]">
-                    {sortedFiltered.map((t) => (
-                      <tr
-                        key={t.id}
-                        className="transition-colors hover:bg-[var(--surface-2)]/60"
-                      >
-                        <td className="px-4 py-3 text-[var(--muted)] tabular-nums">
-                          {formatDateDDMMYYYY(t.date)}
-                        </td>
-                        <td className="px-4 py-3 font-medium text-[var(--foreground)]">
-                          {positionPairById.get(t.positionId) ?? "—"}
-                        </td>
-                        <td className="px-4 py-3 text-[var(--muted)]">
-                          {t.token}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {formatToken(t.amount)}
-                        </td>
-                        <td className="px-4 py-3 text-[var(--muted)]">
-                          {t.platform}
-                        </td>
-                        <td className="px-4 py-3 font-medium text-[var(--foreground)]">
-                          {t.destination || "—"}
-                        </td>
-                        <td className="px-4 py-3">
-                          <TypePill type={t.transferType} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <MoneyStatusPill status={t.moneyStatus} />
-                        </td>
-                        <td className="px-4 py-3 text-[var(--muted)] max-w-xs truncate">
-                          {t.notes || "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {pendingDelete === t.id ? (
-                            <div className="inline-flex items-center gap-2">
-                              <span className="text-xs text-[var(--muted)]">
-                                Delete this transfer?
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(t.id)}
-                                className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
-                              >
-                                Yes
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPendingDelete(null)}
-                                className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="inline-flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setModal({ kind: "edit", transfer: t })
-                                }
-                                className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPendingDelete(t.id)}
-                                className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="divide-y divide-[var(--border)]">
+                {byChain.map(({ chain, list, amount }) => (
+                  <div key={chain}>
+                    <div className="flex items-center justify-between bg-[var(--surface-2)]/40 px-5 py-2.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                        {chain}
+                        <span className="ml-2 font-normal text-[var(--muted)]/70">
+                          {list.length}{" "}
+                          {list.length === 1 ? "transfer" : "transfers"}
+                        </span>
+                      </span>
+                      <span className="text-[12px] font-semibold tabular-nums text-[var(--foreground)]">
+                        {formatUsd(amount)}
+                      </span>
+                    </div>
+                    <TransferTable
+                      rows={list}
+                      positionPairById={positionPairById}
+                      pendingDelete={pendingDelete}
+                      onDeleteRequest={setPendingDelete}
+                      onDeleteConfirm={handleDelete}
+                      onDeleteCancel={() => setPendingDelete(null)}
+                      onEdit={(t) =>
+                        t.transferType === "expense"
+                          ? setModal({ kind: "editExpense", transfer: t })
+                          : setModal({ kind: "edit", transfer: t })
+                      }
+                    />
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -918,6 +1069,24 @@ export default function TransfersPage() {
               onSubmit={(form) => handleEdit(modal.transfer, form)}
             />
           )}
+          {modal.kind === "addExpense" && (
+            <ExpenseFormModal
+              title="Log an Expense"
+              submitLabel="Log Expense"
+              initial={{ ...EMPTY_EXPENSE_FORM, date: todayDateInput() }}
+              onCancel={() => setModal({ kind: "none" })}
+              onSubmit={handleAddExpense}
+            />
+          )}
+          {modal.kind === "editExpense" && (
+            <ExpenseFormModal
+              title="Edit Expense"
+              submitLabel="Save Changes"
+              initial={expenseToForm(modal.transfer)}
+              onCancel={() => setModal({ kind: "none" })}
+              onSubmit={(form) => handleEditExpense(modal.transfer, form)}
+            />
+          )}
           {modal.kind === "addWithdrawal" && (
             <WithdrawalFormModal
               title="Record Withdrawal"
@@ -1037,7 +1206,7 @@ function BreakdownStat({ breakdown }: BreakdownStatProps) {
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
         Breakdown by Type
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-3">
+      <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {(Object.keys(TYPE_LABELS) as TransferType[]).map((t) => (
           <div key={t} className="flex flex-col items-center">
             <div
@@ -1080,6 +1249,7 @@ function TypeFilterToggle({ value, onChange }: TypeFilterToggleProps) {
     { value: "fees", label: "Fees" },
     { value: "undeployed", label: "Undeployed Tokens" },
     { value: "outOfRangeUpside", label: "Out of Range Upside" },
+    { value: "expense", label: "Expenses" },
   ];
   return (
     <div
@@ -1445,6 +1615,89 @@ function WithdrawalFormModal({
             <Field label="Notes" htmlFor="w_notes">
               <textarea
                 id="w_notes"
+                rows={2}
+                className={inputClass}
+                value={form.notes}
+                onChange={(e) => set("notes", e.target.value.toUpperCase())}
+              />
+            </Field>
+          </div>
+        </Section>
+        <FormActions onCancel={onCancel} submitLabel={submitLabel} />
+      </form>
+    </ModalShell>
+  );
+}
+
+// Minimal modal for position-less expenses — Date, Amount, Notes only.
+// moneyStatus/transferType are set to "expense" by buildExpense, not the user.
+function ExpenseFormModal({
+  title,
+  submitLabel,
+  initial,
+  onCancel,
+  onSubmit,
+}: {
+  title: string;
+  submitLabel: string;
+  initial: ExpenseFormState;
+  onCancel: () => void;
+  onSubmit: (form: ExpenseFormState) => void;
+}) {
+  const [form, setForm] = useState<ExpenseFormState>(initial);
+
+  const set = <K extends keyof ExpenseFormState>(
+    key: K,
+    value: ExpenseFormState[K],
+  ) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    onSubmit(form);
+  };
+
+  return (
+    <ModalShell title={title} onCancel={onCancel}>
+      <form onSubmit={submit} className="divide-y divide-[var(--border)]">
+        <Section title="Expense Details">
+          <p className="mb-4 text-[11px] text-[var(--muted)]">
+            Money that has left the business (rent, subscriptions, etc.). No
+            position or chain needed — it draws from one overall pool and
+            subtracts from Overall P&amp;L.
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Date" htmlFor="e_date">
+              <input
+                id="e_date"
+                type="date"
+                required
+                className={inputClass}
+                style={{ colorScheme: "dark" }}
+                value={form.date}
+                onChange={(e) => set("date", e.target.value)}
+              />
+            </Field>
+            <Field label="Amount (USD)" htmlFor="e_amount">
+              <input
+                id="e_amount"
+                type="number"
+                step="any"
+                required
+                className={inputClass}
+                placeholder="0.00"
+                value={form.amount}
+                onChange={(e) => set("amount", e.target.value)}
+              />
+            </Field>
+          </div>
+          <div className="mt-4">
+            <Field
+              label="Notes (reason)"
+              htmlFor="e_notes"
+              hint="What the expense was for."
+            >
+              <textarea
+                id="e_notes"
                 rows={2}
                 className={inputClass}
                 value={form.notes}

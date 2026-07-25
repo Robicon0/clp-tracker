@@ -2,6 +2,7 @@ import type {
   AppSettings,
   FeeClaim,
   LPRange,
+  OutlierDismissal,
   PoolPnLEntry,
   Position,
   Transfer,
@@ -19,6 +20,7 @@ const KEYS = {
   priceCache: "clp_price_cache",
   withdrawals: "clp_withdrawals",
   positionPrices: "clp_position_prices",
+  outlierDismissals: "clp_outlier_dismissals",
 } as const;
 
 // Single source of truth for settings defaults. The Settings page imports
@@ -82,6 +84,14 @@ export function getTransfers(): Transfer[] {
 
 export function saveTransfers(transfers: Transfer[]): void {
   writeValue(KEYS.transfers, transfers);
+}
+
+export function getOutlierDismissals(): OutlierDismissal[] {
+  return readArray<OutlierDismissal>(KEYS.outlierDismissals);
+}
+
+export function saveOutlierDismissals(dismissals: OutlierDismissal[]): void {
+  writeValue(KEYS.outlierDismissals, dismissals);
 }
 
 export function getWithdrawals(): Withdrawal[] {

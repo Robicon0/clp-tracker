@@ -66,7 +66,11 @@ export interface Transfer {
   // Where the money was moved TO (the sheet's TRANSFER column, e.g.
   // "RAKA TEZ", "AAVE BASE"). Optional — legacy records default to "".
   destination: string;
-  transferType: "fees" | "undeployed" | "outOfRangeUpside";
+  // "expense" is a position-less category: money that has genuinely left the
+  // business (rent, fees, etc.). It carries positionId "" and moneyStatus
+  // "expense", and is created only via the dedicated Log Expense flow — the
+  // position-linked automation (fees/undeployed/outOfRangeUpside) never uses it.
+  transferType: "fees" | "undeployed" | "outOfRangeUpside" | "expense";
   // Whether the money is still working in the LP business ("redeployed", e.g.
   // moved to AAVE) or has genuinely left it ("expense", e.g. rent). Only
   // expenses reduce Overall P&L.
@@ -97,6 +101,16 @@ export interface Withdrawal {
   amount: number;
   method: string;
   notes: string;
+}
+
+// A user's "I checked this, it's correct" dismissal of an outlier flag. Keyed
+// by record kind+id AND the exact amount at confirmation time, so a later edit
+// that changes the amount no longer matches and the record is re-flagged for
+// review (Part 1 re-trigger rule).
+export interface OutlierDismissal {
+  kind: "claim" | "transfer";
+  id: string;
+  amount: number;
 }
 
 export interface LPRange {

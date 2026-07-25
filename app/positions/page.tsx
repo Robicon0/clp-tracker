@@ -14,10 +14,13 @@ import {
   getPositions,
   getPositionPrices,
   getRanges,
+  getTransfers,
+  saveClaims,
   savePoolPnL,
   savePositions,
   savePositionPrices,
   saveRanges,
+  saveTransfers,
 } from "../../lib/storage";
 import { createUpsideTransfer } from "../../lib/transferAutomation";
 import {
@@ -63,6 +66,7 @@ import type {
   LPRange,
   PoolPnLEntry,
   Position,
+  Transfer,
 } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -576,13 +580,40 @@ function derive(positions: Position[], allClaims: FeeClaim[]): DerivedRow[] {
   });
 }
 
+// Every record linked to a position — used both to preview the cascade and to
+// execute it, so the count shown and the rows removed can never disagree.
+// Transfers link three ways: directly by positionId, by sourceCloseId (upside
+// transfers), or by sourceClaimId pointing at one of this position's claims
+// (auto fee transfers). The union covers all of them, so nothing is orphaned.
+function linkedRecords(
+  positionId: string,
+  claims: FeeClaim[],
+  transfers: Transfer[],
+): { claimIds: Set<string>; transferIds: Set<string> } {
+  const claimIds = new Set(
+    claims.filter((c) => c.positionId === positionId).map((c) => c.id),
+  );
+  const transferIds = new Set(
+    transfers
+      .filter(
+        (t) =>
+          t.positionId === positionId ||
+          t.sourceCloseId === positionId ||
+          (t.sourceClaimId !== undefined && claimIds.has(t.sourceClaimId)),
+      )
+      .map((t) => t.id),
+  );
+  return { claimIds, transferIds };
+}
+
 type ModalState =
   | { kind: "none" }
   | { kind: "add" }
   | { kind: "edit"; position: Position }
   | { kind: "update"; position: Position }
   | { kind: "close"; position: Position }
-  | { kind: "claim"; position: Position };
+  | { kind: "claim"; position: Position }
+  | { kind: "delete"; position: Position };
 
 interface PositionFormState {
   pair: string;
@@ -848,6 +879,7 @@ export default function PositionsPage() {
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [showClosed, setShowClosed] = useState(false);
+  const [view, setView] = useState<"cards" | "list">("cards");
   const [fetchedPrices, setFetchedPrices] = useState<Record<string, number>>(
     {},
   );
@@ -1108,6 +1140,29 @@ export default function PositionsPage() {
     setModal({ kind: "none" });
   };
 
+  // Permanent cascade delete: the position plus every record that references
+  // it. Reads fresh from storage so the delete works on the true current data,
+  // not a possibly-stale render snapshot.
+  const handleDeletePosition = (target: Position) => {
+    const allClaims = getClaims();
+    const allTransfers = getTransfers();
+    const { claimIds, transferIds } = linkedRecords(
+      target.id,
+      allClaims,
+      allTransfers,
+    );
+    savePositions(getPositions().filter((p) => p.id !== target.id));
+    saveClaims(allClaims.filter((c) => !claimIds.has(c.id)));
+    saveTransfers(allTransfers.filter((t) => !transferIds.has(t.id)));
+    saveRanges(getRanges().filter((r) => r.positionId !== target.id));
+    savePoolPnL(getPoolPnL().filter((p) => p.positionId !== target.id));
+    const prices = { ...getPositionPrices() };
+    delete prices[target.id];
+    savePositionPrices(prices);
+    refresh();
+    setModal({ kind: "none" });
+  };
+
   return (
     <section className="space-y-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1157,15 +1212,20 @@ export default function PositionsPage() {
         onUpdate={(p) => setModal({ kind: "update", position: p })}
         onClose={(p) => setModal({ kind: "close", position: p })}
         onClaim={(p) => setModal({ kind: "claim", position: p })}
+        onDelete={(p) => setModal({ kind: "delete", position: p })}
         emptyText="No active positions. Click Add Position to get started."
+        view={view}
+        onViewChange={setView}
       />
 
       <ClosedSection
         rows={closed}
         open={showClosed}
         onToggle={() => setShowClosed((v) => !v)}
+        view={view}
         onEdit={(p) => setModal({ kind: "edit", position: p })}
         onClaim={(p) => setModal({ kind: "claim", position: p })}
+        onDelete={(p) => setModal({ kind: "delete", position: p })}
       />
 
       {modal.kind === "add" && (
@@ -1213,6 +1273,21 @@ export default function PositionsPage() {
           position={modal.position}
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={(next) => handleClose(modal.position, next)}
+        />
+      )}
+      {modal.kind === "delete" && (
+        <DeletePositionModal
+          position={modal.position}
+          counts={(() => {
+            const { claimIds, transferIds } = linkedRecords(
+              modal.position.id,
+              claims,
+              getTransfers(),
+            );
+            return { claims: claimIds.size, transfers: transferIds.size };
+          })()}
+          onCancel={() => setModal({ kind: "none" })}
+          onConfirm={() => handleDeletePosition(modal.position)}
         />
       )}
     </section>
@@ -1645,6 +1720,8 @@ function RangeCount({
   );
 }
 
+type PositionView = "cards" | "list";
+
 interface PositionsTableProps {
   title: string;
   rows: DerivedRow[];
@@ -1655,7 +1732,10 @@ interface PositionsTableProps {
   onUpdate?: (p: Position) => void;
   onClose?: (p: Position) => void;
   onClaim?: (p: Position) => void;
+  onDelete?: (p: Position) => void;
   emptyText: string;
+  view?: PositionView;
+  onViewChange?: (v: PositionView) => void;
 }
 
 // One metric in the card's grid. Kept tiny so the grid stays declarative.
@@ -1691,6 +1771,7 @@ function PositionCard({
   onUpdate,
   onClose,
   onClaim,
+  onDelete,
 }: {
   row: DerivedRow;
   variant: "active" | "closed";
@@ -1700,6 +1781,7 @@ function PositionCard({
   onUpdate?: (p: Position) => void;
   onClose?: (p: Position) => void;
   onClaim?: (p: Position) => void;
+  onDelete?: (p: Position) => void;
 }) {
   const { position, deposited, claimed, fees, days, apr, priceDiff, profit } = row;
   const [showDetails, setShowDetails] = useState(false);
@@ -1843,6 +1925,15 @@ function PositionCard({
             Close
           </button>
         )}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(position)}
+            className="ml-auto rounded-md border border-rose-500/40 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/10"
+          >
+            Delete
+          </button>
+        )}
       </div>
     </article>
   );
@@ -1858,22 +1949,44 @@ function PositionsTable({
   onUpdate,
   onClose,
   onClaim,
+  onDelete,
   emptyText,
+  view = "cards",
+  onViewChange,
 }: PositionsTableProps) {
   return (
     <div>
       {title && (
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
-          <span className="text-xs text-[var(--muted)]">
-            {rows.length} {rows.length === 1 ? "position" : "positions"}
-          </span>
+          <div className="flex items-center gap-3">
+            {onViewChange && <ViewToggle value={view} onChange={onViewChange} />}
+            <span className="text-xs text-[var(--muted)]">
+              {rows.length} {rows.length === 1 ? "position" : "positions"}
+            </span>
+          </div>
         </div>
       )}
 
       {rows.length === 0 ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-5 py-10 text-center text-sm text-[var(--muted)]">
           {emptyText}
+        </div>
+      ) : view === "list" ? (
+        <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] divide-y divide-[var(--border)]">
+          {rows.map((row) => (
+            <PositionListRow
+              key={row.position.id}
+              row={row}
+              variant={variant}
+              health={healthById?.get(row.position.id)}
+              onEdit={onEdit}
+              onUpdate={onUpdate}
+              onClose={onClose}
+              onClaim={onClaim}
+              onDelete={onDelete}
+            />
+          ))}
         </div>
       ) : (
         // items-start so expanding one card's details does not stretch its
@@ -1892,8 +2005,175 @@ function PositionsTable({
               onUpdate={onUpdate}
               onClose={onClose}
               onClaim={onClaim}
+              onDelete={onDelete}
             />
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: PositionView;
+  onChange: (v: PositionView) => void;
+}) {
+  const options: Array<{ value: PositionView; label: string }> = [
+    { value: "cards", label: "Cards" },
+    { value: "list", label: "List" },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Positions view"
+      className="inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
+    >
+      {options.map((opt, idx) => {
+        const selected = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(opt.value)}
+            className={`h-7 px-2.5 text-[11px] font-medium transition-colors ${
+              idx > 0 ? "border-l border-[var(--border-strong)]" : ""
+            } ${
+              selected
+                ? "bg-[var(--accent)] text-white"
+                : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Compact, inline-expandable row for the List view (Part 4). Collapsed shows
+// Pair, Status, Profit — the three scan-at-a-glance fields. Expanded reveals
+// the same figures as the card's Details plus all action buttons. No table, so
+// it reflows to any width without horizontal scroll.
+function PositionListRow({
+  row,
+  variant,
+  health,
+  onEdit,
+  onUpdate,
+  onClose,
+  onClaim,
+  onDelete,
+}: {
+  row: DerivedRow;
+  variant: "active" | "closed";
+  health?: RangeHealth;
+  onEdit?: (p: Position) => void;
+  onUpdate?: (p: Position) => void;
+  onClose?: (p: Position) => void;
+  onClaim?: (p: Position) => void;
+  onDelete?: (p: Position) => void;
+}) {
+  const { position, deposited, fees, days, apr, profit } = row;
+  const [open, setOpen] = useState(false);
+  const isActive = variant === "active";
+
+  return (
+    <div className={isActive ? "" : "opacity-75"}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)]/60"
+      >
+        <span className="text-[10px] text-[var(--muted)]">{open ? "▴" : "▾"}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--foreground)]">
+          {position.pair}
+        </span>
+        {isActive ? (
+          health && health.status !== "unknown" ? (
+            <RangeBadge status={health.status} />
+          ) : (
+            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              Price needed
+            </span>
+          )
+        ) : (
+          <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+            Closed
+          </span>
+        )}
+        <span
+          className={`w-24 shrink-0 text-right text-sm tabular-nums ${pnlColor(profit)}`}
+        >
+          {formatUsd(profit)}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-[var(--border)] bg-[var(--surface-2)]/20 px-4 py-3">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            <Metric label="Deposited" value={formatUsd(deposited)} />
+            <Metric label="Current" value={formatUsd(position.currentBalance)} />
+            <Metric label="Total Fees" value={formatUsd(fees)} />
+            <Metric label="Fee APR" value={formatPercent(apr)} />
+            <Metric label="Days Active" value={days.toFixed(1)} />
+            {!isActive && (
+              <Metric
+                label="Scalp"
+                value={formatUsd(position.scalp ?? 0)}
+                tone={`font-medium ${pnlColor(position.scalp ?? 0)}`}
+              />
+            )}
+          </dl>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => onEdit?.(position)}
+              className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+            >
+              Edit
+            </button>
+            {isActive && (
+              <button
+                type="button"
+                onClick={() => onUpdate?.(position)}
+                className="rounded-md border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
+              >
+                Update
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onClaim?.(position)}
+              className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+            >
+              Claim
+            </button>
+            {isActive && (
+              <button
+                type="button"
+                onClick={() => onClose?.(position)}
+                className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+              >
+                Close
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete(position)}
+                className="ml-auto rounded-md border border-rose-500/40 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/10"
+              >
+                Delete
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1904,16 +2184,20 @@ interface ClosedSectionProps {
   rows: DerivedRow[];
   open: boolean;
   onToggle: () => void;
+  view?: PositionView;
   onEdit?: (p: Position) => void;
   onClaim?: (p: Position) => void;
+  onDelete?: (p: Position) => void;
 }
 
 function ClosedSection({
   rows,
   open,
   onToggle,
+  view = "cards",
   onEdit,
   onClaim,
+  onDelete,
 }: ClosedSectionProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
@@ -1937,16 +2221,100 @@ function ClosedSection({
             No closed positions yet.
           </div>
         ) : (
-          <PositionsTable
-            title=""
-            rows={rows}
-            variant="closed"
-            onEdit={onEdit}
-            onClaim={onClaim}
-            emptyText=""
-          />
+          <div className="p-4">
+            <PositionsTable
+              title=""
+              rows={rows}
+              variant="closed"
+              view={view}
+              onEdit={onEdit}
+              onClaim={onClaim}
+              onDelete={onDelete}
+              emptyText=""
+            />
+          </div>
         ))}
     </div>
+  );
+}
+
+// Permanent cascade-delete confirmation (Part 3). Shows the exact record counts
+// that will be destroyed and requires the user to type the pair to confirm —
+// there is no undo, so a single mis-click cannot wipe out financial history.
+function DeletePositionModal({
+  position,
+  counts,
+  onCancel,
+  onConfirm,
+}: {
+  position: Position;
+  counts: { claims: number; transfers: number };
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const confirmed =
+    typed.trim().toUpperCase() === position.pair.trim().toUpperCase();
+  return (
+    <ModalShell title={`Delete ${position.pair}?`} onCancel={onCancel}>
+      <div className="space-y-4 px-5 py-5">
+        <div className="rounded-md border border-rose-500/40 bg-rose-500/[0.07] px-4 py-3 text-sm text-[var(--foreground)]">
+          <p className="font-medium text-rose-300">
+            This will permanently delete:
+          </p>
+          <ul className="mt-2 space-y-1 text-[13px] tabular-nums">
+            <li>1 position ({position.pair})</li>
+            <li>
+              {counts.claims} fee {counts.claims === 1 ? "claim" : "claims"}
+            </li>
+            <li>
+              {counts.transfers}{" "}
+              {counts.transfers === 1 ? "transfer" : "transfers"}
+            </li>
+          </ul>
+          <p className="mt-3 text-[12px] font-medium text-rose-300">
+            This cannot be undone.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <label
+            htmlFor="delete-confirm"
+            className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]"
+          >
+            Type{" "}
+            <span className="font-semibold text-[var(--foreground)]">
+              {position.pair}
+            </span>{" "}
+            to confirm
+          </label>
+          <input
+            id="delete-confirm"
+            className={inputClass}
+            autoComplete="off"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={position.pair}
+          />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={!confirmed}
+          onClick={onConfirm}
+          className="inline-flex h-9 items-center justify-center rounded-md bg-rose-500 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Delete permanently
+        </button>
+      </div>
+    </ModalShell>
   );
 }
 
