@@ -7,9 +7,14 @@ import {
   calcDaysActive,
   calcFeeAPR,
   calcPortfolioSummary,
+  correctClaimSymbols,
+  findClaimSymbolMismatches,
   getEffectiveDeposited,
   getEffectiveTotalFees,
   isUnvaluedConvertedClaim,
+  summarizeClaimContamination,
+  type ClaimContaminationRow,
+  type ClaimSymbolMismatchRow,
 } from "../../lib/calculations";
 import {
   ClaimFormModal,
@@ -59,6 +64,136 @@ function formatDateDDMMYYYY(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+// Flags claims whose stored token symbol contradicts their own pair, shows the
+// per-token "X wrong is really Y" subtotal that inflates Business P&L, and
+// offers a confirmed one-click bulk correction plus per-row Edit. Reports and
+// corrects only on explicit user action — never silently.
+function ClaimSymbolMismatchBanner({
+  rows,
+  contamination,
+  onEdit,
+  onFixAll,
+}: {
+  rows: ClaimSymbolMismatchRow[];
+  contamination: ClaimContaminationRow[];
+  onEdit: (claim: FeeClaim) => void;
+  onFixAll: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4">
+      <h2 className="text-sm font-semibold text-red-300">
+        {rows.length} {rows.length === 1 ? "claim has" : "claims have"} a token
+        symbol that doesn&apos;t match its pair
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        These claims stored the wrong reward-token symbol (e.g. SOL logged
+        against a SUI/USDC pair), which inflates that token&apos;s total on
+        Business P&amp;L. Fixing them re-sums those totals correctly. Nothing
+        changes until you confirm.
+      </p>
+
+      {contamination.length > 0 && (
+        <div className="mt-3 rounded border border-red-500/30 bg-[var(--surface-2)]/40 px-3 py-2">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+            Mislabeled amounts
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {contamination.map((c) => (
+              <li
+                key={`${c.wrongSymbol}->${c.correctSymbol}`}
+                className="text-[12px] tabular-nums text-[var(--foreground)]"
+              >
+                <span className="font-medium text-red-300">
+                  {formatToken(c.amount)} {c.wrongSymbol}
+                </span>{" "}
+                is actually{" "}
+                <span className="font-medium text-emerald-300">
+                  {c.correctSymbol}
+                </span>{" "}
+                <span className="text-[var(--muted)]">
+                  ({c.claimCount} {c.claimCount === 1 ? "claim" : "claims"})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.claim.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {formatDateDDMMYYYY(r.claim.date)} · {r.claim.pair}
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              {r.baseMismatch && (
+                <>
+                  <span className="font-medium text-red-300">{r.baseSymbol}</span>
+                  {r.pairBase && <> → {r.pairBase}</>}
+                </>
+              )}
+              {r.baseMismatch && r.quoteMismatch && " · "}
+              {r.quoteMismatch && (
+                <>
+                  <span className="font-medium text-red-300">{r.quoteSymbol}</span>
+                  {r.pairQuote && <> → {r.pairQuote}</>}
+                </>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => onEdit(r.claim)}
+              className="rounded-md border border-red-500/50 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/10"
+            >
+              Edit
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {confirming ? (
+          <>
+            <span className="text-[12px] text-red-300">
+              Rewrite symbols on {rows.length}{" "}
+              {rows.length === 1 ? "claim" : "claims"}?
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                onFixAll();
+                setConfirming(false);
+              }}
+              className="rounded-md bg-red-500/90 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-red-500"
+            >
+              Yes, fix all
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-[12px] font-medium text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)]"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="rounded-md border border-red-500/50 px-3 py-1.5 text-[12px] font-medium text-red-300 transition-colors hover:bg-red-500/10"
+          >
+            Fix all {rows.length} {rows.length === 1 ? "claim" : "claims"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 type ModalState =
@@ -111,6 +246,18 @@ export default function ClaimsPage() {
   const needsValueCount = useMemo(
     () => claims.filter(isUnvaluedConvertedClaim).length,
     [claims],
+  );
+
+  // Claims whose stored token symbol contradicts their own pair (the SUI→SOL
+  // contamination). These inflate the wrong token's Business P&L total until
+  // corrected, and are invisible to the position-level detector.
+  const claimMismatches = useMemo(
+    () => (hydrated ? findClaimSymbolMismatches(claims) : []),
+    [hydrated, claims],
+  );
+  const contamination = useMemo(
+    () => summarizeClaimContamination(claimMismatches),
+    [claimMismatches],
   );
 
   const filteredSorted = useMemo(() => {
@@ -195,6 +342,17 @@ export default function ClaimsPage() {
     setPendingDelete(null);
   };
 
+  // One-click bulk correction: rewrite each flagged claim's mismatched symbol
+  // to its pair-derived value, through the shared persist path so transfers
+  // stay reconciled (Invariant #10). User-triggered and confirmed — never
+  // silent. Fixing the symbols re-sums the Business P&L totals correctly.
+  const handleFixAllSymbols = (rows: ClaimSymbolMismatchRow[]) => {
+    for (const row of rows) {
+      persistUpdatedClaim(correctClaimSymbols(row));
+    }
+    refresh();
+  };
+
   return (
     <section className="space-y-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -212,6 +370,15 @@ export default function ClaimsPage() {
           Add Claim
         </button>
       </header>
+
+      {claimMismatches.length > 0 && (
+        <ClaimSymbolMismatchBanner
+          rows={claimMismatches}
+          contamination={contamination}
+          onEdit={(claim) => setModal({ kind: "edit", claim })}
+          onFixAll={() => handleFixAllSymbols(claimMismatches)}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryStat label="Total Claims" value={String(totals.total)} />

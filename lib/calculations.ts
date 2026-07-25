@@ -1145,6 +1145,95 @@ export function findSymbolPairMismatches(
   });
 }
 
+// Claim-level counterpart of findSymbolPairMismatches. Fee claims freeze their
+// OWN token1Symbol/token2Symbol at creation (a static snapshot copied from the
+// position), so a position mislabeled "SOL" mints claims that ALSO store
+// "SOL" — and calcBusinessPnL sums the claim's stored symbol, inflating the
+// wrong token's total. Fixing the position does NOT fix these claims. The
+// position-level detector cannot see them, but each claim carries its own pair
+// string, so the same substring test catches it: token symbol must appear in
+// the claim's pair. Reports; the caller decides whether to correct.
+export interface ClaimSymbolMismatchRow {
+  claim: FeeClaim;
+  baseSymbol: string;
+  quoteSymbol: string;
+  pairBase: string;
+  pairQuote: string;
+  baseMismatch: boolean;
+  quoteMismatch: boolean;
+}
+
+export function findClaimSymbolMismatches(
+  claims: FeeClaim[],
+): ClaimSymbolMismatchRow[] {
+  const rows: ClaimSymbolMismatchRow[] = [];
+  for (const claim of claims) {
+    const pair = pairCore(claim.pair);
+    if (pair === "") continue;
+    const baseSymbol = claim.token1Symbol.trim().toUpperCase();
+    const quoteSymbol = claim.token2Symbol.trim().toUpperCase();
+    const baseMismatch = baseSymbol !== "" && !pair.includes(baseSymbol);
+    const quoteMismatch = quoteSymbol !== "" && !pair.includes(quoteSymbol);
+    if (!baseMismatch && !quoteMismatch) continue;
+    const [pairBase = "", pairQuote = ""] = pair
+      .split("/")
+      .map((s) => s.trim().toUpperCase());
+    rows.push({
+      claim,
+      baseSymbol,
+      quoteSymbol,
+      pairBase,
+      pairQuote,
+      baseMismatch,
+      quoteMismatch,
+    });
+  }
+  return rows;
+}
+
+// Real-vs-contamination subtotals: how much token quantity is filed under the
+// WRONG symbol and which symbol it should be, aggregated across all flagged
+// claims. This is the "X SOL is actually SUI" figure the Business P&L total is
+// inflated by. Only counts a side when its pair token is known (non-empty).
+export interface ClaimContaminationRow {
+  wrongSymbol: string;
+  correctSymbol: string;
+  amount: number;
+  claimCount: number;
+}
+
+export function summarizeClaimContamination(
+  rows: ClaimSymbolMismatchRow[],
+): ClaimContaminationRow[] {
+  const map = new Map<string, ClaimContaminationRow>();
+  const add = (wrong: string, correct: string, amount: number) => {
+    if (correct === "" || !Number.isFinite(amount) || amount <= 0) return;
+    const key = `${wrong}->${correct}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.amount += amount;
+      existing.claimCount += 1;
+    } else {
+      map.set(key, { wrongSymbol: wrong, correctSymbol: correct, amount, claimCount: 1 });
+    }
+  };
+  for (const r of rows) {
+    if (r.baseMismatch) add(r.baseSymbol, r.pairBase, r.claim.token1Amount);
+    if (r.quoteMismatch) add(r.quoteSymbol, r.pairQuote, r.claim.token2Amount);
+  }
+  return [...map.values()].sort((a, b) => b.amount - a.amount);
+}
+
+// The one-click correction: returns a copy of the claim with each mismatched
+// side rewritten to the pair-derived symbol. A side whose pair token is unknown
+// (empty) is left untouched — we never blank a symbol we cannot replace.
+export function correctClaimSymbols(row: ClaimSymbolMismatchRow): FeeClaim {
+  const next = { ...row.claim };
+  if (row.baseMismatch && row.pairBase !== "") next.token1Symbol = row.pairBase;
+  if (row.quoteMismatch && row.pairQuote !== "") next.token2Symbol = row.pairQuote;
+  return next;
+}
+
 export function calcPortfolioSummary(
   positions: Position[],
   allClaims: FeeClaim[] = [],

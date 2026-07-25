@@ -1218,24 +1218,40 @@ at the plan gate.
   rows excluded from the quote sum; mixed ETH+AERO split correctly).
   tsc/lint/build clean.
 
+- Claim-level symbol-mismatch detector + bulk fix (2026-07-25):
+  Phase A confirmed fee claims freeze their OWN token1Symbol/
+  token2Symbol as a STATIC snapshot at creation (ClaimFormModal
+  buildClaim:139; close-flow positions/page.tsx:1069 copies
+  target.token1Symbol), and calcBusinessPnL:434 sums claim.token1Symbol
+  directly — never reading the position live. So a position mislabeled
+  "SOL" (the SUI/USDC case) minted claims ALSO storing "SOL", and
+  fixing the POSITION symbol (a1b7176) does NOT retroactively fix those
+  claims — the SOL total stays inflated until the claims are corrected.
+  The a1b7176 detector checks POSITION pair vs POSITION symbols and
+  cannot see claims, but each claim carries its own pair string, so the
+  same substring test catches it. Gate: "detector + bulk fix".
+  SHIPPED: findClaimSymbolMismatches (claim.token1Symbol/token2Symbol
+  must be a substring of claim.pair; fee-tier suffix stripped),
+  summarizeClaimContamination (per-token "X SOL is actually SUI"
+  subtotal that the Business P&L total is inflated by), and
+  correctClaimSymbols (returns a copy with mismatched sides rewritten
+  to the pair-derived symbol; never blanks a side whose pair token is
+  unknown) — all in lib/calculations.ts. Red ClaimSymbolMismatchBanner
+  on /claims lists each flagged claim (date · pair, wrong→right) with a
+  per-row Edit link, the contamination subtotal block, and a two-step
+  confirmed "Fix all" that routes every correction through
+  persistUpdatedClaim (Invariant #10 — transfers stay reconciled).
+  Reports/corrects only on explicit user action, never silent. Verified
+  against a seed reproducing the reported ~155: 3 mislabeled SUI/USDC
+  claims → "155 SOL is actually SUI (3 claims)", genuine SOL/USDC and
+  WETH/ETH-alias claims correctly NOT flagged, fee-tier suffix stripped,
+  correction rewrites token1Symbol SOL→SUI. Real SOL-vs-SUI split runs
+  in the user's own browser (localStorage not accessible to the
+  automation profile). tsc/lint/build clean.
+
 ## Known Issues
 
-- Business P&L Total Tokens can be inflated by claim-level symbol
-  typos (open, investigation 2026-07-25). Fee claims store their OWN
-  token1Symbol/token2Symbol as a STATIC snapshot at creation
-  (ClaimFormModal buildClaim; close-flow positions/page.tsx copies
-  target.token1Symbol) — calcBusinessPnL sums claim.token1Symbol
-  directly, never reading the position live. So a position mislabeled
-  "SOL" (the SUI/USDC case) minted claims ALSO storing "SOL", and
-  fixing the POSITION symbol does NOT retroactively fix those claims —
-  the SOL total stays inflated until the claims themselves are
-  corrected. The a1b7176 detector checks POSITION pair vs POSITION
-  symbols and does NOT catch claims. PROPOSED (awaiting gate approval,
-  not built): a claim-level findClaimSymbolMismatches reusing the same
-  substring test (claim.token1Symbol must appear in claim.pair) +
-  flag-and-confirm banner on /claims, reports never auto-repairs.
-  Exact real SOL-vs-SUI split runs in the user's own browser (their
-  localStorage is not accessible to the automation profile).
+- None currently tracked.
 
 ## Architecture Notes
 
