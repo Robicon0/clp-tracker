@@ -1079,6 +1079,72 @@ export function findSuspectScalpPositions(
   );
 }
 
+export interface SymbolPairMismatchRow {
+  position: Position;
+  baseSymbol: string;
+  quoteSymbol: string;
+  // The symbols parsed from the Pair string itself (the likely-correct values).
+  pairBase: string;
+  pairQuote: string;
+  baseMismatch: boolean;
+  quoteMismatch: boolean;
+  // Closed positions carry the higher risk: a token-amount-mode close fetched a
+  // price FROM the wrong symbol and wrote it into Final Balance / Scalp, so the
+  // stored dollars — not just the label — can be wrong.
+  isClosed: boolean;
+}
+
+// Strips a trailing fee-tier suffix like " (0.05%)" so "ETH/USDC (0.05%)"
+// parses the same as "ETH/USDC". Positions store the tier separately, but
+// claims sometimes fold it into the pair string.
+function pairCore(pair: string): string {
+  const m = pair.match(/^(.+?)\s*\([^)]*\)\s*$/);
+  return (m ? m[1] : pair).trim().toUpperCase();
+}
+
+// Plausibility check (Invariant #8): a position's Base/Quote token symbol must
+// appear inside its own Pair string. "SOL" on a "SUI/USDC" pair is impossible
+// and means the symbol field holds the wrong token — which then drives every
+// price lookup (live range bar, and critically the token-amount-mode close
+// historical price) to the WRONG coin.
+//
+// Substring, not equality, on purpose: Base "ETH" on pair "WETH/USDC" is a
+// legitimate wrapper alias (ETH ⊂ WETH) and must not be flagged, while
+// "SOL" ⊄ "SUI/USDC" is caught. Reports rather than repairs — only the user
+// knows whether the Pair or the symbol is the typo.
+export function findSymbolPairMismatches(
+  positions: Position[],
+): SymbolPairMismatchRow[] {
+  const rows: SymbolPairMismatchRow[] = [];
+  for (const p of positions) {
+    const pair = pairCore(p.pair);
+    if (pair === "") continue;
+    const baseSymbol = p.token1Symbol.trim().toUpperCase();
+    const quoteSymbol = p.token2Symbol.trim().toUpperCase();
+    const baseMismatch = baseSymbol !== "" && !pair.includes(baseSymbol);
+    const quoteMismatch = quoteSymbol !== "" && !pair.includes(quoteSymbol);
+    if (!baseMismatch && !quoteMismatch) continue;
+    const [pairBase = "", pairQuote = ""] = pair
+      .split("/")
+      .map((s) => s.trim().toUpperCase());
+    rows.push({
+      position: p,
+      baseSymbol,
+      quoteSymbol,
+      pairBase,
+      pairQuote,
+      baseMismatch,
+      quoteMismatch,
+      isClosed: p.status === "closed",
+    });
+  }
+  // Closed (dollar-risk) positions first, then by pair for stable ordering.
+  return rows.sort((a, b) => {
+    if (a.isClosed !== b.isClosed) return a.isClosed ? -1 : 1;
+    return a.position.pair.localeCompare(b.position.pair);
+  });
+}
+
 export function calcPortfolioSummary(
   positions: Position[],
   allClaims: FeeClaim[] = [],

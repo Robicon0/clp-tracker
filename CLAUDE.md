@@ -1165,6 +1165,46 @@ at the plan gate.
   predicate); diff is app/transfers/page.tsx + lib/transferAutomation
   .ts only. tsc/lint/build clean; zero console errors.
 
+- Token symbol ↔ pair mismatch detector (2026-07-25): Phase A
+  investigation of a reported "SUI/USDC position shows SOL" bug.
+  ROOT CAUSE (traced, not guessed): NOT a code bug. token1Symbol/
+  token2Symbol are plain user-entered free-text fields on the
+  Position record (app/positions/page.tsx Base/Quote Token Symbol
+  inputs), and EVERY surface — Add Claim form (ClaimFormModal.tsx:317
+  /373 copy p.token1Symbol), Close modal display + historical price
+  fetch (app/positions/page.tsx:3392/3411), live range-bar price
+  (:871/916) — is a faithful passthrough of the stored symbol. Both
+  price routes (app/api/prices + /historical) map the given symbol
+  correctly via resolveCoingeckoId; lib/tokenIds.ts is clean (all 16
+  IDs verified, no chain/token mismap, no substring/default-fallback
+  logic). The stored record simply held token1Symbol="SOL" for a
+  SUI/USDC position (typo entered via the manual Base Token Symbol
+  field). Because "SOL" is a real mapped token, price lookups
+  dutifully returned Solana's price — looking like a price bug.
+  DOLLAR RISK: only a token-amount-mode close (Close Mode 2) fetches
+  a price FROM the symbol and writes it to stored currentBalance/
+  scalp, so ONLY a Mode-2 close on a mis-symboled position corrupts
+  real dollars (unless the fetched price was manually overridden).
+  Claim USD values (stableAmount) are always typed, never fetched
+  from the symbol → labels wrong but dollars safe. Range bar is
+  display-only, never persisted.
+  SHIPPED (gate: "detector first, then fix data"):
+  findSymbolPairMismatches in lib/calculations.ts — flags any
+  position whose Base/Quote symbol is not a SUBSTRING of its own Pair
+  string (substring, not equality, so ETH on WETH/USDC is NOT flagged
+  while SOL on SUI/USDC is; strips a trailing " (fee%)" suffix). Red
+  SymbolMismatchBanner on the Positions page (mirrors
+  SuspectScalpBanner) lists each mismatch with the likely-correct
+  symbol from the pair and an Edit link; closed positions sorted
+  first and tagged "closed · check $" with an explicit note to use
+  "Recalculate from token amounts" after fixing the symbol. Reports,
+  never auto-repairs (only the user knows if the Pair or the symbol
+  is the typo). Real-data scope runs in the user's own browser (their
+  localStorage is not accessible to the automation profile — same
+  limit as c372b30/666ec71). Predicate verified against 6 edge cases
+  (SOL/SUI flagged, WETH/ETH not, fee-tier stripped, dual mismatch,
+  empty symbol skipped). tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked. (Pool P&L summary-card toggle bug closed

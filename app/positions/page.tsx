@@ -28,6 +28,7 @@ import {
   calcRangeHealth,
   calcScalpFromWithdrawn,
   findSuspectScalpPositions,
+  findSymbolPairMismatches,
   calcClosedProfit,
   calcTotalFees,
   calcWideRangePercent,
@@ -43,6 +44,7 @@ import {
   type EntryPriceFromTokens,
   type ILResult,
   type SuspectScalpRow,
+  type SymbolPairMismatchRow,
   type TokenSplit,
   type RangeHealth,
   type RangeStatus,
@@ -965,6 +967,7 @@ export default function PositionsPage() {
     ? derive(positions.filter((p) => p.status === "closed"), claims)
     : [];
   const suspectScalp = hydrated ? findSuspectScalpPositions(positions) : [];
+  const symbolMismatches = hydrated ? findSymbolPairMismatches(positions) : [];
 
   const persistFull = (records: BuiltRecords, mode: "add" | "edit") => {
     if (mode === "add") {
@@ -1122,6 +1125,13 @@ export default function PositionsPage() {
           Add Position
         </button>
       </header>
+
+      {symbolMismatches.length > 0 && (
+        <SymbolMismatchBanner
+          rows={symbolMismatches}
+          onEdit={(p) => setModal({ kind: "edit", position: p })}
+        />
+      )}
 
       {suspectScalp.length > 0 && (
         <SuspectScalpBanner rows={suspectScalp} onEdit={(p) => setModal({ kind: "edit", position: p })} />
@@ -1421,6 +1431,84 @@ function SuspectScalpBanner({
               type="button"
               onClick={() => onEdit(r.position)}
               className="rounded-md border border-amber-500/40 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+            >
+              Fix
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Banner driven by findSymbolPairMismatches. A wrong token symbol silently
+// prices the wrong coin — for a token-amount-mode close it corrupts the stored
+// Final Balance / Scalp, not just the label.
+function SymbolMismatchBanner({
+  rows,
+  onEdit,
+}: {
+  rows: SymbolPairMismatchRow[];
+  onEdit: (p: Position) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4">
+      <h2 className="text-sm font-semibold text-red-300">
+        {rows.length}{" "}
+        {rows.length === 1 ? "position has" : "positions have"} a token symbol
+        that doesn&apos;t match its pair
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        A position&apos;s Base/Quote symbol should appear in its Pair (e.g. pair
+        SUI/USDC, base SUI). When it doesn&apos;t, every price lookup fetches the
+        wrong coin. Open each one and fix the token symbol.{" "}
+        <span className="text-red-300">
+          If the position was closed using &ldquo;Token amounts&rdquo; mode, its
+          Final Balance and Scalp were calculated from the wrong price — after
+          fixing the symbol, use &ldquo;Recalculate from token amounts&rdquo; to
+          correct the dollars.
+        </span>{" "}
+        Nothing changes until you save.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.position.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {r.position.pair}
+              {r.isClosed && (
+                <span className="ml-2 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-300">
+                  closed · check $
+                </span>
+              )}
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              {r.baseMismatch && (
+                <>
+                  base{" "}
+                  <span className="font-medium text-red-300">
+                    {r.baseSymbol}
+                  </span>
+                  {r.pairBase && <> → should be {r.pairBase}</>}
+                </>
+              )}
+              {r.baseMismatch && r.quoteMismatch && " · "}
+              {r.quoteMismatch && (
+                <>
+                  quote{" "}
+                  <span className="font-medium text-red-300">
+                    {r.quoteSymbol}
+                  </span>
+                  {r.pairQuote && <> → should be {r.pairQuote}</>}
+                </>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => onEdit(r.position)}
+              className="rounded-md border border-red-500/50 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/10"
             >
               Fix
             </button>
