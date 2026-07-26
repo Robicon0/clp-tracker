@@ -1333,6 +1333,40 @@ at the plan gate.
   deletes all 3 transfer link types with 0 orphans; expense drops Overall
   P&L by exactly its amount; APR conversions exact. tsc/lint/build clean.
 
+- b7755cb: Five-part batch (2026-07-26):
+  1. Positions chain filter ("All chains" dropdown, from p.chain) + most-
+     recent-first sort (active by entryDatetime desc, closed by exitDatetime
+     desc). Applied to the shared active/closed arrays, so both Cards and
+     List views get it. Display-only.
+  2. Fee Claims Position filter → searchable PositionCombobox: live text
+     filter over pair/chain/platform, options grouped by chain, "All
+     positions" clears, closed suffix preserved. Replaces a ~129-option
+     <select>. Display-only.
+  3. Fee Claims APR relabeled "Average Position APR (Claimed)" + hint.
+     INVESTIGATION: both this card and the Dashboard's "Average Fee APR
+     (Active)" call the SAME calcPortfolioSummary().averageAPR (deposit-
+     weighted) — weighting is identical. The gap (100.58 vs 61.52) is pure
+     SCOPE: Fee Claims spans every position WITH A CLAIM (active AND closed;
+     excludes zero-claim active positions), Dashboard is active-only
+     (includes zero-APR unclaimed actives). Both differences push Fee Claims
+     higher. Not a bug — label/hint fix only, no math change (same low-risk
+     pattern as the 7ae0e50/7121f8d scope-label fixes).
+  4. Transfers bulk-mark: per-row checkbox + "select all visible" + "Mark as
+     Redeployed"/"Mark as Expense" behind an inline confirm. applyBulkMark
+     intersects selected∩visibleIds and sets moneyStatus ONLY (transferType
+     untouched; Overall P&L counts expenses by moneyStatus). The one new way
+     data changes here — always confirmed.
+  5. Transfers wide table → compact tap-to-expand TransferListRow (no
+     horizontal scroll; collapsed = checkbox/Date/Pair/Amount/Type/Status,
+     expanded = Platform/Destination/Token/Notes + Edit/Delete). Added a
+     free-text search bar (searchedFiltered over pair/notes/type/token/
+     destination/platform) layered on the type filter + review-only; chain
+     grouping preserved (byChain now groups searchedFiltered). Removed the
+     old TransferTable and now-unused formatToken.
+  Verified: sort orders, chain filter, combobox grouping, search matches
+  (pair/type/destination/notes), bulk mark touches only visible+selected and
+  changes only moneyStatus. No calc changed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
