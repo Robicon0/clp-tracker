@@ -556,6 +556,8 @@ function tryComputeIL(
   );
 }
 
+const ALL_CHAINS = "__all__";
+
 interface DerivedRow {
   position: Position;
   deposited: number;
@@ -880,6 +882,7 @@ export default function PositionsPage() {
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [showClosed, setShowClosed] = useState(false);
   const [view, setView] = useState<"cards" | "list">("cards");
+  const [chainFilter, setChainFilter] = useState<string>(ALL_CHAINS);
   const [fetchedPrices, setFetchedPrices] = useState<Record<string, number>>(
     {},
   );
@@ -992,11 +995,44 @@ export default function PositionsPage() {
     savePositionPrices(next);
   };
 
+  // Chain options for the filter, taken from positions actually held.
+  const chainOptions = hydrated
+    ? Array.from(
+        new Set(
+          positions
+            .map((p) => p.chain.trim().toUpperCase())
+            .filter((c) => c !== ""),
+        ),
+      ).sort()
+    : [];
+
+  const inChain = (p: Position) =>
+    chainFilter === ALL_CHAINS ||
+    p.chain.trim().toUpperCase() === chainFilter;
+
+  // Most-recent-first: active by entry date desc, closed by exit date desc.
+  const byEntryDesc = (a: Position, b: Position) =>
+    (new Date(b.entryDatetime).getTime() || 0) -
+    (new Date(a.entryDatetime).getTime() || 0);
+  const byExitDesc = (a: Position, b: Position) =>
+    (new Date(b.exitDatetime ?? "").getTime() || 0) -
+    (new Date(a.exitDatetime ?? "").getTime() || 0);
+
   const active = hydrated
-    ? derive(positions.filter((p) => p.status === "active"), claims)
+    ? derive(
+        positions
+          .filter((p) => p.status === "active" && inChain(p))
+          .sort(byEntryDesc),
+        claims,
+      )
     : [];
   const closed = hydrated
-    ? derive(positions.filter((p) => p.status === "closed"), claims)
+    ? derive(
+        positions
+          .filter((p) => p.status === "closed" && inChain(p))
+          .sort(byExitDesc),
+        claims,
+      )
     : [];
   const suspectScalp = hydrated ? findSuspectScalpPositions(positions) : [];
   const symbolMismatches = hydrated ? findSymbolPairMismatches(positions) : [];
@@ -1172,13 +1208,30 @@ export default function PositionsPage() {
             Open new positions, track active ones, and close finished ones.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setModal({ kind: "add" })}
-          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90"
-        >
-          Add Position
-        </button>
+        <div className="flex items-center gap-2">
+          {chainOptions.length > 0 && (
+            <select
+              aria-label="Filter by chain"
+              value={chainFilter}
+              onChange={(e) => setChainFilter(e.target.value)}
+              className="h-9 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 text-sm text-[var(--foreground)] focus:border-[var(--accent)] focus:outline-none"
+            >
+              <option value={ALL_CHAINS}>All chains</option>
+              {chainOptions.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={() => setModal({ kind: "add" })}
+            className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90"
+          >
+            Add Position
+          </button>
+        </div>
       </header>
 
       {symbolMismatches.length > 0 && (

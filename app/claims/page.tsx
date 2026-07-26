@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getClaims,
   getOutlierDismissals,
@@ -428,12 +428,13 @@ export default function ClaimsPage() {
           value={`${totals.converted} / ${totals.total}`}
         />
         <SummaryStat
-          label="Average Position APR"
+          label="Average Position APR (Claimed)"
           value={
             averagePositionApr === null
               ? "—"
               : formatPercent(averagePositionApr)
           }
+          hint="Deposit-weighted across all positions with claims here — active AND closed. The Dashboard's Average Fee APR is active-only, so this runs higher."
         />
       </div>
 
@@ -483,19 +484,12 @@ export default function ClaimsPage() {
           </div>
         )}
         <div className="grid grid-cols-1 gap-3 border-b border-[var(--border)] px-5 py-4 sm:grid-cols-3">
-          <FilterSelect
-            label="Position"
+          <PositionCombobox
+            positions={positions}
             value={filters.positionId}
             onChange={(v) =>
               setFilters((prev) => ({ ...prev, positionId: v }))
             }
-            options={[
-              { value: ALL, label: "All positions" },
-              ...positions.map((p) => ({
-                value: p.id,
-                label: positionOptionLabel(p),
-              })),
-            ]}
           />
           <FilterSelect
             label="Platform"
@@ -689,9 +683,10 @@ export default function ClaimsPage() {
 interface SummaryStatProps {
   label: string;
   value: string;
+  hint?: string;
 }
 
-function SummaryStat({ label, value }: SummaryStatProps) {
+function SummaryStat({ label, value, hint }: SummaryStatProps) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
@@ -700,6 +695,7 @@ function SummaryStat({ label, value }: SummaryStatProps) {
       <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
         {value}
       </div>
+      {hint && <p className="mt-2 text-[11px] text-[var(--muted)]">{hint}</p>}
     </div>
   );
 }
@@ -753,6 +749,134 @@ function FilterSelect({ label, value, onChange, options }: FilterSelectProps) {
         ))}
       </select>
     </label>
+  );
+}
+
+// Searchable, chain-grouped position picker (Part 2). Replaces a ~129-option
+// <select>. Type any of pair/chain/platform to filter live; "All positions"
+// clears. Closed positions keep the "closed" suffix from positionOptionLabel.
+function PositionCombobox({
+  positions,
+  value,
+  onChange,
+}: {
+  positions: Position[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const selectedLabel =
+    value === ALL
+      ? "All positions"
+      : (() => {
+          const p = positions.find((pos) => pos.id === value);
+          return p ? positionOptionLabel(p) : "All positions";
+        })();
+
+  // Group filtered positions by chain, chains sorted alphabetically.
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matches = positions.filter((p) => {
+      if (q === "") return true;
+      return `${p.pair} ${p.chain} ${p.protocol}`.toLowerCase().includes(q);
+    });
+    const byChain = new Map<string, Position[]>();
+    for (const p of matches) {
+      const chain = p.chain.trim().toUpperCase() || "OTHER";
+      const list = byChain.get(chain);
+      if (list) list.push(p);
+      else byChain.set(chain, [p]);
+    }
+    return [...byChain.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [positions, query]);
+
+  const select = (v: string) => {
+    onChange(v);
+    setOpen(false);
+    setQuery("");
+  };
+
+  return (
+    <div className="space-y-1.5" ref={ref}>
+      <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+        Position
+      </span>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-left text-sm text-[var(--foreground)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+        >
+          <span className="truncate">{selectedLabel}</span>
+          <span className="shrink-0 text-[var(--muted)]">▾</span>
+        </button>
+
+        {open && (
+          <div className="absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface)] shadow-xl">
+            <div className="sticky top-0 border-b border-[var(--border)] bg-[var(--surface)] p-2">
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search pair, chain, or platform…"
+                className="block w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-1.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 focus:border-[var(--accent)] focus:outline-none"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => select(ALL)}
+              className={`block w-full px-3 py-2 text-left text-sm hover:bg-[var(--surface-2)] ${
+                value === ALL ? "text-[var(--accent)]" : "text-[var(--foreground)]"
+              }`}
+            >
+              All positions
+            </button>
+            {groups.length === 0 ? (
+              <div className="px-3 py-3 text-[12px] text-[var(--muted)]">
+                No positions match “{query}”.
+              </div>
+            ) : (
+              groups.map(([chain, list]) => (
+                <div key={chain}>
+                  <div className="bg-[var(--surface-2)]/60 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                    {chain}
+                  </div>
+                  {list.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => select(p.id)}
+                      className={`block w-full px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)] ${
+                        value === p.id
+                          ? "text-[var(--accent)]"
+                          : "text-[var(--foreground)]"
+                      }`}
+                    >
+                      {positionOptionLabel(p)}
+                    </button>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

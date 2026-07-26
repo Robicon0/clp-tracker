@@ -78,17 +78,8 @@ const usdFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
-const tokenFormatter = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 6,
-});
-
 function formatUsd(value: number): string {
   return usdFormatter.format(Number.isFinite(value) ? value : 0);
-}
-
-function formatToken(value: number): string {
-  return tokenFormatter.format(Number.isFinite(value) ? value : 0);
 }
 
 function pad(n: number): string {
@@ -258,120 +249,142 @@ function buildWithdrawal(id: string, form: WithdrawalFormState): Withdrawal {
   };
 }
 
-// One transfers table (header + rows), rendered once per chain section (Part 5).
-// The type-filter and review-only filtering happen upstream in sortedFiltered,
-// so each chain section already shows only the rows the filter allows.
-function TransferTable({
-  rows,
-  positionPairById,
+// Compact, tap-to-expand transfer row (Part 5) with a bulk-select checkbox
+// (Part 4). No table, so it reflows to any width without horizontal scroll.
+// Collapsed: select box, Date, Pair, Amount, Type, Money Status. Expanded adds
+// Platform, Destination, Notes and the Edit/Delete actions.
+function TransferListRow({
+  transfer: t,
+  pairLabel,
+  selected,
+  onToggleSelect,
   pendingDelete,
   onDeleteRequest,
   onDeleteConfirm,
   onDeleteCancel,
   onEdit,
 }: {
-  rows: Transfer[];
-  positionPairById: Map<string, string>;
+  transfer: Transfer;
+  pairLabel: string;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
   pendingDelete: string | null;
   onDeleteRequest: (id: string) => void;
   onDeleteConfirm: (id: string) => void;
   onDeleteCancel: () => void;
   onEdit: (t: Transfer) => void;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-[var(--border)] text-sm">
-        <thead className="bg-[var(--surface-2)] text-[11px] uppercase tracking-wider text-[var(--muted)]">
-          <tr>
-            <th className="px-4 py-3 text-left font-medium">Date</th>
-            <th className="px-4 py-3 text-left font-medium">Position</th>
-            <th className="px-4 py-3 text-left font-medium">Token</th>
-            <th className="px-4 py-3 text-right font-medium">Amount</th>
-            <th className="px-4 py-3 text-left font-medium">Platform</th>
-            <th className="px-4 py-3 text-left font-medium">Destination</th>
-            <th className="px-4 py-3 text-left font-medium">Transfer Type</th>
-            <th className="px-4 py-3 text-left font-medium">Money Status</th>
-            <th className="px-4 py-3 text-left font-medium">Notes</th>
-            <th className="px-4 py-3 text-right font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[var(--border)]">
-          {rows.map((t) => (
-            <tr
-              key={t.id}
-              className="transition-colors hover:bg-[var(--surface-2)]/60"
-            >
-              <td className="px-4 py-3 text-[var(--muted)] tabular-nums">
-                {formatDateDDMMYYYY(t.date)}
-              </td>
-              <td className="px-4 py-3 font-medium text-[var(--foreground)]">
-                {t.transferType === "expense"
-                  ? "—"
-                  : positionPairById.get(t.positionId) ?? "—"}
-              </td>
-              <td className="px-4 py-3 text-[var(--muted)]">{t.token || "—"}</td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {formatToken(t.amount)}
-              </td>
-              <td className="px-4 py-3 text-[var(--muted)]">
+    <div className={selected ? "bg-[var(--accent)]/[0.06]" : ""}>
+      <div className="flex items-start gap-2 px-3 py-2.5">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect(t.id)}
+          aria-label="Select transfer"
+          className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
+        />
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+        >
+          <span className="mt-0.5 text-[10px] text-[var(--muted)]">
+            {open ? "▴" : "▾"}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center justify-between gap-2">
+              <span className="truncate text-sm font-medium text-[var(--foreground)]">
+                {pairLabel}
+              </span>
+              <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--foreground)]">
+                {formatUsd(t.amount)}
+              </span>
+            </span>
+            <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--muted)]">
+              <span className="tabular-nums">{formatDateDDMMYYYY(t.date)}</span>
+              <TypePill type={t.transferType} />
+              <MoneyStatusPill status={t.moneyStatus} />
+            </span>
+          </span>
+        </button>
+      </div>
+
+      {open && (
+        <div className="border-t border-[var(--border)] bg-[var(--surface-2)]/20 px-3 py-3 pl-9">
+          <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div>
+              <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                Platform
+              </dt>
+              <dd className="text-[13px] text-[var(--foreground)]">
                 {t.platform || "—"}
-              </td>
-              <td className="px-4 py-3 font-medium text-[var(--foreground)]">
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                Destination
+              </dt>
+              <dd className="text-[13px] text-[var(--foreground)]">
                 {t.destination || "—"}
-              </td>
-              <td className="px-4 py-3">
-                <TypePill type={t.transferType} />
-              </td>
-              <td className="px-4 py-3">
-                <MoneyStatusPill status={t.moneyStatus} />
-              </td>
-              <td className="px-4 py-3 text-[var(--muted)] max-w-xs truncate">
-                {t.notes || "—"}
-              </td>
-              <td className="px-4 py-3 text-right">
-                {pendingDelete === t.id ? (
-                  <div className="inline-flex items-center gap-2">
-                    <span className="text-xs text-[var(--muted)]">
-                      Delete this transfer?
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteConfirm(t.id)}
-                      className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
-                    >
-                      Yes
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onDeleteCancel}
-                      className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div className="inline-flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onEdit(t)}
-                      className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteRequest(t.id)}
-                      className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                Token
+              </dt>
+              <dd className="text-[13px] text-[var(--foreground)]">
+                {t.token || "—"}
+              </dd>
+            </div>
+          </dl>
+          {t.notes && (
+            <p className="mt-2 text-[12px] text-[var(--muted)]">{t.notes}</p>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {pendingDelete === t.id ? (
+              <>
+                <span className="text-xs text-[var(--muted)]">
+                  Delete this transfer?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onDeleteConfirm(t.id)}
+                  className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  onClick={onDeleteCancel}
+                  className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onEdit(t)}
+                  className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteRequest(t.id)}
+                  className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -478,6 +491,9 @@ export default function TransfersPage() {
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [reviewOnly, setReviewOnly] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [pendingBulk, setPendingBulk] = useState<MoneyStatus | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingWithdrawalDelete, setPendingWithdrawalDelete] = useState<
     string | null
@@ -539,6 +555,27 @@ export default function TransfersPage() {
     });
   }, [hydrated, transfers, typeFilter, reviewOnly]);
 
+  // Free-text search over pair, notes, transfer type, token, destination,
+  // platform — layered on top of the type/review filters (Part 5).
+  const searchedFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (q === "") return sortedFiltered;
+    return sortedFiltered.filter((t) => {
+      const pair = positionPairById.get(t.positionId) ?? "";
+      const haystack = [
+        pair,
+        t.notes,
+        TYPE_LABELS[t.transferType],
+        t.token,
+        t.destination,
+        t.platform,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [sortedFiltered, search, positionPairById]);
+
   const totals = useMemo(() => {
     let amount = 0;
     const breakdown: Record<TransferType, number> = {
@@ -596,7 +633,7 @@ export default function TransfersPage() {
 
   const byChain = useMemo(() => {
     const map = new Map<string, Transfer[]>();
-    for (const t of sortedFiltered) {
+    for (const t of searchedFiltered) {
       const chain = positionChainById.get(t.positionId) ?? "UNLINKED";
       const list = map.get(chain);
       if (list) list.push(t);
@@ -607,7 +644,53 @@ export default function TransfersPage() {
     return [...map.entries()]
       .map(([chain, list]) => ({ chain, list, amount: amountOf(list) }))
       .sort((a, b) => b.amount - a.amount);
-  }, [sortedFiltered, positionChainById]);
+  }, [searchedFiltered, positionChainById]);
+
+  // Bulk-select over the currently-visible (searched + filtered) rows. Selecting
+  // ids that scroll out of view is avoided by intersecting with visibleIds on
+  // every action, so a bulk mark only ever touches rows the user can see.
+  const visibleIds = useMemo(
+    () => searchedFiltered.map((t) => t.id),
+    [searchedFiltered],
+  );
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelectedIds((prev) => {
+      if (visibleIds.every((id) => prev.has(id))) return new Set();
+      return new Set(visibleIds);
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setPendingBulk(null);
+  };
+
+  // The only new way data changes here (Part 4): set moneyStatus on every
+  // selected+visible transfer at once, behind an explicit confirm. transferType
+  // is untouched — Overall P&L counts expenses by moneyStatus alone.
+  const applyBulkMark = (status: MoneyStatus) => {
+    const targetIds = new Set(visibleIds.filter((id) => selectedIds.has(id)));
+    if (targetIds.size === 0) return;
+    saveTransfers(
+      getTransfers().map((t) =>
+        targetIds.has(t.id) ? { ...t, moneyStatus: status } : t,
+      ),
+    );
+    clearSelection();
+    refresh();
+  };
 
   const handleConfirmOutlier = (row: OutlierRow) => {
     saveOutlierDismissals([...getOutlierDismissals(), dismissalFor(row)]);
@@ -886,7 +969,16 @@ export default function TransfersPage() {
               <TypeFilterToggle value={typeFilter} onChange={setTypeFilter} />
             </div>
 
-            {sortedFiltered.length === 0 ? (
+            <div className="border-b border-[var(--border)] px-5 py-3">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by pair, notes, type, destination…"
+                className="block w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+              />
+            </div>
+
+            {searchedFiltered.length === 0 ? (
               transfers.length === 0 ? (
                 <div className="px-6 py-14 text-center">
                   <EmptyIcon />
@@ -910,37 +1002,123 @@ export default function TransfersPage() {
                 </div>
               )
             ) : (
-              <div className="divide-y divide-[var(--border)]">
-                {byChain.map(({ chain, list, amount }) => (
-                  <div key={chain}>
-                    <div className="flex items-center justify-between bg-[var(--surface-2)]/40 px-5 py-2.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                        {chain}
-                        <span className="ml-2 font-normal text-[var(--muted)]/70">
-                          {list.length}{" "}
-                          {list.length === 1 ? "transfer" : "transfers"}
-                        </span>
-                      </span>
-                      <span className="text-[12px] font-semibold tabular-nums text-[var(--foreground)]">
-                        {formatUsd(amount)}
-                      </span>
-                    </div>
-                    <TransferTable
-                      rows={list}
-                      positionPairById={positionPairById}
-                      pendingDelete={pendingDelete}
-                      onDeleteRequest={setPendingDelete}
-                      onDeleteConfirm={handleDelete}
-                      onDeleteCancel={() => setPendingDelete(null)}
-                      onEdit={(t) =>
-                        t.transferType === "expense"
-                          ? setModal({ kind: "editExpense", transfer: t })
-                          : setModal({ kind: "edit", transfer: t })
-                      }
+              <>
+                {/* Bulk-select toolbar (Part 4). */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--border)] bg-[var(--surface-2)]/30 px-5 py-2.5">
+                  <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      className="h-4 w-4 accent-[var(--accent)]"
                     />
-                  </div>
-                ))}
-              </div>
+                    Select all visible ({visibleIds.length})
+                  </label>
+                  {selectedIds.size > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[12px] font-medium text-[var(--foreground)]">
+                        {selectedIds.size} selected
+                      </span>
+                      {pendingBulk ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] text-[var(--foreground)]">
+                            Mark{" "}
+                            {
+                              visibleIds.filter((id) => selectedIds.has(id))
+                                .length
+                            }{" "}
+                            {pendingBulk === "expense"
+                              ? "as Expense"
+                              : "as Redeployed"}
+                            ?
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => applyBulkMark(pendingBulk)}
+                            className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-[12px] font-medium text-white hover:bg-[var(--accent)]/90"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingBulk(null)}
+                            className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setPendingBulk("redeployed")}
+                            className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--foreground)] hover:border-[var(--accent)]"
+                          >
+                            Mark as Redeployed
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingBulk("expense")}
+                            className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[12px] font-medium text-rose-300 hover:bg-rose-500/20"
+                          >
+                            Mark as Expense
+                          </button>
+                          <button
+                            type="button"
+                            onClick={clearSelection}
+                            className="text-[12px] text-[var(--muted)] hover:text-[var(--foreground)]"
+                          >
+                            Clear
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="divide-y divide-[var(--border)]">
+                  {byChain.map(({ chain, list, amount }) => (
+                    <div key={chain}>
+                      <div className="flex items-center justify-between bg-[var(--surface-2)]/40 px-5 py-2.5">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                          {chain}
+                          <span className="ml-2 font-normal text-[var(--muted)]/70">
+                            {list.length}{" "}
+                            {list.length === 1 ? "transfer" : "transfers"}
+                          </span>
+                        </span>
+                        <span className="text-[12px] font-semibold tabular-nums text-[var(--foreground)]">
+                          {formatUsd(amount)}
+                        </span>
+                      </div>
+                      <div className="divide-y divide-[var(--border)]">
+                        {list.map((t) => (
+                          <TransferListRow
+                            key={t.id}
+                            transfer={t}
+                            pairLabel={
+                              t.transferType === "expense"
+                                ? "Expense"
+                                : positionPairById.get(t.positionId) ?? "—"
+                            }
+                            selected={selectedIds.has(t.id)}
+                            onToggleSelect={toggleSelect}
+                            pendingDelete={pendingDelete}
+                            onDeleteRequest={setPendingDelete}
+                            onDeleteConfirm={handleDelete}
+                            onDeleteCancel={() => setPendingDelete(null)}
+                            onEdit={(tr) =>
+                              tr.transferType === "expense"
+                                ? setModal({ kind: "editExpense", transfer: tr })
+                                : setModal({ kind: "edit", transfer: tr })
+                            }
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
 
