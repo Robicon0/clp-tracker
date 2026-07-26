@@ -1367,6 +1367,53 @@ at the plan gate.
   (pair/type/destination/notes), bulk mark touches only visible+selected and
   changes only moneyStatus. No calc changed. tsc/lint/build clean.
 
+- 5ffb65b: Five-part batch (2026-07-27):
+  1. Entry Date added to the position card Details grid.
+  2. Closed cards show both Opened and Closed dates in the header (was
+     close-date + days-held only).
+  3. List-view rows (Part 4 of b25281e) now expand to the SAME Details set
+     as cards — New Fees, Claimed, Price Diff, Entry Price, Entry Date,
+     Range, Range %, plus Scalp on closed. Cards/List parity: identical
+     info, different density.
+  4a. Data Health chain-vs-pair detector (findChainMismatches in
+      dataHealth.ts): a base token that is chain-native on exactly one chain
+      (NATIVE_CHAIN_FOR_BASE = {SUI, SOL}; ETH/BTC/USDC deliberately omitted
+      as multi-chain) whose stored chain (normalized) contradicts it is
+      flagged — the reported "SUI/USDC on chain SOL" typo. New count in
+      DataHealthReport/counts + Data Health card category (Position chain
+      typos → /positions#position-chain-issues) + red ChainMismatchBanner on
+      Positions. Detection only, user fixes via Edit.
+      INVESTIGATION NOTE: the user's stored data lives in their browser
+      localStorage (not accessible here). The combobox groups strictly by
+      raw chain, so a SUI/USDC position appearing under a "SOL" header means
+      its stored chain field IS "SOL"; the HYPEEVM/SOL/SOLANA triple headers
+      were raw spelling variants (Part 5 merges SOL/SOLANA). The detector
+      surfaces the exact records on the user's machine.
+  4b. .scrollbar-dark utility in globals.css (thin dark track/thumb) applied
+      to the position combobox dropdown; reusable for any scrollable panel.
+  4c. Fee Claims SummaryStat hint moved behind an "i" toggle, absolutely
+      positioned so revealing it never changes card height — all 4 cards in
+      the row stay aligned.
+  5. lib/nameNormalization.ts: normalizeChain/normalizeToken/normalizePlatform
+     = baseNormalize (trim+UPPERCASE, folds case like Base/BASE, Cetus/CETUS)
+     + one-line-extensible alias maps (CHAIN: SOLANA→SOL, ETHEREUM→ETH,
+     ARBITRUM→ARB, OPTIMISM→OP; TOKEN: WETH→ETH, WBTC/CBBTC→BTC; PLATFORM:
+     AERODROME→AERO, UNISWAPV3→UNISWAP). Applied at every grouping/filter
+     surface: Positions chain filter (options + match), Fee Claims chain +
+     platform filters (options + match) and combobox chain groups, Transfers
+     by-chain sections + By Token, Business P&L chain ledger blocks.
+     DISPLAY/GROUPING ONLY — stored chain/token/platform never rewritten, and
+     only sum-preserving groupings are normalized. JUDGMENT CALL: Business
+     P&L's per-token PRICED totals (calcBusinessPnL/calcTokenPnL/
+     calcUnconvertedHoldings) are deliberately NOT token-normalized — merging
+     WETH into ETH there would re-price a leg and change allTotal/Net (a
+     financial figure), out of scope for this display-only batch and would
+     need its own gate.
+  Verified: normalization merges (SOL/Solana/solana→SOL, WETH→ETH,
+  Aerodrome→AERO, Base/BASE fold) and chain detector flags SUI-on-SOL /
+  SUI-on-Solana / SOL-on-ETH while NOT flagging ETH/USDC-on-Base. No calc
+  function touched. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
