@@ -15,6 +15,7 @@ import {
 } from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
 import { mergePrices, useTokenPrices } from "../../lib/useTokenPrices";
+import { normalizeChain } from "../../lib/nameNormalization";
 import type { FeeClaim } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -180,7 +181,10 @@ export default function BusinessPnlPage() {
   const ledgerBlocks = useMemo(() => {
     const byChain = new Map<string, FeeClaim[]>();
     for (const claim of claims) {
-      const chain = claim.chain.trim().toUpperCase() || "OTHER";
+      // Normalized so chain synonyms (SOL/Solana) share one block (Part 5).
+      // Grouping only — the claim's stored chain is untouched, and each block's
+      // usdTotal is still a plain sum, so no P&L figure changes.
+      const chain = normalizeChain(claim.chain) || "OTHER";
       const list = byChain.get(chain);
       if (list) list.push(claim);
       else byChain.set(chain, [claim]);

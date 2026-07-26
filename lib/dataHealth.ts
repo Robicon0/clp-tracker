@@ -9,6 +9,7 @@
 // can be real, so every result is a "please double-check", never a rewrite.
 
 import type { FeeClaim, OutlierDismissal, Position, Transfer } from "./types";
+import { normalizeChain } from "./nameNormalization";
 
 // ---------------------------------------------------------------------------
 // Shared pair parsing
@@ -427,6 +428,51 @@ export function dismissalFor(row: OutlierRow): OutlierDismissal {
 }
 
 // ---------------------------------------------------------------------------
+// Chain ↔ pair mismatch (Part 4a)
+// ---------------------------------------------------------------------------
+
+// Base tokens that trade natively on exactly ONE chain, so a position's chain
+// is checkable against its pair. Kept intentionally tiny and unambiguous:
+// ETH/BTC/USDC etc. are omitted because they legitimately live on many chains
+// and would false-flag. A SUI/USDC position stored on chain "SOL"/"Solana" is
+// the reported typo class this catches. Expected values are canonical
+// (normalizeChain output).
+const NATIVE_CHAIN_FOR_BASE: Record<string, string> = {
+  SUI: "SUI",
+  SOL: "SOL",
+};
+
+export interface ChainMismatchRow {
+  position: Position;
+  baseSymbol: string;
+  chain: string; // raw stored value
+  expectedChain: string; // canonical
+}
+
+// Reports positions whose stored chain contradicts a chain-native base token.
+// Reports only — the user confirms any fix (same pattern as symbol mismatches).
+export function findChainMismatches(positions: Position[]): ChainMismatchRow[] {
+  const rows: ChainMismatchRow[] = [];
+  for (const p of positions) {
+    const pair = pairCore(p.pair);
+    if (pair === "") continue;
+    const [pairBase] = pairTokens(pair);
+    const expected = NATIVE_CHAIN_FOR_BASE[pairBase];
+    if (!expected) continue;
+    const chain = normalizeChain(p.chain);
+    if (chain === "") continue; // no chain set — nothing to contradict
+    if (chain === expected) continue;
+    rows.push({
+      position: p,
+      baseSymbol: pairBase,
+      chain: p.chain,
+      expectedChain: expected,
+    });
+  }
+  return rows.sort((a, b) => a.position.pair.localeCompare(b.position.pair));
+}
+
+// ---------------------------------------------------------------------------
 // Consolidated report (Part 4)
 // ---------------------------------------------------------------------------
 
@@ -434,6 +480,7 @@ export interface DataHealthCounts {
   positionSymbol: number;
   claimSymbol: number;
   transferSymbol: number;
+  chainMismatch: number;
   claimOutliers: number;
   transferOutliers: number;
   total: number;
@@ -443,6 +490,7 @@ export interface DataHealthReport {
   positionSymbol: SymbolPairMismatchRow[];
   claimSymbol: ClaimSymbolMismatchRow[];
   transferSymbol: TransferSymbolMismatchRow[];
+  chainMismatch: ChainMismatchRow[];
   claimOutliers: OutlierRow[];
   transferOutliers: OutlierRow[];
   counts: DataHealthCounts;
@@ -457,6 +505,7 @@ export function computeDataHealth(
   const positionSymbol = findSymbolPairMismatches(positions);
   const claimSymbol = findClaimSymbolMismatches(claims);
   const transferSymbol = findTransferSymbolMismatches(transfers, positions);
+  const chainMismatch = findChainMismatches(positions);
   const claimOutliers = findClaimAmountOutliers(claims, positions, dismissals);
   const transferOutliers = findTransferAmountOutliers(
     transfers,
@@ -467,12 +516,14 @@ export function computeDataHealth(
     positionSymbol: positionSymbol.length,
     claimSymbol: claimSymbol.length,
     transferSymbol: transferSymbol.length,
+    chainMismatch: chainMismatch.length,
     claimOutliers: claimOutliers.length,
     transferOutliers: transferOutliers.length,
     total:
       positionSymbol.length +
       claimSymbol.length +
       transferSymbol.length +
+      chainMismatch.length +
       claimOutliers.length +
       transferOutliers.length,
   };
@@ -480,6 +531,7 @@ export function computeDataHealth(
     positionSymbol,
     claimSymbol,
     transferSymbol,
+    chainMismatch,
     claimOutliers,
     transferOutliers,
     counts,

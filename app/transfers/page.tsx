@@ -30,6 +30,7 @@ import {
   type TransferSymbolMismatchRow,
 } from "../../lib/dataHealth";
 import { OutlierBanner } from "../../components/OutlierBanner";
+import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import {
   buildClaimTransfers,
   createUpsideTransfer,
@@ -596,7 +597,7 @@ export default function TransfersPage() {
   const byToken = useMemo(() => {
     const map = new Map<string, { token: string; count: number; amount: number }>();
     for (const t of transfers) {
-      const token = t.token || "—";
+      const token = t.token ? normalizeToken(t.token) : "—";
       const row = map.get(token) ?? { token, count: 0, amount: 0 };
       row.count += 1;
       row.amount += t.amount;
@@ -627,7 +628,7 @@ export default function TransfersPage() {
   // by total moved so the busiest chains lead — mirrors Business P&L's blocks.
   const positionChainById = useMemo(() => {
     const map = new Map<string, string>();
-    for (const p of positions) map.set(p.id, p.chain.trim().toUpperCase() || "OTHER");
+    for (const p of positions) map.set(p.id, normalizeChain(p.chain) || "OTHER");
     return map;
   }, [positions]);
 

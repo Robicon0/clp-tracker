@@ -42,3 +42,26 @@ body {
   background: var(--accent-soft);
   color: var(--foreground);
 }
+
+/* Dark-theme scrollbars for in-app scrollable panels (dropdowns, lists), so
+   they don't render as a bright OS default against the dark UI (Part 4b).
+   Applied via the .scrollbar-dark utility wherever such a panel scrolls. */
+.scrollbar-dark {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scrollbar-dark::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scrollbar-dark::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-dark::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 9999px;
+  border: 2px solid var(--surface);
+}
+.scrollbar-dark::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted);
+}

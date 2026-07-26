@@ -28,6 +28,7 @@ import {
   type OutlierRow,
 } from "../../lib/dataHealth";
 import { OutlierBanner } from "../../components/OutlierBanner";
+import { normalizeChain, normalizePlatform } from "../../lib/nameNormalization";
 import {
   ClaimFormModal,
   persistNewClaim,
@@ -249,15 +250,17 @@ export default function ClaimsPage() {
 
   const hydrated = useHydrated(refresh);
 
+  // Options normalized so synonyms merge into one entry (Part 5). Grouping/
+  // label only — stored claim.chain/platform are never modified.
   const platformOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const c of claims) if (c.platform) set.add(c.platform);
+    for (const c of claims) if (c.platform) set.add(normalizePlatform(c.platform));
     return Array.from(set).sort();
   }, [claims]);
 
   const chainOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const c of claims) if (c.chain) set.add(c.chain);
+    for (const c of claims) if (c.chain) set.add(normalizeChain(c.chain));
     return Array.from(set).sort();
   }, [claims]);
 
@@ -293,8 +296,8 @@ export default function ClaimsPage() {
     if (!hydrated) return [];
     const filtered = claims.filter((c) => {
       if (filters.positionId !== ALL && c.positionId !== filters.positionId) return false;
-      if (filters.platform !== ALL && c.platform !== filters.platform) return false;
-      if (filters.chain !== ALL && c.chain !== filters.chain) return false;
+      if (filters.platform !== ALL && normalizePlatform(c.platform) !== filters.platform) return false;
+      if (filters.chain !== ALL && normalizeChain(c.chain) !== filters.chain) return false;
       if (filters.needsValueOnly && !isUnvaluedConvertedClaim(c)) return false;
       return true;
     });
@@ -687,15 +690,33 @@ interface SummaryStatProps {
 }
 
 function SummaryStat({ label, value, hint }: SummaryStatProps) {
+  const [showHint, setShowHint] = useState(false);
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
-      <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-        {label}
+    <div className="relative rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+        <span>{label}</span>
+        {hint && (
+          <button
+            type="button"
+            onClick={() => setShowHint((v) => !v)}
+            aria-label="What does this mean?"
+            aria-expanded={showHint}
+            className="flex h-4 w-4 items-center justify-center rounded-full border border-[var(--border-strong)] text-[9px] leading-none text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+          >
+            i
+          </button>
+        )}
       </div>
       <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
         {value}
       </div>
-      {hint && <p className="mt-2 text-[11px] text-[var(--muted)]">{hint}</p>}
+      {/* Absolutely positioned so revealing the hint never changes card height
+          — all cards in the row stay aligned (Part 4c). */}
+      {hint && showHint && (
+        <div className="absolute left-3 right-3 top-full z-10 -mt-1 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-[11px] leading-relaxed text-[var(--muted)] shadow-lg">
+          {hint}
+        </div>
+      )}
     </div>
   );
 }
@@ -797,7 +818,7 @@ function PositionCombobox({
     });
     const byChain = new Map<string, Position[]>();
     for (const p of matches) {
-      const chain = p.chain.trim().toUpperCase() || "OTHER";
+      const chain = normalizeChain(p.chain) || "OTHER";
       const list = byChain.get(chain);
       if (list) list.push(p);
       else byChain.set(chain, [p]);
@@ -827,7 +848,7 @@ function PositionCombobox({
         </button>
 
         {open && (
-          <div className="absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface)] shadow-xl">
+          <div className="scrollbar-dark absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface)] shadow-xl">
             <div className="sticky top-0 border-b border-[var(--border)] bg-[var(--surface)] p-2">
               <input
                 autoFocus

@@ -36,6 +36,12 @@ export function DataHealthCard({ report }: { report: DataHealthReport }) {
       tone: "red" as const,
     },
     {
+      label: "Position chain typos",
+      count: counts.chainMismatch,
+      href: "/positions#position-chain-issues",
+      tone: "red" as const,
+    },
+    {
       label: "Unusual claim amounts",
       count: counts.claimOutliers,
       href: "/claims#claim-outliers",

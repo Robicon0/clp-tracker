@@ -24,6 +24,11 @@ import {
 } from "../../lib/storage";
 import { createUpsideTransfer } from "../../lib/transferAutomation";
 import {
+  findChainMismatches,
+  type ChainMismatchRow,
+} from "../../lib/dataHealth";
+import { normalizeChain } from "../../lib/nameNormalization";
+import {
   calcDaysActive,
   calcFeeAPR,
   calcPositionProfit,
@@ -995,20 +1000,20 @@ export default function PositionsPage() {
     savePositionPrices(next);
   };
 
-  // Chain options for the filter, taken from positions actually held.
+  // Chain options for the filter, normalized so synonyms (SOL/Solana) merge
+  // into one option (Part 5). Grouping/label only — stored chain is untouched.
   const chainOptions = hydrated
     ? Array.from(
         new Set(
           positions
-            .map((p) => p.chain.trim().toUpperCase())
+            .map((p) => normalizeChain(p.chain))
             .filter((c) => c !== ""),
         ),
       ).sort()
     : [];
 
   const inChain = (p: Position) =>
-    chainFilter === ALL_CHAINS ||
-    p.chain.trim().toUpperCase() === chainFilter;
+    chainFilter === ALL_CHAINS || normalizeChain(p.chain) === chainFilter;
 
   // Most-recent-first: active by entry date desc, closed by exit date desc.
   const byEntryDesc = (a: Position, b: Position) =>
@@ -1036,6 +1041,7 @@ export default function PositionsPage() {
     : [];
   const suspectScalp = hydrated ? findSuspectScalpPositions(positions) : [];
   const symbolMismatches = hydrated ? findSymbolPairMismatches(positions) : [];
+  const chainMismatches = hydrated ? findChainMismatches(positions) : [];
 
   const persistFull = (records: BuiltRecords, mode: "add" | "edit") => {
     if (mode === "add") {
@@ -1237,6 +1243,13 @@ export default function PositionsPage() {
       {symbolMismatches.length > 0 && (
         <SymbolMismatchBanner
           rows={symbolMismatches}
+          onEdit={(p) => setModal({ kind: "edit", position: p })}
+        />
+      )}
+
+      {chainMismatches.length > 0 && (
+        <ChainMismatchBanner
+          rows={chainMismatches}
           onEdit={(p) => setModal({ kind: "edit", position: p })}
         />
       )}
@@ -1572,6 +1585,61 @@ function SuspectScalpBanner({
 // Banner driven by findSymbolPairMismatches. A wrong token symbol silently
 // prices the wrong coin — for a token-amount-mode close it corrupts the stored
 // Final Balance / Scalp, not just the label.
+// Flags positions whose stored chain contradicts a chain-native base token
+// (Part 4a) — e.g. a SUI/USDC pair stored on chain "SOL". Reports only; the
+// user fixes via Edit. Shows the raw stored chain and the expected one.
+function ChainMismatchBanner({
+  rows,
+  onEdit,
+}: {
+  rows: ChainMismatchRow[];
+  onEdit: (p: Position) => void;
+}) {
+  return (
+    <div
+      id="position-chain-issues"
+      className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-red-300">
+        {rows.length}{" "}
+        {rows.length === 1 ? "position has" : "positions have"} a chain that
+        doesn&apos;t match its pair
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        A pair whose base token lives on one chain (e.g. SUI) can&apos;t sit on a
+        different chain. This usually means the Chain field holds a typo. Open
+        each one and fix it — nothing changes until you save.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.position.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {r.position.pair}
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              chain{" "}
+              <span className="font-medium text-red-300">
+                {r.chain || "—"}
+              </span>{" "}
+              → expected {r.expectedChain}
+            </span>
+            <button
+              type="button"
+              onClick={() => onEdit(r.position)}
+              className="rounded-md border border-red-500/50 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/10"
+            >
+              Fix
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function SymbolMismatchBanner({
   rows,
   onEdit,
@@ -1876,6 +1944,11 @@ function PositionCard({
         ) : (
           <div className="text-right text-[11px] text-[var(--muted)]">
             <div className="tabular-nums">
+              <span className="text-[var(--muted)]/70">Opened </span>
+              {formatDateTime24(position.entryDatetime)}
+            </div>
+            <div className="tabular-nums">
+              <span className="text-[var(--muted)]/70">Closed </span>
               {formatDateTime24(position.exitDatetime)}
             </div>
             <div className="text-[var(--muted)]/80">
@@ -1934,6 +2007,10 @@ function PositionCard({
             tone={`font-medium ${pnlColor(priceDiff)}`}
           />
           <Metric label="Entry Price" value={formatPrice(position.entryPrice)} />
+          <Metric
+            label="Entry Date"
+            value={formatDateTime24(position.entryDatetime)}
+          />
           <Metric
             label="Range"
             value={`${formatPrice(position.bottomRange)} – ${formatPrice(position.topRange)}`}
@@ -2132,9 +2209,11 @@ function PositionListRow({
   onClaim?: (p: Position) => void;
   onDelete?: (p: Position) => void;
 }) {
-  const { position, deposited, fees, days, apr, profit } = row;
+  const { position, deposited, claimed, fees, days, apr, priceDiff, profit } =
+    row;
   const [open, setOpen] = useState(false);
   const isActive = variant === "active";
+  const wideRange = calcWideRangePercent(position.bottomRange, position.topRange);
 
   return (
     <div className={isActive ? "" : "opacity-75"}>
@@ -2183,6 +2262,29 @@ function PositionListRow({
                 tone={`font-medium ${pnlColor(position.scalp ?? 0)}`}
               />
             )}
+            <Metric label="New Fees" value={formatUsd(position.newFees)} />
+            <Metric label="Claimed" value={formatUsd(claimed)} />
+            <Metric
+              label="Price Diff"
+              value={formatUsd(priceDiff)}
+              tone={`font-medium ${pnlColor(priceDiff)}`}
+            />
+            <Metric
+              label="Entry Price"
+              value={formatPrice(position.entryPrice)}
+            />
+            <Metric
+              label="Entry Date"
+              value={formatDateTime24(position.entryDatetime)}
+            />
+            <Metric
+              label="Range"
+              value={`${formatPrice(position.bottomRange)} – ${formatPrice(position.topRange)}`}
+            />
+            <Metric
+              label="Range %"
+              value={wideRange > 0 ? formatPercent(wideRange) : "—"}
+            />
           </dl>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
