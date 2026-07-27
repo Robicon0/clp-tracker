@@ -16,11 +16,11 @@ import {
   getSettings,
   getTransfers,
   getWithdrawals,
+  migrateTransferMoneyStatus,
   saveOutlierDismissals,
   saveTransfers,
   saveWithdrawals,
 } from "../../lib/storage";
-import { countUnclassifiedTransfers } from "../../lib/calculations";
 import {
   correctTransferSymbol,
   dismissalFor,
@@ -212,6 +212,7 @@ type ModalState =
   | { kind: "edit"; transfer: Transfer }
   | { kind: "addExpense" }
   | { kind: "editExpense"; transfer: Transfer }
+  | { kind: "deploy"; transfer: Transfer }
   | { kind: "addWithdrawal" }
   | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
@@ -257,6 +258,7 @@ function buildWithdrawal(id: string, form: WithdrawalFormState): Withdrawal {
 function TransferListRow({
   transfer: t,
   pairLabel,
+  deployedLabel,
   selected,
   onToggleSelect,
   pendingDelete,
@@ -264,9 +266,12 @@ function TransferListRow({
   onDeleteConfirm,
   onDeleteCancel,
   onEdit,
+  onMarkDeployed,
+  onUnlinkDeployed,
 }: {
   transfer: Transfer;
   pairLabel: string;
+  deployedLabel: string | null;
   selected: boolean;
   onToggleSelect: (id: string) => void;
   pendingDelete: string | null;
@@ -274,6 +279,8 @@ function TransferListRow({
   onDeleteConfirm: (id: string) => void;
   onDeleteCancel: () => void;
   onEdit: (t: Transfer) => void;
+  onMarkDeployed: (t: Transfer) => void;
+  onUnlinkDeployed: (t: Transfer) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -308,6 +315,11 @@ function TransferListRow({
               <span className="tabular-nums">{formatDateDDMMYYYY(t.date)}</span>
               <TypePill type={t.transferType} />
               <MoneyStatusPill status={t.moneyStatus} />
+              {deployedLabel && (
+                <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300">
+                  Used → {deployedLabel}
+                </span>
+              )}
             </span>
           </span>
         </button>
@@ -374,6 +386,26 @@ function TransferListRow({
                 >
                   Edit
                 </button>
+                {/* Deploy-linking is only meaningful for Redeployed money. */}
+                {t.moneyStatus === "redeployed" &&
+                  t.transferType !== "expense" &&
+                  (t.deployedToPositionId ? (
+                    <button
+                      type="button"
+                      onClick={() => onUnlinkDeployed(t)}
+                      className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+                    >
+                      Remove deploy link
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onMarkDeployed(t)}
+                      className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+                    >
+                      Mark as deployed
+                    </button>
+                  ))}
                 <button
                   type="button"
                   onClick={() => onDeleteRequest(t.id)}
@@ -491,7 +523,6 @@ export default function TransfersPage() {
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [reviewOnly, setReviewOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingBulk, setPendingBulk] = useState<MoneyStatus | null>(null);
@@ -511,21 +542,19 @@ export default function TransfersPage() {
     setDismissals(getOutlierDismissals());
   };
 
-  const hydrated = useHydrated(refresh);
+  const hydrated = useHydrated(() => {
+    // Retire "Needs Review": persist an explicit moneyStatus on any legacy
+    // transfer that never had one (no-op for totals — unset already behaved as
+    // redeployed). Runs once; idempotent thereafter.
+    migrateTransferMoneyStatus();
+    refresh();
+  });
 
   const positionPairById = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of positions) map.set(p.id, p.pair);
     return map;
   }, [positions]);
-
-  // Transfers logged before Money Status existed. They behave as Redeployed
-  // everywhere, so nothing is wrong until the user says otherwise — this just
-  // surfaces them for a one-time pass.
-  const unclassifiedCount = useMemo(
-    () => (hydrated ? countUnclassifiedTransfers(transfers) : 0),
-    [hydrated, transfers],
-  );
 
   // Data Health: a transfer's token must belong to its linked position's pair,
   // and its amount should sit within that position's usual range.
@@ -543,18 +572,15 @@ export default function TransfersPage() {
 
   const sortedFiltered = useMemo(() => {
     if (!hydrated) return [];
-    const byType = transfers.filter((t) =>
+    const filtered = transfers.filter((t) =>
       typeFilter === "all" ? true : t.transferType === typeFilter,
     );
-    const filtered = reviewOnly
-      ? byType.filter((t) => t.moneyStatus === undefined)
-      : byType;
     return [...filtered].sort((a, b) => {
       const ta = new Date(a.date).getTime();
       const tb = new Date(b.date).getTime();
       return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
     });
-  }, [hydrated, transfers, typeFilter, reviewOnly]);
+  }, [hydrated, transfers, typeFilter]);
 
   // Free-text search over pair, notes, transfer type, token, destination,
   // platform — layered on top of the type/review filters (Part 5).
@@ -734,6 +760,39 @@ export default function TransfersPage() {
     setPendingDelete(null);
   };
 
+  // Link a Redeployed transfer to the position its money went into. The row
+  // stays in the list but drops out of Available Balance. Records the date so
+  // the link is auditable. Never touches the position itself.
+  const handleMarkDeployed = (target: Transfer, positionId: string) => {
+    saveTransfers(
+      getTransfers().map((t) =>
+        t.id === target.id
+          ? {
+              ...t,
+              deployedToPositionId: positionId,
+              deployedAt: todayDateInput(),
+            }
+          : t,
+      ),
+    );
+    refresh();
+    setModal({ kind: "none" });
+  };
+
+  // Undo the link — clears both fields, returning the amount to Available.
+  const handleUnlinkDeployed = (target: Transfer) => {
+    saveTransfers(
+      getTransfers().map((t) => {
+        if (t.id !== target.id) return t;
+        const { deployedToPositionId: _p, deployedAt: _a, ...rest } = t;
+        void _p;
+        void _a;
+        return rest;
+      }),
+    );
+    refresh();
+  };
+
   // Explicit, user-confirmed bulk correction of mismatched transfer tokens.
   // Only rewrites rows with a determinable suggestion; others stay for manual
   // Edit. Detection-only elsewhere — this runs solely on the confirm click.
@@ -755,10 +814,18 @@ export default function TransfersPage() {
   const balance = useMemo(() => {
     const lifetimeEarned = transfers.reduce((sum, t) => sum + t.amount, 0);
     const withdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
+    // Money linked to a position ("Mark as deployed") is no longer idle — it
+    // now lives inside that position's Deposited (entered separately), so it is
+    // excluded from Available. Undoing the link adds it straight back.
+    const deployed = transfers.reduce(
+      (sum, t) => (t.deployedToPositionId ? sum + t.amount : sum),
+      0,
+    );
     return {
       lifetimeEarned,
       withdrawn,
-      available: lifetimeEarned - withdrawn,
+      deployed,
+      available: lifetimeEarned - withdrawn - deployed,
     };
   }, [transfers, withdrawals]);
 
@@ -875,8 +942,8 @@ export default function TransfersPage() {
             onDone={refresh}
           />
 
-          {/* Money Flow ledger: earned (grows forever) − withdrawn = available now. */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {/* Money Flow ledger: earned − withdrawn − deployed = available now. */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <SummaryStat
               label="Lifetime Earned (USD)"
               value={formatUsd(balance.lifetimeEarned)}
@@ -888,9 +955,14 @@ export default function TransfersPage() {
               hint="Money taken out for personal / other use."
             />
             <SummaryStat
+              label="Deployed into Positions (USD)"
+              value={formatUsd(balance.deployed)}
+              hint="Redeployed money you've linked to a position — now inside its Deposited, no longer idle."
+            />
+            <SummaryStat
               label="Available Balance (USD)"
               value={formatUsd(balance.available)}
-              hint="Lifetime Earned − Withdrawn = what you have now."
+              hint="Lifetime Earned − Withdrawn − Deployed = what's still idle."
             />
           </div>
 
@@ -932,40 +1004,10 @@ export default function TransfersPage() {
             </div>
           )}
 
-          {unclassifiedCount > 0 && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4">
-              <p className="text-[13px] text-amber-300">
-                {unclassifiedCount}{" "}
-                {unclassifiedCount === 1 ? "transfer needs" : "transfers need"}{" "}
-                review — tell the app whether{" "}
-                {unclassifiedCount === 1 ? "it was" : "each was"} redeployed
-                elsewhere or an actual expense. Until reviewed,{" "}
-                {unclassifiedCount === 1 ? "it's" : "they're"} treated as
-                redeployed (not counted as a loss).
-              </p>
-              <p className="mt-1 text-[11px] text-[var(--muted)]">
-                Until reclassified they have no effect on Overall P&amp;L, so
-                nothing is being counted as a loss.
-              </p>
-              <button
-                type="button"
-                onClick={() => setReviewOnly((v) => !v)}
-                className="mt-2 rounded-md border border-amber-500/40 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
-              >
-                {reviewOnly ? "Show all transfers" : "Show only these"}
-              </button>
-            </div>
-          )}
-
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
             <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm font-semibold tracking-tight">
                 Transfers by Chain
-                {reviewOnly && (
-                  <span className="ml-2 text-[11px] font-normal text-amber-300">
-                    showing unreviewed only
-                  </span>
-                )}
               </h2>
               <TypeFilterToggle value={typeFilter} onChange={setTypeFilter} />
             </div>
@@ -1102,6 +1144,13 @@ export default function TransfersPage() {
                                 ? "Expense"
                                 : positionPairById.get(t.positionId) ?? "—"
                             }
+                            deployedLabel={
+                              t.deployedToPositionId
+                                ? positionPairById.get(
+                                    t.deployedToPositionId,
+                                  ) ?? "position"
+                                : null
+                            }
                             selected={selectedIds.has(t.id)}
                             onToggleSelect={toggleSelect}
                             pendingDelete={pendingDelete}
@@ -1113,6 +1162,10 @@ export default function TransfersPage() {
                                 ? setModal({ kind: "editExpense", transfer: tr })
                                 : setModal({ kind: "edit", transfer: tr })
                             }
+                            onMarkDeployed={(tr) =>
+                              setModal({ kind: "deploy", transfer: tr })
+                            }
+                            onUnlinkDeployed={handleUnlinkDeployed}
                           />
                         ))}
                       </div>
@@ -1264,6 +1317,16 @@ export default function TransfersPage() {
               initial={expenseToForm(modal.transfer)}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(form) => handleEditExpense(modal.transfer, form)}
+            />
+          )}
+          {modal.kind === "deploy" && (
+            <DeployLinkModal
+              transfer={modal.transfer}
+              positions={positions}
+              onCancel={() => setModal({ kind: "none" })}
+              onSubmit={(positionId) =>
+                handleMarkDeployed(modal.transfer, positionId)
+              }
             />
           )}
           {modal.kind === "addWithdrawal" && (
@@ -1810,6 +1873,77 @@ function WithdrawalFormModal({
 
 // Minimal modal for position-less expenses — Date, Amount, Notes only.
 // moneyStatus/transferType are set to "expense" by buildExpense, not the user.
+// Picks the position a Redeployed transfer's money went into (Part 2). All
+// positions are offered — usually a new active one, but a top-up into any
+// existing position is valid, so we don't over-restrict; active are listed
+// first, closed labelled. Confirming records the link; the position itself is
+// never modified.
+function DeployLinkModal({
+  transfer,
+  positions,
+  onCancel,
+  onSubmit,
+}: {
+  transfer: Transfer;
+  positions: Position[];
+  onCancel: () => void;
+  onSubmit: (positionId: string) => void;
+}) {
+  const [positionId, setPositionId] = useState(
+    transfer.deployedToPositionId ?? "",
+  );
+  const sorted = [...positions].sort((a, b) => {
+    if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+    return a.pair.localeCompare(b.pair);
+  });
+  return (
+    <ModalShell title="Mark as deployed" onCancel={onCancel}>
+      <Section title="Deploy into a position">
+        <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
+          Link this {formatUsd(transfer.amount)} transfer to the position its
+          money went into. It stays in the list but leaves Available Balance
+          until you undo. The position&apos;s own Deposited figure is unchanged
+          — you entered that separately when you opened it.
+        </p>
+        <Field label="Position" htmlFor="deploy-position">
+          <select
+            id="deploy-position"
+            required
+            value={positionId}
+            onChange={(e) => setPositionId(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">— Select position —</option>
+            {sorted.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.pair}
+                {p.status === "closed" ? " (closed)" : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </Section>
+      <div className="flex justify-end gap-2 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={positionId === ""}
+          onClick={() => onSubmit(positionId)}
+          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Confirm
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function ExpenseFormModal({
   title,
   submitLabel,
@@ -1945,17 +2079,12 @@ function MoneyStatusPill({ status }: { status: Transfer["moneyStatus"] }) {
       </span>
     );
   }
-  if (status === "redeployed") {
-    return (
-      <span className="inline-flex items-center rounded-full border border-[var(--border-strong)] bg-[var(--surface-2)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
-        Redeployed
-      </span>
-    );
-  }
-  // Never classified — shown distinctly so the review list is obvious.
+  // "Needs Review" was retired: every transfer is Redeployed unless marked an
+  // Expense. A legacy record still holding an unset status renders as
+  // Redeployed too (that is how it was always treated).
   return (
-    <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-300">
-      Needs review
+    <span className="inline-flex items-center rounded-full border border-[var(--border-strong)] bg-[var(--surface-2)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+      Redeployed
     </span>
   );
 }

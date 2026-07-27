@@ -41,10 +41,15 @@ function localDayOf(datetime: string): string {
 // taken ownership of the row and we must not overwrite it.
 export function isUntouchedAuto(t: Transfer): boolean {
   const stamp = t.sourceClaimId ? AUTO_CLAIM_NOTE : AUTO_CLOSE_NOTE;
+  // moneyStatus is now written "redeployed" at creation (the "Needs Review"
+  // state was retired); undefined is still accepted for legacy auto rows made
+  // before that change. A deploy-link means the user took ownership — never
+  // rebuild over it.
   return (
     t.platform === "" &&
     t.destination === "" &&
-    t.moneyStatus === undefined &&
+    (t.moneyStatus === undefined || t.moneyStatus === "redeployed") &&
+    t.deployedToPositionId === undefined &&
     t.notes === stamp
   );
 }
@@ -83,8 +88,9 @@ function autoClaimTransfer(
     platform: "",
     destination: "",
     transferType: "fees",
-    // moneyStatus deliberately omitted -> "needs review" (never guessed as
-    // redeployed): this money has not been moved or spent yet at claim time.
+    // Redeployed by default (the "Needs Review" state was retired): fee money
+    // stays in the business until the user marks it deployed or an expense.
+    moneyStatus: "redeployed",
     sourceClaimId: claim.id,
     notes: AUTO_CLAIM_NOTE,
   };
@@ -250,6 +256,8 @@ export function buildUpsideTransfer(position: Position): Transfer | null {
     platform: "",
     destination: "",
     transferType: "outOfRangeUpside",
+    // Redeployed by default (Needs Review retired).
+    moneyStatus: "redeployed",
     sourceCloseId: position.id,
     notes: AUTO_CLOSE_NOTE,
   };

@@ -88,6 +88,13 @@ export interface Transfer {
   // signal that automation, not a person, made the row.
   sourceClaimId?: string;
   sourceCloseId?: string;
+  // "Mark as deployed" linking: when Redeployed money is actually put into an
+  // LP position, the transfer is tagged with that position id (and the date it
+  // was linked). Additive/optional — absent on every existing record. A tagged
+  // transfer stays visible in the list but is excluded from Available Balance
+  // (the money now lives inside that position's Deposited, entered separately).
+  deployedToPositionId?: string;
+  deployedAt?: string;
   notes: string;
 }
 

@@ -75,15 +75,36 @@ export function saveClaims(claims: FeeClaim[]): void {
 }
 
 export function getTransfers(): Transfer[] {
-  // Backfill destination for legacy records saved before Sprint 9.
+  // Backfill legacy records: destination (Sprint 9) and moneyStatus. The
+  // "Needs Review" (unset) state was retired; unset always behaved as
+  // "redeployed" in every calculation, so defaulting it here changes no total.
   return readArray<Transfer>(KEYS.transfers).map((t) => ({
     ...t,
     destination: typeof t.destination === "string" ? t.destination : "",
+    moneyStatus: t.moneyStatus ?? "redeployed",
   }));
 }
 
 export function saveTransfers(transfers: Transfer[]): void {
   writeValue(KEYS.transfers, transfers);
+}
+
+// One-time persisted backfill so every stored transfer has an explicit
+// moneyStatus (retiring "Needs Review"). Idempotent, and a pure no-op for
+// totals: unset was already treated as "redeployed" everywhere. Returns true
+// if it rewrote anything.
+export function migrateTransferMoneyStatus(): boolean {
+  const raw = readArray<Transfer>(KEYS.transfers);
+  let changed = false;
+  const next = raw.map((t) => {
+    if (t.moneyStatus === undefined) {
+      changed = true;
+      return { ...t, moneyStatus: "redeployed" as const };
+    }
+    return t;
+  });
+  if (changed) writeValue(KEYS.transfers, next);
+  return changed;
 }
 
 export function getOutlierDismissals(): OutlierDismissal[] {
