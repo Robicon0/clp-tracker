@@ -30,6 +30,7 @@ import {
   type TransferSymbolMismatchRow,
 } from "../../lib/dataHealth";
 import { OutlierBanner } from "../../components/OutlierBanner";
+import { PositionCombobox } from "../../components/PositionCombobox";
 import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import {
   buildClaimTransfers,
@@ -162,7 +163,10 @@ function buildTransfer(id: string, form: TransferFormState): Transfer {
     platform: form.platform.trim().toUpperCase(),
     destination: form.destination.trim().toUpperCase(),
     transferType: form.transferType,
-    moneyStatus: form.moneyStatus,
+    // Undeployed Tokens are idle — moneyStatus stays unset ("idle, not yet
+    // decided") until the user marks them deployed or edits to an expense.
+    moneyStatus:
+      form.transferType === "undeployed" ? undefined : form.moneyStatus,
     notes: form.notes.trim().toUpperCase(),
   };
 }
@@ -177,11 +181,6 @@ interface ExpenseFormState {
   notes: string;
 }
 
-const EMPTY_EXPENSE_FORM: ExpenseFormState = {
-  date: "",
-  amount: "",
-  notes: "",
-};
 
 function expenseToForm(t: Transfer): ExpenseFormState {
   return {
@@ -210,7 +209,6 @@ type ModalState =
   | { kind: "none" }
   | { kind: "add" }
   | { kind: "edit"; transfer: Transfer }
-  | { kind: "addExpense" }
   | { kind: "editExpense"; transfer: Transfer }
   | { kind: "deploy"; transfer: Transfer }
   | { kind: "addWithdrawal" }
@@ -283,8 +281,15 @@ function TransferListRow({
   onUnlinkDeployed: (t: Transfer) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // A deployed transfer is settled — visually locked (dimmed). Editing still
+  // requires an explicit Edit click inside the expanded row (Part 4).
+  const isDeployed = t.deployedToPositionId !== undefined;
   return (
-    <div className={selected ? "bg-[var(--accent)]/[0.06]" : ""}>
+    <div
+      className={`${selected ? "bg-[var(--accent)]/[0.06]" : ""} ${
+        isDeployed ? "opacity-60" : ""
+      }`}
+    >
       <div className="flex items-start gap-2 px-3 py-2.5">
         <input
           type="checkbox"
@@ -386,9 +391,11 @@ function TransferListRow({
                 >
                   Edit
                 </button>
-                {/* Deploy-linking is only meaningful for Redeployed money. */}
-                {t.moneyStatus === "redeployed" &&
-                  t.transferType !== "expense" &&
+                {/* Deploy-linking applies to Redeployed money AND idle
+                    Undeployed Tokens (Part 4) — never to Expenses. */}
+                {t.transferType !== "expense" &&
+                  (t.moneyStatus === "redeployed" ||
+                    t.moneyStatus === undefined) &&
                   (t.deployedToPositionId ? (
                     <button
                       type="button"
@@ -724,12 +731,6 @@ export default function TransfersPage() {
     setDismissals(getOutlierDismissals());
   };
 
-  const handleAddExpense = (form: ExpenseFormState) => {
-    saveTransfers([...getTransfers(), buildExpense(newId(), form)]);
-    refresh();
-    setModal({ kind: "none" });
-  };
-
   const handleEditExpense = (target: Transfer, form: ExpenseFormState) => {
     const updated = buildExpense(target.id, form);
     saveTransfers(
@@ -912,19 +913,15 @@ export default function TransfersPage() {
           />
 
           <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setModal({ kind: "addExpense" })}
-              className="inline-flex h-9 items-center justify-center rounded-md border border-rose-500/40 bg-rose-500/10 px-4 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/20"
-            >
-              Log an Expense
-            </button>
+            {/* Expense and Withdrawal were the same concept to the user, so
+                they are one action now. It records a Withdrawal (reduces
+                Available Balance) — the formula is unchanged. */}
             <button
               type="button"
               onClick={() => setModal({ kind: "addWithdrawal" })}
-              className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)]"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-rose-500/40 bg-rose-500/10 px-4 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/20"
             >
-              Record Withdrawal
+              Log an Expense
             </button>
             <button
               type="button"
@@ -950,9 +947,9 @@ export default function TransfersPage() {
               hint="Everything ever moved to a destination — never decreases."
             />
             <SummaryStat
-              label="Withdrawn (USD)"
+              label="Expenses / Withdrawn (USD)"
               value={formatUsd(balance.withdrawn)}
-              hint="Money taken out for personal / other use."
+              hint="Money logged out of the business (expenses / withdrawals). Reduces Available Balance."
             />
             <SummaryStat
               label="Deployed into Positions (USD)"
@@ -1180,10 +1177,11 @@ export default function TransfersPage() {
             <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
               <div className="border-b border-[var(--border)] px-5 py-4">
                 <h2 className="text-sm font-semibold tracking-tight">
-                  Withdrawals
+                  Expenses &amp; Withdrawals
                 </h2>
                 <p className="mt-0.5 text-xs text-[var(--muted)]">
-                  Money taken out of the business for personal or other use.
+                  Money logged out of the business — expenses and personal
+                  withdrawals. Each reduces Available Balance.
                 </p>
               </div>
               <div className="overflow-x-auto">
@@ -1301,15 +1299,6 @@ export default function TransfersPage() {
               onSubmit={(form) => handleEdit(modal.transfer, form)}
             />
           )}
-          {modal.kind === "addExpense" && (
-            <ExpenseFormModal
-              title="Log an Expense"
-              submitLabel="Log Expense"
-              initial={{ ...EMPTY_EXPENSE_FORM, date: todayDateInput() }}
-              onCancel={() => setModal({ kind: "none" })}
-              onSubmit={handleAddExpense}
-            />
-          )}
           {modal.kind === "editExpense" && (
             <ExpenseFormModal
               title="Edit Expense"
@@ -1331,8 +1320,8 @@ export default function TransfersPage() {
           )}
           {modal.kind === "addWithdrawal" && (
             <WithdrawalFormModal
-              title="Record Withdrawal"
-              submitLabel="Record Withdrawal"
+              title="Log an Expense"
+              submitLabel="Log Expense"
               initial={{ ...EMPTY_WITHDRAWAL_FORM, date: todayDateInput() }}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={handleAddWithdrawal}
@@ -1674,22 +1663,11 @@ function TransferFormModal({
       <form onSubmit={submit} className="divide-y divide-[var(--border)]">
         <Section title="Transfer Details">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Position" htmlFor="positionId">
-              <select
-                id="positionId"
-                required
-                value={form.positionId}
-                onChange={(e) => set("positionId", e.target.value)}
-                className={inputClass}
-              >
-                <option value="">— Select position —</option>
-                {positions.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.pair} · {p.chain}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <PositionCombobox
+              positions={positions}
+              value={form.positionId}
+              onChange={(v) => set("positionId", v)}
+            />
             <Field label="Date" htmlFor="date">
               <input
                 id="date"
@@ -1749,22 +1727,27 @@ function TransferFormModal({
                 onChange={upper("destination")}
               />
             </Field>
-            <Field
-              label="Money Status"
-              htmlFor="moneyStatus"
-              hint="Redeployed = still working in the business (e.g. moved to AAVE). Expense = money that has left the business. Only expenses reduce Overall P&L."
-            >
-              <MoneyStatusToggle
-                value={form.moneyStatus}
-                onChange={(v) => set("moneyStatus", v)}
-              />
-            </Field>
             <Field label="Transfer Type" htmlFor="transferType">
               <TypeSegmentedToggle
                 value={form.transferType}
                 onChange={(v) => set("transferType", v)}
               />
             </Field>
+            {/* Undeployed Tokens are idle capital — not yet redeployed OR spent
+                — so no Money Status is asked at logging time (Part 3). It stays
+                idle until marked deployed or edited to an expense later. */}
+            {form.transferType !== "undeployed" && (
+              <Field
+                label="Money Status"
+                htmlFor="moneyStatus"
+                hint="Redeployed = still working in the business (e.g. moved to AAVE). Expense = money that has left the business. Only expenses reduce Overall P&L."
+              >
+                <MoneyStatusToggle
+                  value={form.moneyStatus}
+                  onChange={(v) => set("moneyStatus", v)}
+                />
+              </Field>
+            )}
           </div>
           <div className="mt-4">
             <Field label="Notes" htmlFor="notes">
@@ -1814,7 +1797,7 @@ function WithdrawalFormModal({
   return (
     <ModalShell title={title} onCancel={onCancel}>
       <form onSubmit={submit} className="divide-y divide-[var(--border)]">
-        <Section title="Withdrawal Details">
+        <Section title="Expense / Withdrawal Details">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Date" htmlFor="w_date">
               <input
@@ -1840,14 +1823,14 @@ function WithdrawalFormModal({
               />
             </Field>
             <Field
-              label="Method"
+              label="Method / Category (optional)"
               htmlFor="w_method"
-              hint="Where it went — Bank, Personal Wallet, etc."
+              hint="e.g. Rent, Bank, Personal Wallet."
             >
               <input
                 id="w_method"
                 className={inputClass}
-                placeholder="BANK"
+                placeholder="RENT"
                 value={form.method}
                 onChange={(e) => set("method", e.target.value.toUpperCase())}
               />
@@ -2079,9 +2062,15 @@ function MoneyStatusPill({ status }: { status: Transfer["moneyStatus"] }) {
       </span>
     );
   }
-  // "Needs Review" was retired: every transfer is Redeployed unless marked an
-  // Expense. A legacy record still holding an unset status renders as
-  // Redeployed too (that is how it was always treated).
+  // Unset = an Undeployed Tokens transfer sitting idle (not yet redeployed or
+  // spent). "Needs Review" was retired, so fees/upside are always redeployed.
+  if (status === undefined) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-sky-300">
+        Idle
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center rounded-full border border-[var(--border-strong)] bg-[var(--surface-2)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
       Redeployed

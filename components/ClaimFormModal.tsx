@@ -31,7 +31,8 @@ const optionDateFormatter = new Intl.DateTimeFormat("en-GB", {
 });
 
 // Enriched label so positions with identical pair/protocol/fee tier/chain
-// stay distinguishable (entry date + deposited are the disambiguators).
+// stay distinguishable: entry date, close date (if closed), deposited, and the
+// current/last value are the disambiguators.
 export function positionOptionLabel(p: Position): string {
   const parts = [p.pair];
   if (p.protocol) parts.push(p.protocol);
@@ -39,9 +40,20 @@ export function positionOptionLabel(p: Position): string {
   if (!Number.isNaN(entry.getTime())) {
     parts.push(`opened ${optionDateFormatter.format(entry)}`);
   }
+  if (p.status === "closed" && p.exitDatetime) {
+    const exit = new Date(p.exitDatetime);
+    if (!Number.isNaN(exit.getTime())) {
+      parts.push(`closed ${optionDateFormatter.format(exit)}`);
+    } else {
+      parts.push("closed");
+    }
+  }
   const deposited = getEffectiveDeposited(p);
-  if (deposited > 0) parts.push(usdFormatter.format(deposited));
-  if (p.status === "closed") parts.push("closed");
+  if (deposited > 0) parts.push(`dep ${usdFormatter.format(deposited)}`);
+  const current = p.currentBalance;
+  if (Number.isFinite(current) && current > 0) {
+    parts.push(`now ${usdFormatter.format(current)}`);
+  }
   return parts.join(" · ");
 }
 

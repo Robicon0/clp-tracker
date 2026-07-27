@@ -81,7 +81,10 @@ export function getTransfers(): Transfer[] {
   return readArray<Transfer>(KEYS.transfers).map((t) => ({
     ...t,
     destination: typeof t.destination === "string" ? t.destination : "",
-    moneyStatus: t.moneyStatus ?? "redeployed",
+    // Undeployed Tokens stay "idle" (unset) on purpose; everything else that
+    // was unset defaults to redeployed (the retired "Needs Review" state).
+    moneyStatus:
+      t.moneyStatus ?? (t.transferType === "undeployed" ? undefined : "redeployed"),
   }));
 }
 
@@ -97,7 +100,8 @@ export function migrateTransferMoneyStatus(): boolean {
   const raw = readArray<Transfer>(KEYS.transfers);
   let changed = false;
   const next = raw.map((t) => {
-    if (t.moneyStatus === undefined) {
+    // Leave Undeployed Tokens idle (unset); backfill only the others.
+    if (t.moneyStatus === undefined && t.transferType !== "undeployed") {
       changed = true;
       return { ...t, moneyStatus: "redeployed" as const };
     }
