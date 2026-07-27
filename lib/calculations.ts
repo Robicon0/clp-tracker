@@ -4,6 +4,7 @@ import type {
   Position,
   Transfer,
 } from "./types";
+import { normalizeToken } from "./nameNormalization";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -425,7 +426,11 @@ export function calcBusinessPnL(
   let usdcConverted = 0;
 
   const add = (symbol: string, amount: number) => {
-    const token = symbol.trim().toUpperCase();
+    // DELIBERATE FINANCIAL MERGE (user-authorized): normalizeToken folds WETH
+    // into ETH (and WBTC/CBBTC into BTC), so the combined quantity is priced
+    // once at the canonical token's price. Business-P&L-only — see the token
+    // NOTE in nameNormalization.ts and CLAUDE.md.
+    const token = normalizeToken(symbol);
     if (token === "" || !Number.isFinite(amount) || amount === 0) return;
     quantities.set(token, (quantities.get(token) ?? 0) + amount);
   };
@@ -516,7 +521,9 @@ export function calcUnconvertedHoldings(
   let hasUnknownCostBasis = false;
 
   const addQty = (symbol: string, amount: number): string | null => {
-    const token = symbol.trim().toUpperCase();
+    // Same user-authorized merge as calcBusinessPnL — WETH holdings roll into
+    // the ETH bucket and are valued at ETH's price.
+    const token = normalizeToken(symbol);
     if (token === "" || !Number.isFinite(amount) || amount === 0) return null;
     quantities.set(token, (quantities.get(token) ?? 0) + amount);
     return token;

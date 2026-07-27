@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getPriceCache, savePriceCache } from "./storage";
+import { normalizeToken } from "./nameNormalization";
 import type { FeeClaim } from "./types";
 
-// Every reward-token symbol seen in claim records, uppercased and de-duped.
+// Every reward-token symbol seen in claim records, normalized (WETH→ETH, etc.)
+// and de-duped. Normalizing here means a WETH-only holding fetches the ETH
+// (ethereum) price, so calcBusinessPnL's merged ETH bucket is always priced.
 // Sorted so the derived cache key is stable across re-renders.
 export function collectClaimSymbols(claims: FeeClaim[]): string[] {
   const symbols = new Set<string>();
   for (const c of claims) {
-    const t1 = c.token1Symbol.trim().toUpperCase();
-    const t2 = c.token2Symbol.trim().toUpperCase();
+    const t1 = normalizeToken(c.token1Symbol);
+    const t2 = normalizeToken(c.token2Symbol);
     if (t1) symbols.add(t1);
     if (t2) symbols.add(t2);
   }

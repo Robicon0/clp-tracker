@@ -26,8 +26,10 @@ function baseNormalize(raw: string): string {
 }
 
 // Raw (already base-normalized, i.e. UPPERCASE) → canonical grouping key.
+// Canonical chain label is the full name where the user prefers it: "SOLANA"
+// (not "SOL").
 const CHAIN_ALIASES: Record<string, string> = {
-  SOLANA: "SOL",
+  SOL: "SOLANA",
   ETHEREUM: "ETH",
   ARBITRUM: "ARB",
   ARBITRUMONE: "ARB",

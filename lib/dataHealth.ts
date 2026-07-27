@@ -439,7 +439,7 @@ export function dismissalFor(row: OutlierRow): OutlierDismissal {
 // (normalizeChain output).
 const NATIVE_CHAIN_FOR_BASE: Record<string, string> = {
   SUI: "SUI",
-  SOL: "SOL",
+  SOL: "SOLANA", // canonical chain label (normalizeChain output)
 };
 
 export interface ChainMismatchRow {

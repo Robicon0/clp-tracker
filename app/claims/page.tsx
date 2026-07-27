@@ -217,10 +217,14 @@ type ModalState =
   | { kind: "add" }
   | { kind: "edit"; claim: FeeClaim };
 
+type PositionStatusFilter = "all" | "open" | "closed";
+
 interface FilterState {
   positionId: string;
   platform: string;
   chain: string;
+  // Filter claims by whether their linked position is active or closed.
+  positionStatus: PositionStatusFilter;
   // When true, show only claims marked converted with no saved USD value.
   needsValueOnly: boolean;
 }
@@ -230,6 +234,7 @@ const EMPTY_FILTERS: FilterState = {
   positionId: ALL,
   platform: ALL,
   chain: ALL,
+  positionStatus: "all",
   needsValueOnly: false,
 };
 
@@ -292,12 +297,24 @@ export default function ClaimsPage() {
     setDismissals(getOutlierDismissals());
   };
 
+  const statusById = useMemo(() => {
+    const map = new Map<string, "active" | "closed">();
+    for (const p of positions) map.set(p.id, p.status);
+    return map;
+  }, [positions]);
+
   const filteredSorted = useMemo(() => {
     if (!hydrated) return [];
     const filtered = claims.filter((c) => {
       if (filters.positionId !== ALL && c.positionId !== filters.positionId) return false;
       if (filters.platform !== ALL && normalizePlatform(c.platform) !== filters.platform) return false;
       if (filters.chain !== ALL && normalizeChain(c.chain) !== filters.chain) return false;
+      if (filters.positionStatus !== "all") {
+        const status = statusById.get(c.positionId);
+        const wantClosed = filters.positionStatus === "closed";
+        // A claim with no resolvable position is treated as open (not closed).
+        if ((status === "closed") !== wantClosed) return false;
+      }
       if (filters.needsValueOnly && !isUnvaluedConvertedClaim(c)) return false;
       return true;
     });
@@ -308,7 +325,7 @@ export default function ClaimsPage() {
       const safeB = Number.isFinite(tb) ? tb : 0;
       return safeB - safeA;
     });
-  }, [hydrated, claims, filters]);
+  }, [hydrated, claims, filters, statusById]);
 
   // Summary cards describe the same claims the table shows, so they read from
   // the filtered set — not the raw list. Computing over all claims while the
@@ -486,6 +503,49 @@ export default function ClaimsPage() {
             </button>
           </div>
         )}
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-5 py-3">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+            Positions
+          </span>
+          <div
+            role="radiogroup"
+            aria-label="Filter by position status"
+            className="inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
+          >
+            {(
+              [
+                { value: "all", label: "All" },
+                { value: "open", label: "Open only" },
+                { value: "closed", label: "Closed only" },
+              ] as Array<{ value: PositionStatusFilter; label: string }>
+            ).map((opt, idx) => {
+              const selected = filters.positionStatus === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      positionStatus: opt.value,
+                    }))
+                  }
+                  className={`h-8 px-3 text-xs font-medium transition-colors ${
+                    idx > 0 ? "border-l border-[var(--border-strong)]" : ""
+                  } ${
+                    selected
+                      ? "bg-[var(--accent)] text-white"
+                      : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="grid grid-cols-1 gap-3 border-b border-[var(--border)] px-5 py-4 sm:grid-cols-3">
           <PositionCombobox
             positions={positions}
