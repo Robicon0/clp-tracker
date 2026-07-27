@@ -1450,6 +1450,37 @@ at the plan gate.
      over positions) is unchanged across all three states.
   tsc/lint/build clean.
 
+- 69bfc13: Retired "Needs Review" moneyStatus + "Mark as deployed" linking
+  (2026-07-28):
+  PART 1 — Fee and Out-of-Range-Upside automation now write moneyStatus
+  "redeployed" at creation (transferAutomation autoClaimTransfer +
+  buildUpsideTransfer) instead of leaving it unset. migrateTransferMoneyStatus()
+  in storage.ts persists unset→"redeployed" for the ~137-record backlog on the
+  Transfers hydrate (idempotent); getTransfers also backfills unset→redeployed
+  on read so all pages are instantly consistent. NO financial change — unset
+  was ALWAYS treated as redeployed (calcOverallPnL counts only moneyStatus
+  ==="expense"; Available Balance never read moneyStatus): verified Overall P&L
+  (−10,200) and Available Balance ($1,000) byte-identical before/after. Removed
+  the "N transfers need review" banner, the reviewOnly filter/state, and
+  countUnclassifiedTransfers usage; MoneyStatusPill's "Needs review" branch
+  gone — every row shows Redeployed or Expense. COUPLING FIXED: isUntouchedAuto
+  now treats moneyStatus undefined OR "redeployed" as the auto state AND
+  requires deployedToPositionId unset, so reconcile keeps updating untouched
+  auto rows but never overwrites a user's deploy-link. The outlier "Mark
+  confirmed" dismissal (clp_outlier_dismissals) is a SEPARATE system, untouched.
+  PART 2 — added optional deployedToPositionId/deployedAt to Transfer
+  (additive, no migration). A Redeployed transfer gets a "Mark as deployed"
+  action (DeployLinkModal, positions active-first, all allowed since a top-up
+  into any position is valid) that tags it; the row then shows a green "Used →
+  PAIR" badge and offers "Remove deploy link" to undo. Balance:
+  Available = Lifetime Earned − Withdrawn − Deployed (new Deployed card; the
+  balance memo sums transfers with deployedToPositionId set). Linked money
+  leaves Available because it now lives inside the position's Deposited (entered
+  separately) — the position record is NEVER modified by mark/unmark
+  (handlers call saveTransfers only). Verified: deploy $500 drops Available
+  $800→$300, undo restores $800, expense/withdrawn relationship unchanged.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
