@@ -1414,6 +1414,42 @@ at the plan gate.
   SUI-on-Solana / SOL-on-ETH while NOT flagging ETH/USDC-on-Base. No calc
   function touched. tsc/lint/build clean.
 
+- 2ef8ca5: Canonical names + ETH/WETH Business P&L merge + Fee Claims
+  open/closed filter (2026-07-28):
+  A. Fixed canonical display names (SOLANA not SOL, ETH not WETH) across the
+     existing name normalization. In nameNormalization.ts the CHAIN alias
+     flipped SOLANA→SOL to SOL→SOLANA (token ETH was already canonical). The
+     chain detector's NATIVE_CHAIN_FOR_BASE expected value updated SOL→SOLANA
+     in lockstep, so legit SOL/USDC-on-Solana positions do NOT false-flag.
+     Applies everywhere normalization already runs (Transfers by-chain, Fee
+     Claims combobox groups + chain filter, Business P&L chain blocks,
+     Positions chain filter). Label-only in those sum-preserving contexts.
+  B. DELIBERATE FINANCIAL CHANGE, user-authorized: merged ETH and WETH in
+     Business P&L's priced totals (previously separate buckets priced by
+     separate feeds — ethereum vs weth can differ by cents). calcBusinessPnL
+     and calcUnconvertedHoldings now key by normalizeToken; the combined
+     amount is valued at the CANONICAL token's price (WETH at ETH's price).
+     collectClaimSymbols (useTokenPrices) also normalizes so the ETH price is
+     fetched for a WETH-only holding. SIMPLIFICATION FLAGGED: this uses the
+     shared alias table, so it ALSO folds WBTC/CBBTC into BTC at BTC's price
+     (same 1:1-wrapped treatment) — one line to split if ETH/WETH-only is
+     ever wanted. FLOW-THROUGH (reported, expected): Growth Target's Combined
+     Earnings reads calcBusinessPnL.allTotal and Total P&L's "still held at
+     today's value" note reads calcUnconvertedHoldings, so both reflect the
+     merge naturally. Overall P&L is UNAFFECTED (calcOverallPnL reads
+     converted stableAmount + position currentBalance, never these token
+     prices). Pool P&L's calcTokenPnL is deliberately NOT merged (outside
+     Business P&L). Verified impact on representative data: 2.0 ETH @ $2000 +
+     1.0 WETH @ $1998 was two rows totalling $5,998; now one ETH row 3.0 @
+     $2000 = $6,000 (All Total and Unconverted Holdings) — +$2.00, and
+     tokenRows shows a single merged ETH row (in the calc, not just display).
+  C. Fee Claims gained an All / Open-only / Closed-only segmented filter on
+     the linked position's status (statusById lookup in filteredSorted;
+     claims with no resolvable position count as open). Independent of the
+     Position search combobox. Chain grouping (the combobox, which groups
+     over positions) is unchanged across all three states.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
