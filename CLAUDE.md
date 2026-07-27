@@ -1481,6 +1481,46 @@ at the plan gate.
   $800→$300, undo restores $800, expense/withdrawn relationship unchanged.
   tsc/lint/build clean.
 
+- d20f3e3: Transfers — merge Expense/Withdrawal, searchable Add-Transfer
+  picker, idle Undeployed, deploy+lock (2026-07-28):
+  PART 1 — INVESTIGATION: "Record Withdrawal" and "Log an Expense" were
+  genuinely different. Withdrawal (separate clp_withdrawals store) reduces
+  Available Balance only, no P&L. Expense (a Transfer, moneyStatus "expense")
+  reduces Overall P&L AND — because lifetimeEarned = Σ all transfers — inflates
+  Available. User says they are the same concept → consolidated into ONE "Log
+  an Expense" action that records a WITHDRAWAL (the survivor, chosen because it
+  feeds Available correctly and keeps the formula literally unchanged:
+  Available = Lifetime Earned − Withdrawn − Deployed). Removed the
+  expense-transfer ADD flow and the second button; relabelled the "Withdrawn"
+  card → "Expenses / Withdrawn", the table → "Expenses & Withdrawals", the form
+  → "Log an Expense". JUDGMENT/TRADEOFF FLAGGED: (a) new expenses no longer
+  reduce Overall P&L (they behave like withdrawals — reduce Available); (b)
+  legacy expense-transfers are untouched — still in the transfers list, still
+  reduce Overall P&L, still editable via editExpense (the "Expenses" type-filter
+  tab remains for them); (c) new expenses appear in the Expenses & Withdrawals
+  table, not the main transfer list. No calculated total changed for existing
+  data (verified Available 2000−500=1500, formula unchanged).
+  PART 2 — extracted the Fee Claims combobox into shared
+  components/PositionCombobox.tsx (searchable, chain-grouped, scrollbar-dark),
+  now used on Add Transfer too (replacing a bare <select>). positionOptionLabel
+  enriched: pair · protocol · opened DATE · closed DATE (if closed) · dep $X ·
+  now $current. Combobox sorts most-recent-first (entryDatetime desc) within
+  each chain group. `allValue` prop toggles the clearable "All positions" entry
+  (Fee Claims uses it; Add Transfer omits it → a position is required).
+  PART 3 — Undeployed Tokens no longer prompt for Money Status; buildTransfer
+  stores moneyStatus UNSET for transferType "undeployed" ("idle, not yet
+  decided"). getTransfers backfill and migrateTransferMoneyStatus now SKIP
+  undeployed (everything else unset still →redeployed), so idle survives.
+  MoneyStatusPill renders unset as a sky "Idle" badge. Idle undeployed counts
+  toward Available (in lifetimeEarned, not withdrawn/deployed) — verified 1000.
+  PART 4 — "Mark as deployed" now also applies to idle Undeployed (condition is
+  transferType !== "expense" && moneyStatus ∈ {redeployed, undefined}). A
+  deployed transfer of any type is visually locked (opacity-60) with the green
+  "Used → PAIR" badge; editing still requires the explicit Edit button (the row
+  has no casually-editable inline fields). Deploy subtracts from Available;
+  undo restores — verified 1000→0→1000.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
