@@ -1535,7 +1535,7 @@ at the plan gate.
   unaffected. Verified: 30000 + 1500 − 25000 = 6500, and a 500 expense leaves
   Overall P&L at 6500 (was 6000 with the old subtraction).
 
-- PENDING_HASH: DELIBERATE FINANCIAL FIX, user-approved: Overall P&L's
+- 9633297: DELIBERATE FINANCIAL FIX, user-approved: Overall P&L's
   Converted Fees now counts a claim's stablecoin portion even when the claim
   overall is marked "not converted" (since a stable leg was never volatile and
   never needed converting). Previously the whole claim was excluded,
