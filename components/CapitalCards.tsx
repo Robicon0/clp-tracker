@@ -117,9 +117,10 @@ export function OverallPnLCard({
         {formatUsd(result.overall)}
       </div>
       <p className={hintClass}>
-        Current active positions + realized converted profit − real expenses −
-        Initial Capital. Excludes tokens you&apos;re still holding (see Business
-        P&amp;L for that).
+        Current active positions + realized converted profit − Initial Capital.
+        Pure LP business performance — personal spending / withdrawals are
+        tracked separately as Available Balance on the Transfers page. Excludes
+        tokens you&apos;re still holding (see Business P&amp;L for that).
       </p>
       {breakdown}
       {result.unvaluedConvertedClaims > 0 && (

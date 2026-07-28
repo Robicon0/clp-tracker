@@ -616,7 +616,6 @@ function PortfolioSummarySection({
                   label: "+ Converted Fees (realized, all-time)",
                   value: formatUsd(overall.convertedFees),
                 },
-                { label: "− Expenses", value: formatUsd(overall.expenses) },
                 {
                   label: "− Initial Capital",
                   value: formatUsd(overall.initialCapital),

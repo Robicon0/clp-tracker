@@ -1008,10 +1008,12 @@ export function calcOverallPnL(
     convertedFees += c.stableAmount as number;
   }
 
+  // Expenses are no longer part of Overall P&L (user-confirmed formula change):
+  // Overall P&L measures pure LP business performance; personal spending /
+  // withdrawals live on the Transfers page's Available Balance instead. The
+  // total is still surfaced (for reference), just not subtracted here.
   let expenses = 0;
   for (const t of transfers) {
-    // Only an explicit "expense" counts. Undefined means never reviewed and
-    // is treated as redeployed, so legacy data cannot invent a loss.
     if (t.moneyStatus === "expense") expenses += toFinite(t.amount);
   }
 
@@ -1021,7 +1023,7 @@ export function calcOverallPnL(
     convertedFees,
     expenses,
     initialCapital: capital,
-    overall: activeCurrentValue + convertedFees - expenses - capital,
+    overall: activeCurrentValue + convertedFees - capital,
     unvaluedConvertedClaims,
   };
 }
