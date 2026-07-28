@@ -1578,6 +1578,48 @@ at the plan gate.
   the Overall P&L card exactly; dismissal persisted across reload. Zero
   console errors; seeds removed. tsc/lint/build clean.
 
+- PENDING_HASH2: Business P&L manual price override — real bug fixed + explicit
+  "Reset to Auto" (2026-07-28). Part 2 (Fee Claims status filter moved into the
+  filter row) is UI-only.
+  ROOT CAUSE (reproduced live, not guessed): the Current Price input is
+  UNCONTROLLED (defaultValue + a key derived from row.price) and committed
+  ONLY on blur (onBlur → setPrice). Enter — the natural commit gesture — did
+  nothing. So a user who cleared the field and pressed Enter saw an EMPTY price
+  box while settings.prices still held the override: the row stayed tagged
+  MANUAL and the USD column kept using the stale manual price (reproduced: box
+  blank, tag MANUAL, stored ETH 3000, USDC Amount $6,000.00). Refresh could not
+  rescue them because manual deliberately wins over fetched (Sprint 8.5), so
+  the override was effectively permanent — the reported "stuck on MANUAL
+  indefinitely". Clearing the field DOES work when the input actually blurs;
+  the bug was the gesture, not the delete logic in setPrice.
+  FIX: (1) onKeyDown on the price input — Enter commits (blur), Escape reverts
+  the field to the displayed price and blurs, so the visible value and the
+  stored override can no longer diverge. (2) An explicit "Reset to Auto" link
+  beside every MANUAL tag calling resetToAuto(token) (deletes the key, nothing
+  else) — reads "Clear" instead when that token has no fetched price, so the
+  label never promises an auto price that does not exist. (3) Hint text now
+  states plainly that a manual price survives Refresh on purpose and that
+  "Reset to Auto" is how you abandon one.
+  REFRESH RELATIONSHIP (confirmed, unchanged): Refresh still never overwrites a
+  manual override — verified live, SOL (AUTO) moved 73.4 → 73.39 while ETH
+  (MANUAL 4321) held. That behaviour is correct; it just needed a visible
+  escape hatch, which is what "Reset to Auto" is.
+  SECOND REAL BUG FOUND while investigating: manual prices are keyed by the
+  table's token symbol, which has been NORMALIZED (WETH→ETH) since 2ef8ca5.
+  Overrides saved before that merge are keyed by the raw symbol, so they have
+  no row to edit and NO way to be cleared — invisible and permanent. The page's
+  hydrate now folds settings.prices keys through normalizeToken once and
+  re-saves (canonical key wins if both exist). Verified: a stored
+  {WETH:9999} surfaced as an editable, resettable ETH row.
+  PART 2 (UI only): the standalone "All / Open only / Closed only" pill row on
+  Fee Claims is gone; the same filter is now a FilterSelect labelled "Status"
+  in the same grid as Position/Platform/Chain (now sm:grid-cols-2
+  lg:grid-cols-4), relabelled "All positions" / "Open positions" / "Closed
+  positions". Same filters state, same predicate — verified all three states
+  return identical rows to the old toggle (all 3 claims / open 2 / closed 1,
+  and back).
+  tsc/lint/build clean; zero console errors; seeds removed.
+
 ## Known Issues
 
 - None currently tracked.

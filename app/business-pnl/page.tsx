@@ -15,7 +15,7 @@ import {
 } from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
 import { mergePrices, useTokenPrices } from "../../lib/useTokenPrices";
-import { normalizeChain } from "../../lib/nameNormalization";
+import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import type { FeeClaim } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -110,12 +110,44 @@ export default function BusinessPnlPage() {
 
   const hydrated = useHydrated(() => {
     setClaims(getClaims());
-    setSettings(getBusinessPnLSettings());
+    // Manual prices are keyed by the token symbol shown in the table, which
+    // has been normalized (WETH→ETH) since the 2ef8ca5 merge. Overrides saved
+    // BEFORE that merge are keyed by the raw symbol, so they have no row to
+    // edit and no way to be cleared — invisible and permanent. Fold them onto
+    // the canonical key once, on read, keeping an existing canonical value if
+    // both exist.
+    const stored = getBusinessPnLSettings();
+    const prices: Record<string, number> = {};
+    let folded = false;
+    for (const [token, price] of Object.entries(stored.prices)) {
+      const canonical = normalizeToken(token);
+      if (canonical !== token) folded = true;
+      if (!(canonical in prices)) prices[canonical] = price;
+    }
+    if (folded) {
+      const next = { ...stored, prices };
+      saveBusinessPnLSettings(next);
+      setSettings(next);
+    } else {
+      setSettings(stored);
+    }
   });
 
   const persist = (next: BusinessPnLSettings) => {
     setSettings(next);
     saveBusinessPnLSettings(next);
+  };
+
+  // Abandon a manual override explicitly: the token goes back to whatever the
+  // auto-fetch says. This is the reliable escape hatch — clearing the field
+  // works too, but only commits on blur, and a user who pressed Enter instead
+  // would previously be left with an empty-looking box that was still applying
+  // the stored override. Refresh deliberately never does this (a manual value
+  // must survive a refresh), so the revert has to be its own action.
+  const resetToAuto = (token: string) => {
+    const prices = { ...settings.prices };
+    delete prices[token];
+    persist({ ...settings, prices });
   };
 
   // Manual overrides win over fetched prices. Storing a manual value equal to
@@ -261,7 +293,9 @@ export default function BusinessPnlPage() {
             <p className="mt-0.5 text-xs text-[var(--muted)]">
               Lifetime reward quantities from all claims. Prices are fetched
               automatically — stablecoins are $1. Type a price to override a
-              token manually; clear it to return to the auto price.
+              token manually. A manual price survives Refresh on purpose — use
+              &ldquo;Reset to Auto&rdquo; beside it to go back to the fetched
+              price.
             </p>
           </div>
           <div className="flex items-center gap-3 whitespace-nowrap">
@@ -328,9 +362,25 @@ export default function BusinessPnlPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
                         {row.token in settings.prices ? (
-                          <span className="text-[10px] uppercase tracking-wide text-[var(--accent)]">
-                            manual
-                          </span>
+                          <>
+                            <span className="text-[10px] uppercase tracking-wide text-[var(--accent)]">
+                              manual
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => resetToAuto(row.token)}
+                              title={
+                                row.token in fetchedPrices
+                                  ? `Discard the manual price and use the fetched price (${formatUsd(fetchedPrices[row.token])})`
+                                  : "Discard the manual price (no auto price available for this token)"
+                              }
+                              className="text-[10px] font-medium text-[var(--muted)] underline decoration-dotted underline-offset-2 transition-colors hover:text-[var(--accent)]"
+                            >
+                              {row.token in fetchedPrices
+                                ? "Reset to Auto"
+                                : "Clear"}
+                            </button>
+                          </>
                         ) : row.token in fetchedPrices ? (
                           <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
                             auto
@@ -345,6 +395,22 @@ export default function BusinessPnlPage() {
                           className={`${inputClass} w-32 text-right`}
                           placeholder="price"
                           defaultValue={row.price ?? ""}
+                          // Enter must commit. Without this the field only saved
+                          // on blur, so clearing it and pressing Enter left an
+                          // empty box while the override was still stored and
+                          // still applied — the "stuck on MANUAL" report.
+                          // Escape abandons the edit and restores what is shown.
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.currentTarget.value =
+                                row.price === null ? "" : String(row.price);
+                              e.currentTarget.blur();
+                            }
+                          }}
                           onBlur={(e) => setPrice(row.token, e.target.value)}
                         />
                       </div>

@@ -503,50 +503,7 @@ export default function ClaimsPage() {
             </button>
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-5 py-3">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-            Positions
-          </span>
-          <div
-            role="radiogroup"
-            aria-label="Filter by position status"
-            className="inline-flex overflow-hidden rounded-md border border-[var(--border-strong)]"
-          >
-            {(
-              [
-                { value: "all", label: "All" },
-                { value: "open", label: "Open only" },
-                { value: "closed", label: "Closed only" },
-              ] as Array<{ value: PositionStatusFilter; label: string }>
-            ).map((opt, idx) => {
-              const selected = filters.positionStatus === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      positionStatus: opt.value,
-                    }))
-                  }
-                  className={`h-8 px-3 text-xs font-medium transition-colors ${
-                    idx > 0 ? "border-l border-[var(--border-strong)]" : ""
-                  } ${
-                    selected
-                      ? "bg-[var(--accent)] text-white"
-                      : "bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface-2)]/70"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 border-b border-[var(--border)] px-5 py-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 border-b border-[var(--border)] px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
           <PositionCombobox
             positions={positions}
             value={filters.positionId}
@@ -573,6 +530,23 @@ export default function ClaimsPage() {
             options={[
               { value: ALL, label: "All chains" },
               ...chainOptions.map((c) => ({ value: c, label: c })),
+            ]}
+          />
+          {/* Was a standalone pill toggle above this row; same filter state and
+              same predicate, just moved in-line with the other filters. */}
+          <FilterSelect
+            label="Status"
+            value={filters.positionStatus}
+            onChange={(v) =>
+              setFilters((prev) => ({
+                ...prev,
+                positionStatus: v as PositionStatusFilter,
+              }))
+            }
+            options={[
+              { value: "all", label: "All positions" },
+              { value: "open", label: "Open positions" },
+              { value: "closed", label: "Closed positions" },
             ]}
           />
         </div>
