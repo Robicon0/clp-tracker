@@ -1578,7 +1578,7 @@ at the plan gate.
   the Overall P&L card exactly; dismissal persisted across reload. Zero
   console errors; seeds removed. tsc/lint/build clean.
 
-- PENDING_HASH2: Business P&L manual price override — real bug fixed + explicit
+- 59d71a2: Business P&L manual price override — real bug fixed + explicit
   "Reset to Auto" (2026-07-28). Part 2 (Fee Claims status filter moved into the
   filter row) is UI-only.
   ROOT CAUSE (reproduced live, not guessed): the Current Price input is
