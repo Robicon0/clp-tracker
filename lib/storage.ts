@@ -21,6 +21,7 @@ const KEYS = {
   withdrawals: "clp_withdrawals",
   positionPrices: "clp_position_prices",
   outlierDismissals: "clp_outlier_dismissals",
+  mixedStableNotice: "clp_mixed_stable_notice",
 } as const;
 
 // Single source of truth for settings defaults. The Settings page imports
@@ -117,6 +118,23 @@ export function getOutlierDismissals(): OutlierDismissal[] {
 
 export function saveOutlierDismissals(dismissals: OutlierDismissal[]): void {
   writeValue(KEYS.outlierDismissals, dismissals);
+}
+
+// One-time diagnostic notice: the mixed-claim (stable-leg) recovery report.
+// Purely a "have you seen this" flag — it gates no calculation, so it is
+// deliberately NOT part of the Settings backup (a restored backup showing the
+// report again is harmless; hiding it on a fresh machine is not).
+export function isMixedStableNoticeDismissed(): boolean {
+  if (!isBrowser()) return false;
+  try {
+    return window.localStorage.getItem(KEYS.mixedStableNotice) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function dismissMixedStableNotice(): void {
+  writeValue(KEYS.mixedStableNotice, true);
 }
 
 export function getWithdrawals(): Withdrawal[] {

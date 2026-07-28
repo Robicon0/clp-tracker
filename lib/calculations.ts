@@ -956,6 +956,80 @@ export interface OverallPnL {
   // Claims marked converted but saved without a USD value contribute nothing
   // and are counted here so the UI can say so rather than quietly understate.
   unvaluedConvertedClaims: number;
+  // Claims marked NOT converted that nonetheless hold a stablecoin leg, and
+  // the dollars that leg contributes. Surfaced so the in-app diagnostic can
+  // report the exact impact of the per-leg rule on the user's own data
+  // without recomputing it a second way (Invariant #6).
+  mixedStableClaims: number;
+  mixedStableRecovered: number;
+}
+
+// The face value of a claim's stablecoin legs. A stable leg is already in
+// stablecoin — it never was volatile and never needed converting — so it is
+// realized money regardless of the claim's overall convertedToStable flag.
+// Uses the same stable set as every other calculation (isStableSymbol).
+export function claimStableFace(claim: FeeClaim): number {
+  let face = 0;
+  if (isStableSymbol(claim.token1Symbol) && Number.isFinite(claim.token1Amount)) {
+    face += Math.max(0, claim.token1Amount);
+  }
+  if (isStableSymbol(claim.token2Symbol) && Number.isFinite(claim.token2Amount)) {
+    face += Math.max(0, claim.token2Amount);
+  }
+  return face;
+}
+
+// The realized (already-in-stablecoin) dollars an UNCONVERTED claim still
+// contributes to Overall P&L. Converted claims return 0 here because their
+// whole stableAmount is counted by the converted branch instead — this
+// function is only the "not converted" half of the per-leg rule.
+//
+// Clamped to the claim's typed total when one exists, so a mistyped leg amount
+// can never contribute more than the whole claim was worth (Invariant #8).
+// With no typed total (legacy unvalued claim), the stable leg's face value
+// stands on its own — it is known money regardless.
+//
+// Single source of the rule: calcOverallPnL and the in-app diagnostic both
+// call this, so the reported recovery can never disagree with the figure
+// actually added to Overall P&L (Invariant #6).
+export function claimStableRealized(claim: FeeClaim): number {
+  if (claim.convertedToStable) return 0;
+  const face = claimStableFace(claim);
+  if (face <= 0) return 0;
+  const typed = claim.stableAmount;
+  const cap = Number.isFinite(typed) ? (typed as number) : face;
+  return Math.max(0, Math.min(face, cap));
+}
+
+export interface MixedStableClaimRow {
+  claim: FeeClaim;
+  stableFace: number;
+  recovered: number;
+  typedTotal: number | null;
+  clamped: boolean;
+}
+
+// Every unconverted claim whose stablecoin leg now counts. Powers the one-time
+// in-app diagnostic that reports this fix's real impact on the user's own data
+// (which cannot be computed outside their browser — localStorage).
+export function findMixedStableClaims(claims: FeeClaim[]): MixedStableClaimRow[] {
+  const rows: MixedStableClaimRow[] = [];
+  for (const claim of claims) {
+    const recovered = claimStableRealized(claim);
+    if (recovered <= 0) continue;
+    const stableFace = claimStableFace(claim);
+    const typedTotal = Number.isFinite(claim.stableAmount)
+      ? (claim.stableAmount as number)
+      : null;
+    rows.push({
+      claim,
+      stableFace,
+      recovered,
+      typedTotal,
+      clamped: recovered < stableFace - 1e-9,
+    });
+  }
+  return rows.sort((a, b) => b.recovered - a.recovered);
 }
 
 // Where the business stands against the capital it started with.
@@ -965,9 +1039,13 @@ export interface OverallPnL {
 //               − transfers classified as a real expense
 //               − initial capital
 //
-// Conversion-gated on purpose: this measures money actually banked, so fees
-// still held as tokens are excluded and stay in the Business P&L page's
-// Unconverted Holdings view. That makes it the second conversion-gated
+// Conversion-gated PER LEG, not per claim (user-approved 2026-07-28): this
+// measures money actually banked, so a fee leg still held as a volatile token
+// is excluded and stays in the Business P&L page's Unconverted Holdings view —
+// but a STABLECOIN leg was never volatile and never needed converting, so it
+// counts even when the claim as a whole is marked "not converted". The old
+// all-or-nothing gate dropped the USDC side of mixed claims entirely and
+// understated Overall P&L. That still makes it the second conversion-gated
 // metric in the app, alongside Total P&L's per-token stable contributed —
 // everywhere else stableAmount means USD value regardless of conversion
 // (Invariant #10).
@@ -999,13 +1077,23 @@ export function calcOverallPnL(
 
   let convertedFees = 0;
   let unvaluedConvertedClaims = 0;
+  let mixedStableClaims = 0;
+  let mixedStableRecovered = 0;
   for (const c of claims) {
-    if (!c.convertedToStable) continue;
-    if (isUnvaluedConvertedClaim(c)) {
-      unvaluedConvertedClaims += 1;
+    if (c.convertedToStable) {
+      if (isUnvaluedConvertedClaim(c)) {
+        unvaluedConvertedClaims += 1;
+        continue;
+      }
+      convertedFees += c.stableAmount as number;
       continue;
     }
-    convertedFees += c.stableAmount as number;
+    // Not converted overall — but any stablecoin leg is already realized.
+    const realized = claimStableRealized(c);
+    if (realized <= 0) continue;
+    convertedFees += realized;
+    mixedStableClaims += 1;
+    mixedStableRecovered += realized;
   }
 
   // Expenses are no longer part of Overall P&L (user-confirmed formula change):
@@ -1025,6 +1113,8 @@ export function calcOverallPnL(
     initialCapital: capital,
     overall: activeCurrentValue + convertedFees - capital,
     unvaluedConvertedClaims,
+    mixedStableClaims,
+    mixedStableRecovered,
   };
 }
 

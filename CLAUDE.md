@@ -1535,6 +1535,49 @@ at the plan gate.
   unaffected. Verified: 30000 + 1500 − 25000 = 6500, and a 500 expense leaves
   Overall P&L at 6500 (was 6000 with the old subtraction).
 
+- PENDING_HASH: DELIBERATE FINANCIAL FIX, user-approved: Overall P&L's
+  Converted Fees now counts a claim's stablecoin portion even when the claim
+  overall is marked "not converted" (since a stable leg was never volatile and
+  never needed converting). Previously the whole claim was excluded,
+  understating Overall P&L. Volatile portions of a claim still only count when
+  marked converted. Clamped to the claim's typed total when known, to guard
+  against a mistyped value over-counting.
+  RULE (one source, lib/calculations.ts): claimStableFace(claim) sums
+  tokenAmount across stable-symbol legs (isStableSymbol — same stable set as
+  everywhere else); claimStableRealized(claim) is the "not converted" half —
+  0 when converted (that branch counts the full stableAmount as before),
+  otherwise min(stableFace, stableAmount ?? stableFace), floored at 0.
+  calcOverallPnL AND the diagnostic both call claimStableRealized, so the
+  reported recovery can never disagree with the figure actually added
+  (Invariant #6). A "No" claim with NO stable leg still contributes $0 —
+  unchanged. A "No" claim with stableAmount null still contributes its stable
+  leg's face value (approved decision #1); the clamp is approved decision #2.
+  SCOPE: calcOverallPnL only. getEffectiveClaimed/getEffectiveTotalFees
+  (which count stableAmount regardless of conversion, Invariant #10),
+  calcUnconvertedHoldings, calcBusinessPnL, Growth Target and Net/LP P&L are
+  all untouched — verified live, Total Fees Earned $1,230 and Net P&L
+  $10,430 identical while Overall P&L moved $15 → $362.
+  OverallPnL gained mixedStableClaims/mixedStableRecovered, so both
+  EMPTY_OVERALL literals (app/page.tsx, app/total-pnl/page.tsx) needed the
+  new fields — they are still two literals, keep them in step.
+  IN-APP DIAGNOSTIC (real-data reporting): the affected count/dollars cannot
+  be computed outside the user's browser (localStorage — same limit as
+  c372b30/666ec71), so components/MixedStableRecoveryCard.tsx reports it live
+  on the Dashboard: mixed-claim count, dollars recovered, Overall P&L before
+  → after (before = overall − mixedStableRecovered, exact by construction),
+  and an expandable per-claim list flagging clamped and null-total rows.
+  One-time: "Got it, hide this" persists clp_mixed_stable_notice, deliberately
+  NOT in the Settings backup keys (it gates no calculation). Read-only — it
+  never rewrites a claim.
+  Verified against the compiled module and live on localhost:3001 with a seed
+  covering every case: mixed "No" 5 USDC + 1 SUI (typed 15) → +$5; converted
+  claim → $15 unchanged; converted-but-unvalued → $0 + unvalued count 1;
+  pure-volatile "No" (ETH/BTC) → $0; clamp (500 USDC leg, typed 300) → +$300;
+  null-total mixed (42 USDC) → +$42; stable-only "No" (USDC+USDT, no typed
+  total) → +$15. Card showed 3 claims / +$347.00 / $15.00 → $362.00, matching
+  the Overall P&L card exactly; dismissal persisted across reload. Zero
+  console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

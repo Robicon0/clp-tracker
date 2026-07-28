@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
+  dismissMixedStableNotice,
   getClaims,
   getOutlierDismissals,
   getPositions,
   getSettings,
   getTransfers,
+  isMixedStableNoticeDismissed,
   saveSettings,
 } from "../lib/storage";
 import {
@@ -16,6 +18,7 @@ import {
 } from "../components/CapitalCards";
 import { GrowthTargetSection } from "../components/GrowthTarget";
 import { DataHealthCard } from "../components/DataHealthCard";
+import { MixedStableRecoveryCard } from "../components/MixedStableRecoveryCard";
 import { computeDataHealth, type DataHealthReport } from "../lib/dataHealth";
 import { useHydrated } from "../lib/useHydrated";
 import {
@@ -45,6 +48,8 @@ const EMPTY_OVERALL: OverallPnL = {
   initialCapital: 0,
   overall: 0,
   unvaluedConvertedClaims: 0,
+  mixedStableClaims: 0,
+  mixedStableRecovered: 0,
 };
 
 const EMPTY_DATA_HEALTH: DataHealthReport = {
@@ -293,12 +298,15 @@ export default function DashboardPage() {
   const [initialCapital, setInitialCapital] = useState(0);
   const [targetMonthlyPercent, setTargetMonthlyPercent] = useState(0);
   const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
+  // One-time diagnostic for the per-leg conversion fix; hidden once seen.
+  const [mixedNoticeHidden, setMixedNoticeHidden] = useState(true);
 
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
     setDismissals(getOutlierDismissals());
+    setMixedNoticeHidden(isMixedStableNoticeDismissed());
     const settings = getSettings();
     setInitialCapital(settings.initialCapital);
     setTargetMonthlyPercent(settings.targetMonthlyPercent);
@@ -370,6 +378,17 @@ export default function DashboardPage() {
       </header>
 
       {hydrated && !isEmpty && <DataHealthCard report={dataHealth} />}
+
+      {hydrated && !isEmpty && !mixedNoticeHidden && (
+        <MixedStableRecoveryCard
+          claims={claims}
+          overall={overall}
+          onDismiss={() => {
+            dismissMixedStableNotice();
+            setMixedNoticeHidden(true);
+          }}
+        />
+      )}
 
       {isEmpty ? (
         <WelcomeEmptyState />

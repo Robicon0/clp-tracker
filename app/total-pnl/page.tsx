@@ -38,6 +38,8 @@ const EMPTY_OVERALL: OverallPnL = {
   initialCapital: 0,
   overall: 0,
   unvaluedConvertedClaims: 0,
+  mixedStableClaims: 0,
+  mixedStableRecovered: 0,
 };
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
