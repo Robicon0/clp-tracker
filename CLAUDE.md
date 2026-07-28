@@ -1521,6 +1521,20 @@ at the plan gate.
   undo restores — verified 1000→0→1000.
   tsc/lint/build clean.
 
+- 3b727b2: DELIBERATE FORMULA CHANGE, user-confirmed: removed Expenses from
+  Overall P&L. New formula = Current Value (active) + Converted Fees − Initial
+  Capital. Overall P&L now measures pure LP business performance; personal
+  spending/withdrawals are tracked separately via Available Balance on the
+  Transfers page. Logging an expense now only affects Available Balance, not
+  Overall P&L — this is intended, not a regression. calcOverallPnL still
+  computes the `expenses` field (for reference) but no longer subtracts it;
+  the shared OverallPnLCard hint (Dashboard + Total P&L) and Total P&L's
+  breakdown ("− Expenses" line removed) were updated to match. Growth Target
+  (positionEarnings + businessAllTotal, no expense term), Available Balance
+  (lifetime − withdrawn − deployed), and Net/LP P&L (computeTotals) are all
+  unaffected. Verified: 30000 + 1500 − 25000 = 6500, and a 500 expense leaves
+  Overall P&L at 6500 (was 6000 with the old subtraction).
+
 ## Known Issues
 
 - None currently tracked.
