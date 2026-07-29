@@ -5,11 +5,14 @@ import { positionOptionLabel } from "./ClaimFormModal";
 import { normalizeChain } from "../lib/nameNormalization";
 import type { Position } from "../lib/types";
 
-// Searchable, chain-grouped position picker shared by the Fee Claims filter and
-// the Add Transfer form. Type any of pair/chain/platform to filter live;
-// positions are grouped by (normalized) chain and, within a chain, sorted most
-// recent first. `allValue` (optional) adds a clearable "all" entry — the Fee
-// Claims filter uses it; Add Transfer omits it so a real position is required.
+// Searchable, two-level-grouped position picker shared by the Fee Claims filter
+// and the Add Transfer form. Type any of pair/chain/platform to filter live;
+// positions are grouped by (normalized) chain, then split within each chain into
+// Open Positions / Closed Positions (open first), each sorted most recent first.
+// A sub-section renders only when it has members, so a chain holding only open
+// (or only closed) positions shows no empty heading. `allValue` (optional) adds
+// a clearable "all" entry — the Fee Claims filter uses it; Add Transfer omits it
+// so a real position is required.
 export function PositionCombobox({
   positions,
   value,
@@ -50,28 +53,46 @@ export function PositionCombobox({
     return allValue !== undefined ? allLabel : placeholder;
   })();
 
-  // Group by chain (chains alphabetical), most-recent-first within each group.
+  // Chain (alphabetical) → Open then Closed → most-recent-first within each.
+  // The search predicate is unchanged; it just runs before the grouping, so a
+  // query narrows both sub-sections and drops any that end up empty.
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matches = positions.filter((p) => {
       if (q === "") return true;
       return `${p.pair} ${p.chain} ${p.protocol}`.toLowerCase().includes(q);
     });
-    const byChain = new Map<string, Position[]>();
+    const byChain = new Map<string, { open: Position[]; closed: Position[] }>();
     for (const p of matches) {
       const chain = normalizeChain(p.chain) || "OTHER";
-      const list = byChain.get(chain);
-      if (list) list.push(p);
-      else byChain.set(chain, [p]);
+      let entry = byChain.get(chain);
+      if (!entry) {
+        entry = { open: [], closed: [] };
+        byChain.set(chain, entry);
+      }
+      // Anything not explicitly closed is treated as open, matching how every
+      // other surface reads status (active is the only other stored value).
+      if (p.status === "closed") entry.closed.push(p);
+      else entry.open.push(p);
     }
-    for (const list of byChain.values()) {
-      list.sort(
-        (a, b) =>
-          (new Date(b.entryDatetime).getTime() || 0) -
-          (new Date(a.entryDatetime).getTime() || 0),
-      );
-    }
-    return [...byChain.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const byEntryDesc = (a: Position, b: Position) =>
+      (new Date(b.entryDatetime).getTime() || 0) -
+      (new Date(a.entryDatetime).getTime() || 0);
+    return [...byChain.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([chain, entry]) => ({
+        chain,
+        // Open first. Empty sub-sections are dropped here rather than in the
+        // markup, so a chain with only one status shows only that heading.
+        sections: (
+          [
+            { key: "open", title: "Open Positions", list: entry.open },
+            { key: "closed", title: "Closed Positions", list: entry.closed },
+          ] as const
+        )
+          .filter((s) => s.list.length > 0)
+          .map((s) => ({ ...s, list: [...s.list].sort(byEntryDesc) })),
+      }));
   }, [positions, query]);
 
   const select = (v: string) => {
@@ -134,24 +155,31 @@ export function PositionCombobox({
                 No positions match “{query}”.
               </div>
             ) : (
-              groups.map(([chain, list]) => (
+              groups.map(({ chain, sections }) => (
                 <div key={chain}>
                   <div className="bg-[var(--surface-2)]/60 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
                     {chain}
                   </div>
-                  {list.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => select(p.id)}
-                      className={`block w-full px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)] ${
-                        value === p.id
-                          ? "text-[var(--accent)]"
-                          : "text-[var(--foreground)]"
-                      }`}
-                    >
-                      {positionOptionLabel(p)}
-                    </button>
+                  {sections.map((section) => (
+                    <div key={section.key}>
+                      <div className="px-3 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]/70">
+                        {section.title}
+                      </div>
+                      {section.list.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => select(p.id)}
+                          className={`block w-full px-3 py-2 pl-5 text-left text-[13px] hover:bg-[var(--surface-2)] ${
+                            value === p.id
+                              ? "text-[var(--accent)]"
+                              : "text-[var(--foreground)]"
+                          } ${section.key === "closed" ? "opacity-75" : ""}`}
+                        >
+                          {positionOptionLabel(p)}
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               ))
