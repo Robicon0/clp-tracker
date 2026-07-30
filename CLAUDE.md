@@ -1748,7 +1748,7 @@ at the plan gate.
   deployedToPositionId / deployedAt survive. Zero console errors; seeds
   removed. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Made Platform optional on Edit Transfer. Added soft-delete +
+- 037abcc: Made Platform optional on Edit Transfer. Added soft-delete +
   Recently Deleted/Restore for Transfers — deleting no longer permanently erases
   data; deleted transfers are recoverable indefinitely unless explicitly
   permanently deleted via a separate, confirmed action.
