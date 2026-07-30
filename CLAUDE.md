@@ -1682,7 +1682,7 @@ at the plan gate.
   Deployed $0, Available $575. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: DELIBERATE BALANCE CHANGE, user-confirmed: added a
+- a6df1f0: DELIBERATE BALANCE CHANGE, user-confirmed: added a
   "Transferred to Platforms" state — a Redeployed transfer with a Platform
   assigned is now excluded from Available Balance (previously stayed included).
   Added individual and bulk "Send to Platform" actions across Fees/
