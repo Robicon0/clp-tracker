@@ -1620,6 +1620,68 @@ at the plan gate.
   and back).
   tsc/lint/build clean; zero console errors; seeds removed.
 
+- Transfers: inert Expense status, settled-row lock, position-scoped bulk mark
+  (2026-07-30). Four related fixes from user testing. Both Part 1 and Part 2
+  root causes were MEASURED live against a seeded 5-transfer set, not assumed.
+  PART 1 — "Mark as deployed missing on Out-of-Range-Upside / Fees": NOT a
+  transferType gate. Measured: with moneyStatus "redeployed"/idle, Fees, Out of
+  Range Upside AND Undeployed Tokens all offered the action (["Edit","Mark as
+  deployed","Delete"] on each). The only row that lacked it was the one whose
+  moneyStatus was "expense" — which is correct behaviour (expensed money has
+  left the business, there is nothing to deploy). What made it look like a
+  per-type bug is the interaction with Part 2: the user marked an upside
+  transfer as Expense, saw no balance change (Part 2), and the deploy action
+  silently disappeared. So the real defect was Part 2 plus a silent
+  disappearance. Fix: the gate is now a named `canDeploy` documenting that it is
+  type-agnostic, and an Expense-marked non-expense transfer now SAYS why the
+  action is gone ("Switch Money Status back to Redeployed in Edit"). No
+  behavioural change to which rows can deploy — verified an upside transfer
+  regains "Mark as deployed" the moment its status returns to Redeployed.
+  PART 2 — REAL BUG, and NOT upside-specific (a Fees transfer reproduced it
+  identically): nothing on the page read moneyStatus for money. The balance memo
+  computed lifetimeEarned − withdrawn − deployed only, and since 3b727b2
+  removed expenses from Overall P&L, a transfer marked "expense" affected
+  NOTHING anywhere — a pill and nothing else. Reproduced: a $50 Expense-marked
+  fees transfer left Available at $1,025.00 (= 1050 − 25 − 0) and never appeared
+  in Expenses & Withdrawals. Fix: `expensed` = Σ amount where moneyStatus ===
+  "expense" is now subtracted from Available and added into the Expenses /
+  Withdrawn card, and the Expenses & Withdrawals table lists expense-marked
+  transfers alongside logged withdrawals (footer renamed "Total Out of
+  Business"). Transfer-backed ledger rows are Edit-only (tagged FROM TRANSFER) —
+  the transfer list above stays the single source of truth for the record.
+  DOUBLE-COUNT GUARD: `deployed` now skips rows whose moneyStatus is "expense",
+  so the two subtractions are mutually exclusive by construction — verified,
+  bulk-expensing a deployed row moved Deployed 500 → 400 rather than deducting
+  it twice. NOTE the legacy transferType "expense" records (positionId "", from
+  the retired Log-Expense-as-transfer flow) now net to zero in Available instead
+  of inflating it; that is the correction, not a regression. Overall P&L is
+  untouched — 3b727b2's formula stands.
+  PART 3 — visual lock extended from Deployed to Expense: `isSettled =
+  isDeployed || isExpensed` drives the opacity-60 dim, since both mean "settled,
+  not idle". Changing either still needs an explicit Edit click.
+  PART 4 — the bulk-select mechanism from b7755cb SURVIVED the Needs-Review
+  retirement (69bfc13 removed only the review filter), so it was extended, not
+  rebuilt. Added a PositionCombobox position filter to the Transfers list (same
+  shared component as Fee Claims / Add Transfer, `allValue=""`), folded into
+  sortedFiltered so it composes with the type filter, search and chain grouping
+  for free. When it narrows to one position, a selection-free "Mark all N shown
+  as Redeployed / as Expense" appears behind a confirm. pendingBulk became
+  {status, scope} where scope is "selected" | "visible"; applyBulkMark still
+  intersects with visibleIds, so a bulk mark can only ever touch rows on screen,
+  and it still writes moneyStatus alone (transferType and deploy-links
+  untouched).
+  Verified live on localhost:3001 with a seeded 2-position / 5-transfer /
+  1-withdrawal set: expense $50 → Available $1,025 → $975 and the row joined the
+  ledger; deploying the Out-of-Range-Upside $400 → Deployed $400, Available
+  $575, "Used → SUI/USDC", row dimmed; deploying the Fees $100 → Deployed $500,
+  Available $475; only the Expense row dimmed among non-deployed rows (0.6 vs
+  1); position filter → 3 rows and "Mark all 3 shown"; bulk Redeployed flipped
+  the idle row with balances unmoved; bulk Expense → Expenses $675, Deployed
+  $400, Available −$25 (= 1050 − 675 − 400, exact); individually editing one
+  back to Redeployed → Expenses $475, Available $175; Remove deploy link →
+  Deployed $0, Available $575. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

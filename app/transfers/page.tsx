@@ -281,13 +281,25 @@ function TransferListRow({
   onUnlinkDeployed: (t: Transfer) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // A deployed transfer is settled — visually locked (dimmed). Editing still
-  // requires an explicit Edit click inside the expanded row (Part 4).
+  // Settled money is visually locked (dimmed). Two states count as settled and
+  // read identically: a deploy-link (money now inside a position) and an
+  // Expense status (money has left the business). Neither is idle any more.
+  // Changing either still requires an explicit Edit click in the expanded row.
   const isDeployed = t.deployedToPositionId !== undefined;
+  const isExpensed = t.moneyStatus === "expense";
+  const isSettled = isDeployed || isExpensed;
+  // Deploy-linking is available on ANY transfer whose money is still available
+  // — Fees, Out of Range Upside and idle Undeployed Tokens alike. It is NOT
+  // gated by transferType (measured live 2026-07-30: all three types offer it).
+  // The one state that hides it is Expense — that money has left the business,
+  // so there is nothing left to deploy.
+  const canDeploy =
+    t.transferType !== "expense" &&
+    (t.moneyStatus === "redeployed" || t.moneyStatus === undefined);
   return (
     <div
       className={`${selected ? "bg-[var(--accent)]/[0.06]" : ""} ${
-        isDeployed ? "opacity-60" : ""
+        isSettled ? "opacity-60" : ""
       }`}
     >
       <div className="flex items-start gap-2 px-3 py-2.5">
@@ -391,11 +403,10 @@ function TransferListRow({
                 >
                   Edit
                 </button>
-                {/* Deploy-linking applies to Redeployed money AND idle
-                    Undeployed Tokens (Part 4) — never to Expenses. */}
-                {t.transferType !== "expense" &&
-                  (t.moneyStatus === "redeployed" ||
-                    t.moneyStatus === undefined) &&
+                {/* Deploy-linking applies to every still-available transfer
+                    (Fees, Out of Range Upside, idle Undeployed Tokens) — never
+                    to money already marked as an Expense. */}
+                {canDeploy &&
                   (t.deployedToPositionId ? (
                     <button
                       type="button"
@@ -423,6 +434,15 @@ function TransferListRow({
               </>
             )}
           </div>
+          {/* Why "Mark as deployed" is absent here, said out loud — the action
+              vanishing silently is what made this look like a per-type bug. */}
+          {isExpensed && t.transferType !== "expense" && (
+            <p className="mt-2 text-[11px] text-[var(--muted)]">
+              Marked as an Expense, so this money has left the business and
+              can&apos;t be deployed. Switch Money Status back to Redeployed in
+              Edit to make it available again.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -531,8 +551,14 @@ export default function TransfersPage() {
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [search, setSearch] = useState("");
+  const [positionFilter, setPositionFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [pendingBulk, setPendingBulk] = useState<MoneyStatus | null>(null);
+  // Bulk marking has two scopes: the checkbox selection, and "all N shown"
+  // (Part 4) which needs no selection once the list is narrowed to a position.
+  const [pendingBulk, setPendingBulk] = useState<{
+    status: MoneyStatus;
+    scope: "selected" | "visible";
+  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingWithdrawalDelete, setPendingWithdrawalDelete] = useState<
     string | null
@@ -579,15 +605,17 @@ export default function TransfersPage() {
 
   const sortedFiltered = useMemo(() => {
     if (!hydrated) return [];
-    const filtered = transfers.filter((t) =>
-      typeFilter === "all" ? true : t.transferType === typeFilter,
+    const filtered = transfers.filter(
+      (t) =>
+        (typeFilter === "all" ? true : t.transferType === typeFilter) &&
+        (positionFilter === "" ? true : t.positionId === positionFilter),
     );
     return [...filtered].sort((a, b) => {
       const ta = new Date(a.date).getTime();
       const tb = new Date(b.date).getTime();
       return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
     });
-  }, [hydrated, transfers, typeFilter]);
+  }, [hydrated, transfers, typeFilter, positionFilter]);
 
   // Free-text search over pair, notes, transfer type, token, destination,
   // platform — layered on top of the type/review filters (Part 5).
@@ -714,8 +742,12 @@ export default function TransfersPage() {
   // The only new way data changes here (Part 4): set moneyStatus on every
   // selected+visible transfer at once, behind an explicit confirm. transferType
   // is untouched — Overall P&L counts expenses by moneyStatus alone.
-  const applyBulkMark = (status: MoneyStatus) => {
-    const targetIds = new Set(visibleIds.filter((id) => selectedIds.has(id)));
+  const applyBulkMark = (status: MoneyStatus, scope: "selected" | "visible") => {
+    const targetIds = new Set(
+      scope === "visible"
+        ? visibleIds
+        : visibleIds.filter((id) => selectedIds.has(id)),
+    );
     if (targetIds.size === 0) return;
     saveTransfers(
       getTransfers().map((t) =>
@@ -814,31 +846,81 @@ export default function TransfersPage() {
   // reduce Lifetime Earned — only what's still available.
   const balance = useMemo(() => {
     const lifetimeEarned = transfers.reduce((sum, t) => sum + t.amount, 0);
-    const withdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
-    // Money linked to a position ("Mark as deployed") is no longer idle — it
-    // now lives inside that position's Deposited (entered separately), so it is
-    // excluded from Available. Undoing the link adds it straight back.
-    const deployed = transfers.reduce(
-      (sum, t) => (t.deployedToPositionId ? sum + t.amount : sum),
+    const withdrawalTotal = withdrawals.reduce((sum, w) => sum + w.amount, 0);
+    // A transfer marked "expense" is money that has left the business, so it
+    // must leave Available Balance exactly like a logged withdrawal does. Until
+    // now nothing read moneyStatus here, so marking a transfer as an Expense
+    // changed a pill and nothing else — the balance still counted the money as
+    // idle. Fixed 2026-07-30 (applies to every transfer type equally).
+    const expensed = transfers.reduce(
+      (sum, t) => (t.moneyStatus === "expense" ? sum + t.amount : sum),
       0,
     );
+    // Money linked to a position ("Mark as deployed") is no longer idle — it
+    // now lives inside that position's Deposited (entered separately), so it is
+    // excluded from Available. Undoing the link adds it straight back. The
+    // expense guard keeps the two subtractions mutually exclusive, so a row
+    // that is somehow both can never be deducted twice.
+    const deployed = transfers.reduce(
+      (sum, t) =>
+        t.deployedToPositionId && t.moneyStatus !== "expense"
+          ? sum + t.amount
+          : sum,
+      0,
+    );
+    const withdrawn = withdrawalTotal + expensed;
     return {
       lifetimeEarned,
+      withdrawalTotal,
+      expensed,
       withdrawn,
       deployed,
       available: lifetimeEarned - withdrawn - deployed,
     };
   }, [transfers, withdrawals]);
 
-  const sortedWithdrawals = useMemo(
-    () =>
-      [...withdrawals].sort((a, b) => {
-        const ta = new Date(a.date).getTime();
-        const tb = new Date(b.date).getTime();
-        return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
-      }),
-    [withdrawals],
-  );
+  // "Expenses & Withdrawals" is the ledger of money out of the business, so it
+  // lists BOTH logged withdrawals and any transfer marked as an Expense — the
+  // two things the Expenses / Withdrawn card now adds together. Transfer-backed
+  // rows are shown for visibility and edited/deleted from the transfer list
+  // above (single source of truth for a transfer), so they carry no Delete here.
+  const expenseLedger = useMemo(() => {
+    const rows: {
+      key: string;
+      date: string;
+      amount: number;
+      method: string;
+      notes: string;
+      withdrawal?: Withdrawal;
+      transfer?: Transfer;
+    }[] = withdrawals.map((w) => ({
+      key: `w-${w.id}`,
+      date: w.date,
+      amount: w.amount,
+      method: w.method || "—",
+      notes: w.notes,
+      withdrawal: w,
+    }));
+    for (const t of transfers) {
+      if (t.moneyStatus !== "expense") continue;
+      rows.push({
+        key: `t-${t.id}`,
+        date: t.date,
+        amount: t.amount,
+        method:
+          t.transferType === "expense"
+            ? "Expense"
+            : positionPairById.get(t.positionId) ?? "Transfer",
+        notes: t.notes,
+        transfer: t,
+      });
+    }
+    return rows.sort((a, b) => {
+      const ta = new Date(a.date).getTime();
+      const tb = new Date(b.date).getTime();
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
+  }, [withdrawals, transfers, positionPairById]);
 
   const handleAddWithdrawal = (form: WithdrawalFormState) => {
     saveWithdrawals([...getWithdrawals(), buildWithdrawal(newId(), form)]);
@@ -949,7 +1031,7 @@ export default function TransfersPage() {
             <SummaryStat
               label="Expenses / Withdrawn (USD)"
               value={formatUsd(balance.withdrawn)}
-              hint="Money logged out of the business (expenses / withdrawals). Reduces Available Balance."
+              hint="Money out of the business: logged expenses/withdrawals plus any transfer marked as an Expense. Reduces Available Balance."
             />
             <SummaryStat
               label="Deployed into Positions (USD)"
@@ -959,7 +1041,7 @@ export default function TransfersPage() {
             <SummaryStat
               label="Available Balance (USD)"
               value={formatUsd(balance.available)}
-              hint="Lifetime Earned − Withdrawn − Deployed = what's still idle."
+              hint="Lifetime Earned − Expenses/Withdrawn − Deployed = what's still idle."
             />
           </div>
 
@@ -1009,13 +1091,29 @@ export default function TransfersPage() {
               <TypeFilterToggle value={typeFilter} onChange={setTypeFilter} />
             </div>
 
-            <div className="border-b border-[var(--border)] px-5 py-3">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by pair, notes, type, destination…"
-                className="block w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+            <div className="grid grid-cols-1 gap-3 border-b border-[var(--border)] px-5 py-3 sm:grid-cols-2">
+              {/* Narrowing to one position is what unlocks "Mark all N shown"
+                  below — the same searchable picker Fee Claims uses. */}
+              <PositionCombobox
+                positions={positions}
+                value={positionFilter}
+                onChange={(next) => {
+                  setPositionFilter(next);
+                  clearSelection();
+                }}
+                allValue=""
               />
+              <div>
+                <label className="block text-xs font-medium text-[var(--muted)]">
+                  Search
+                </label>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by pair, notes, type, destination…"
+                  className="mt-1 block h-9 w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)]/60 focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </div>
             </div>
 
             {searchedFiltered.length === 0 ? (
@@ -1054,12 +1152,74 @@ export default function TransfersPage() {
                     />
                     Select all visible ({visibleIds.length})
                   </label>
+                  {/* Position-scoped bulk action (Part 4): once the list is
+                      narrowed to one position, mark every shown transfer in one
+                      go — no per-row selection needed. Still applies only to
+                      rows the user can actually see. */}
+                  {positionFilter !== "" && selectedIds.size === 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {pendingBulk?.scope === "visible" ? (
+                        <>
+                          <span className="text-[12px] text-[var(--foreground)]">
+                            Mark all {visibleIds.length} shown{" "}
+                            {pendingBulk.status === "expense"
+                              ? "as Expense"
+                              : "as Redeployed"}
+                            ?
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              applyBulkMark(pendingBulk.status, "visible")
+                            }
+                            className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-[12px] font-medium text-white hover:bg-[var(--accent)]/90"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingBulk(null)}
+                            className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPendingBulk({
+                                status: "redeployed",
+                                scope: "visible",
+                              })
+                            }
+                            className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--foreground)] hover:border-[var(--accent)]"
+                          >
+                            Mark all {visibleIds.length} shown as Redeployed
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPendingBulk({
+                                status: "expense",
+                                scope: "visible",
+                              })
+                            }
+                            className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[12px] font-medium text-rose-300 hover:bg-rose-500/20"
+                          >
+                            Mark all {visibleIds.length} shown as Expense
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                   {selectedIds.size > 0 && (
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[12px] font-medium text-[var(--foreground)]">
                         {selectedIds.size} selected
                       </span>
-                      {pendingBulk ? (
+                      {pendingBulk?.scope === "selected" ? (
                         <div className="flex items-center gap-2">
                           <span className="text-[12px] text-[var(--foreground)]">
                             Mark{" "}
@@ -1067,14 +1227,16 @@ export default function TransfersPage() {
                               visibleIds.filter((id) => selectedIds.has(id))
                                 .length
                             }{" "}
-                            {pendingBulk === "expense"
+                            {pendingBulk.status === "expense"
                               ? "as Expense"
                               : "as Redeployed"}
                             ?
                           </span>
                           <button
                             type="button"
-                            onClick={() => applyBulkMark(pendingBulk)}
+                            onClick={() =>
+                              applyBulkMark(pendingBulk.status, "selected")
+                            }
                             className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-[12px] font-medium text-white hover:bg-[var(--accent)]/90"
                           >
                             Confirm
@@ -1091,14 +1253,24 @@ export default function TransfersPage() {
                         <>
                           <button
                             type="button"
-                            onClick={() => setPendingBulk("redeployed")}
+                            onClick={() =>
+                              setPendingBulk({
+                                status: "redeployed",
+                                scope: "selected",
+                              })
+                            }
                             className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--foreground)] hover:border-[var(--accent)]"
                           >
                             Mark as Redeployed
                           </button>
                           <button
                             type="button"
-                            onClick={() => setPendingBulk("expense")}
+                            onClick={() =>
+                              setPendingBulk({
+                                status: "expense",
+                                scope: "selected",
+                              })
+                            }
                             className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[12px] font-medium text-rose-300 hover:bg-rose-500/20"
                           >
                             Mark as Expense
@@ -1173,15 +1345,16 @@ export default function TransfersPage() {
             )}
           </div>
 
-          {withdrawals.length > 0 && (
+          {expenseLedger.length > 0 && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
               <div className="border-b border-[var(--border)] px-5 py-4">
                 <h2 className="text-sm font-semibold tracking-tight">
                   Expenses &amp; Withdrawals
                 </h2>
                 <p className="mt-0.5 text-xs text-[var(--muted)]">
-                  Money logged out of the business — expenses and personal
-                  withdrawals. Each reduces Available Balance.
+                  Money out of the business — logged expenses, personal
+                  withdrawals, and any transfer marked as an Expense. Each
+                  reduces Available Balance.
                 </p>
               </div>
               <div className="overflow-x-auto">
@@ -1200,25 +1373,52 @@ export default function TransfersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
-                    {sortedWithdrawals.map((w) => (
+                    {expenseLedger.map((row) => {
+                      const w = row.withdrawal;
+                      return (
                       <tr
-                        key={w.id}
+                        key={row.key}
                         className="transition-colors hover:bg-[var(--surface-2)]/60"
                       >
                         <td className="px-4 py-3 text-[var(--muted)] tabular-nums">
-                          {formatDateDDMMYYYY(w.date)}
+                          {formatDateDDMMYYYY(row.date)}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">
-                          {formatUsd(w.amount)}
+                          {formatUsd(row.amount)}
                         </td>
                         <td className="px-4 py-3 text-[var(--foreground)]">
-                          {w.method || "—"}
+                          {row.method}
+                          {row.transfer && (
+                            <span className="ml-2 inline-flex items-center rounded-full border border-[var(--border-strong)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                              From transfer
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 max-w-xs truncate text-[var(--muted)]">
-                          {w.notes || "—"}
+                          {row.notes || "—"}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {pendingWithdrawalDelete === w.id ? (
+                          {/* Transfer-backed rows are edited in the transfer
+                              list above — one source of truth per record. */}
+                          {!w ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                row.transfer &&
+                                setModal(
+                                  row.transfer.transferType === "expense"
+                                    ? {
+                                        kind: "editExpense",
+                                        transfer: row.transfer,
+                                      }
+                                    : { kind: "edit", transfer: row.transfer },
+                                )
+                              }
+                              className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                            >
+                              Edit
+                            </button>
+                          ) : pendingWithdrawalDelete === w.id ? (
                             <div className="inline-flex items-center gap-2">
                               <span className="text-xs text-[var(--muted)]">
                                 Delete this withdrawal?
@@ -1263,11 +1463,12 @@ export default function TransfersPage() {
                           )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                   <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
                     <tr className="font-semibold">
-                      <td className="px-4 py-3">Total Withdrawn</td>
+                      <td className="px-4 py-3">Total Out of Business</td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {formatUsd(balance.withdrawn)}
                       </td>
