@@ -1682,6 +1682,72 @@ at the plan gate.
   Deployed $0, Available $575. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: DELIBERATE BALANCE CHANGE, user-confirmed: added a
+  "Transferred to Platforms" state — a Redeployed transfer with a Platform
+  assigned is now excluded from Available Balance (previously stayed included).
+  Added individual and bulk "Send to Platform" actions across Fees/
+  Out-of-Range-Upside/Undeployed Tokens transfers. Transferred/Deployed money
+  can later convert to Expense without double-subtracting Available Balance.
+  Same visual lock as Deployed/Expense applied to Transferred rows.
+  DERIVED, NOT STORED (the design call): "Transferred" is computed from the
+  existing platform field rather than a new flag — the Platform column already
+  means "this money is sitting at X", the Edit form has always written it, and
+  a derived state needs no schema change and no migration. The consequence is
+  the balance change itself: every existing transfer that already carries a
+  platform became Transferred the moment this shipped.
+  FOUR STATES, MUTUALLY EXCLUSIVE BY CONSTRUCTION (app/transfers/page.tsx, top
+  of file): isExpensedTransfer → isDeployedTransfer → isTransferredToPlatform →
+  isIdleTransfer, each re-testing the states above it in that precedence order.
+  That is what makes double-subtraction impossible: Available = Lifetime Earned
+  − Expenses/Withdrawn − Deployed − Transferred, and a row that is both
+  deployed AND platformed counts once (as Deployed), while one later marked
+  Expense counts once (as an Expense) and leaves its old bucket. Do not
+  "simplify" these predicates into independent tests — the re-tests ARE the
+  no-double-count guarantee.
+  The state keys off platform/deploy-link, NOT off moneyStatus "redeployed"
+  specifically, so an idle Undeployed Tokens transfer (moneyStatus unset since
+  d20f3e3) can reach Transferred too; its row then shows a "Sent → PLATFORM"
+  badge that supersedes the otherwise-misleading "Idle" pill.
+  ACTIONS: per-row "Send to Platform" / "Change platform" / "Remove platform"
+  (SendToPlatformModal, free text + datalist of platforms already in use,
+  stored uppercase) gated by canSendToPlatform = canDeploy — type-agnostic, so
+  Fees, Out of Range Upside and Undeployed Tokens all get it; hidden only once
+  the money is an Expense. Bulk: an inline platform input beside the existing
+  position-scoped bulk toolbar sends every STILL-IDLE visible row at once
+  (bulkPlatformTargets = searchedFiltered.filter(isIdleTransfer)) behind a
+  confirm — already-platformed rows are deliberately excluded from the bulk
+  count and must be re-routed one at a time.
+  SIDE FIX (real pre-existing bug, found via Part 6): handleEdit rebuilt the
+  record from buildTransfer alone, which knows only the form's fields — so
+  editing a transfer silently DROPPED sourceClaimId, sourceCloseId and the
+  deploy-link. Marking a deployed transfer as an Expense through Edit therefore
+  lost its deploy-link and its idempotency id (letting a backfill re-create the
+  same transfer). handleEdit now carries those three across explicitly.
+  KNOWN PRE-EXISTING QUIRK (not changed here): Platform is a `required` input
+  on the Edit Transfer form, so an auto-created transfer (platform blank by
+  design, 666ec71) cannot be saved from Edit without typing one. Use the bulk
+  actions or Send to Platform instead.
+  Verified live on localhost:3001 with a seeded 2-position / 5-transfer /
+  1-withdrawal set (lifetime $1,050), before-numbers captured by stashing the
+  diff: BEFORE Available $975 (= 1050 − 25 withdrawn − 50 deployed, with a
+  $300 AAVE-platformed transfer still counted as idle) → AFTER Transferred
+  $300, Available $675 — the real impact of the change. (A) Send to Platform on
+  an idle $100 Fees row → KRAKEN, Transferred $400, Available $575, exactly
+  −$100. (B/C) position-filtered bulk showed "Send all 2 idle shown" (correctly
+  skipping the already-platformed row) and sent the $400 Out-of-Range-Upside
+  and $200 Undeployed rows to AAVE BASE → Transferred $1,000, Available −$25
+  (= 1050 − 25 − 50 − 1000). (D) editing the Transferred $100 row to Expense:
+  Expenses $25 → $125, Transferred $1,000 → $900, Available UNCHANGED at −$25,
+  row joined Expenses & Withdrawals as FROM TRANSFER. (F) bulk-expensing a
+  Transferred $300 AND a Deployed $50 at once: Expenses → $475, Deployed → $0,
+  Transferred → $600, Available still −$25; buckets partition exactly
+  (475 + 0 + 600 = 1050 + 25). (E) all settled rows dimmed at opacity-60,
+  including Transferred. (G) Overall P&L $1,000.00 (= 21,000 active + 0
+  converted − 20,000 capital) never moved while Expenses went $25 → $475 —
+  transfers do not feed it (3b727b2). Edit round-trip confirmed sourceClaimId /
+  deployedToPositionId / deployedAt survive. Zero console errors; seeds
+  removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

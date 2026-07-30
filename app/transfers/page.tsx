@@ -205,12 +205,57 @@ function buildExpense(id: string, form: ExpenseFormState): Transfer {
   };
 }
 
+// ── Where a transfer's money currently sits ─────────────────────────────
+// Every transfer is in exactly ONE of four states, and the four predicates
+// below are mutually exclusive BY CONSTRUCTION (each one re-tests the states
+// above it in the precedence order). That is what makes it impossible for a
+// single amount to be subtracted from Available Balance twice — the reason
+// the order is written out rather than left implicit:
+//
+//   1. Expense     — moneyStatus "expense": the money has left the business.
+//   2. Deployed    — deployedToPositionId set: it now lives inside a position.
+//   3. Transferred — a non-blank Platform: sent somewhere for yield (AAVE …).
+//   4. Idle        — none of the above: still sitting in Available Balance.
+//
+// "Transferred" is DERIVED from platform rather than stored as a new flag:
+// the Platform field already means "this money is sitting at X", the Edit
+// form has always written it, and a derived state needs no schema change and
+// no migration — an existing record with a platform is Transferred the moment
+// this ships (the deliberate balance change, see CLAUDE.md).
+//
+// Note the states are keyed off platform/deploy-link, NOT off moneyStatus
+// "redeployed" specifically: an idle Undeployed Tokens transfer carries an
+// UNSET moneyStatus (d20f3e3) and must be able to reach Transferred too.
+function isExpensedTransfer(t: Transfer): boolean {
+  return t.moneyStatus === "expense";
+}
+function isDeployedTransfer(t: Transfer): boolean {
+  return !isExpensedTransfer(t) && t.deployedToPositionId !== undefined;
+}
+function isTransferredToPlatform(t: Transfer): boolean {
+  return (
+    !isExpensedTransfer(t) &&
+    !isDeployedTransfer(t) &&
+    (t.platform ?? "").trim() !== ""
+  );
+}
+// Idle money is the only kind that can still be sent somewhere: not spent, not
+// already inside a position, not already sitting at a platform.
+function isIdleTransfer(t: Transfer): boolean {
+  return (
+    !isExpensedTransfer(t) &&
+    !isDeployedTransfer(t) &&
+    !isTransferredToPlatform(t)
+  );
+}
+
 type ModalState =
   | { kind: "none" }
   | { kind: "add" }
   | { kind: "edit"; transfer: Transfer }
   | { kind: "editExpense"; transfer: Transfer }
   | { kind: "deploy"; transfer: Transfer }
+  | { kind: "platform"; transfer: Transfer }
   | { kind: "addWithdrawal" }
   | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
@@ -266,6 +311,8 @@ function TransferListRow({
   onEdit,
   onMarkDeployed,
   onUnlinkDeployed,
+  onSendToPlatform,
+  onRemovePlatform,
 }: {
   transfer: Transfer;
   pairLabel: string;
@@ -279,15 +326,19 @@ function TransferListRow({
   onEdit: (t: Transfer) => void;
   onMarkDeployed: (t: Transfer) => void;
   onUnlinkDeployed: (t: Transfer) => void;
+  onSendToPlatform: (t: Transfer) => void;
+  onRemovePlatform: (t: Transfer) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // Settled money is visually locked (dimmed). Two states count as settled and
-  // read identically: a deploy-link (money now inside a position) and an
-  // Expense status (money has left the business). Neither is idle any more.
-  // Changing either still requires an explicit Edit click in the expanded row.
-  const isDeployed = t.deployedToPositionId !== undefined;
-  const isExpensed = t.moneyStatus === "expense";
-  const isSettled = isDeployed || isExpensed;
+  // Settled money is visually locked (dimmed). THREE states count as settled
+  // and read identically — "this money has been put to use": a deploy-link
+  // (inside a position), a platform (sent out for yield) and an Expense
+  // status (left the business). None of them is idle any more. Changing any
+  // of them still requires an explicit click in the expanded row.
+  const isExpensed = isExpensedTransfer(t);
+  const isDeployed = isDeployedTransfer(t);
+  const isTransferred = isTransferredToPlatform(t);
+  const isSettled = isDeployed || isExpensed || isTransferred;
   // Deploy-linking is available on ANY transfer whose money is still available
   // — Fees, Out of Range Upside and idle Undeployed Tokens alike. It is NOT
   // gated by transferType (measured live 2026-07-30: all three types offer it).
@@ -296,6 +347,10 @@ function TransferListRow({
   const canDeploy =
     t.transferType !== "expense" &&
     (t.moneyStatus === "redeployed" || t.moneyStatus === undefined);
+  // Sending to a platform is gated exactly like deploy-linking: available on
+  // Fees, Out of Range Upside and Undeployed Tokens alike (never by type), and
+  // hidden only once the money has been expensed.
+  const canSendToPlatform = canDeploy;
   return (
     <div
       className={`${selected ? "bg-[var(--accent)]/[0.06]" : ""} ${
@@ -335,6 +390,14 @@ function TransferListRow({
               {deployedLabel && (
                 <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300">
                   Used → {deployedLabel}
+                </span>
+              )}
+              {/* The Transferred badge supersedes the Money Status pill for an
+                  idle Undeployed row, which would otherwise still read "Idle"
+                  after its money was sent to a platform. */}
+              {isTransferred && (
+                <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-300">
+                  Sent → {t.platform}
                 </span>
               )}
             </span>
@@ -424,6 +487,27 @@ function TransferListRow({
                       Mark as deployed
                     </button>
                   ))}
+                {/* Send to Platform — the same availability rule as deploying,
+                    so Fees, Out of Range Upside and Undeployed Tokens all get
+                    it. Removing the platform returns the money to Available. */}
+                {canSendToPlatform && (
+                  <button
+                    type="button"
+                    onClick={() => onSendToPlatform(t)}
+                    className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
+                  >
+                    {isTransferred ? "Change platform" : "Send to Platform"}
+                  </button>
+                )}
+                {canSendToPlatform && isTransferred && (
+                  <button
+                    type="button"
+                    onClick={() => onRemovePlatform(t)}
+                    className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                  >
+                    Remove platform
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onDeleteRequest(t.id)}
@@ -559,6 +643,11 @@ export default function TransfersPage() {
     status: MoneyStatus;
     scope: "selected" | "visible";
   } | null>(null);
+  // Bulk "send all shown to platform" (Part 3): the typed platform plus its
+  // own confirm step, kept separate from pendingBulk so the two bulk actions
+  // can never fire each other's confirm.
+  const [bulkPlatform, setBulkPlatform] = useState("");
+  const [pendingBulkPlatform, setPendingBulkPlatform] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingWithdrawalDelete, setPendingWithdrawalDelete] = useState<
     string | null
@@ -718,6 +807,26 @@ export default function TransfersPage() {
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
 
+  // Only idle rows are eligible for the bulk send — money already deployed,
+  // expensed or sitting at a platform is not "currently idle" and is left
+  // alone (a single row can still be re-platformed via Change platform).
+  const bulkPlatformTargets = useMemo(
+    () => searchedFiltered.filter(isIdleTransfer),
+    [searchedFiltered],
+  );
+
+  // Platforms already used anywhere, offered as autocomplete so the same
+  // destination doesn't end up spelled three ways.
+  const knownPlatforms = useMemo(
+    () =>
+      [
+        ...new Set(
+          transfers.map((t) => (t.platform ?? "").trim()).filter((p) => p !== ""),
+        ),
+      ].sort(),
+    [transfers],
+  );
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -737,6 +846,7 @@ export default function TransfersPage() {
   const clearSelection = () => {
     setSelectedIds(new Set());
     setPendingBulk(null);
+    setPendingBulkPlatform(false);
   };
 
   // The only new way data changes here (Part 4): set moneyStatus on every
@@ -779,7 +889,26 @@ export default function TransfersPage() {
   };
 
   const handleEdit = (target: Transfer, form: TransferFormState) => {
-    const updated = buildTransfer(target.id, form);
+    // buildTransfer only knows the form's fields, so the record's out-of-form
+    // links have to be carried across by hand: the automation idempotency ids
+    // and the deploy-link. Without this, editing a deployed transfer (e.g. to
+    // mark it as an Expense — Part 6) silently dropped its deploy-link and its
+    // sourceClaimId, which would let a backfill re-create the same transfer.
+    const updated: Transfer = {
+      ...buildTransfer(target.id, form),
+      ...(target.sourceClaimId !== undefined
+        ? { sourceClaimId: target.sourceClaimId }
+        : {}),
+      ...(target.sourceCloseId !== undefined
+        ? { sourceCloseId: target.sourceCloseId }
+        : {}),
+      ...(target.deployedToPositionId !== undefined
+        ? {
+            deployedToPositionId: target.deployedToPositionId,
+            deployedAt: target.deployedAt,
+          }
+        : {}),
+    };
     saveTransfers(
       getTransfers().map((t) => (t.id === target.id ? updated : t)),
     );
@@ -826,6 +955,50 @@ export default function TransfersPage() {
     refresh();
   };
 
+  // Send money to a platform (Part 2): assigning a Platform is what puts a
+  // transfer in the Transferred state, so this writes that one field and
+  // nothing else — transferType, moneyStatus and any deploy-link stay put.
+  const handleSendToPlatform = (target: Transfer, platform: string) => {
+    const value = platform.trim().toUpperCase();
+    if (value === "") return;
+    saveTransfers(
+      getTransfers().map((t) =>
+        t.id === target.id ? { ...t, platform: value } : t,
+      ),
+    );
+    refresh();
+    setModal({ kind: "none" });
+  };
+
+  // Undo — clearing the platform returns the amount to Available Balance.
+  const handleRemovePlatform = (target: Transfer) => {
+    saveTransfers(
+      getTransfers().map((t) =>
+        t.id === target.id ? { ...t, platform: "" } : t,
+      ),
+    );
+    refresh();
+  };
+
+  // Bulk send (Part 3): same shape as the bulk money-status marking — only
+  // rows that are BOTH visible and still idle are touched, so an already
+  // deployed/expensed/platformed row can never be silently re-routed.
+  const applyBulkSendToPlatform = (platform: string) => {
+    const value = platform.trim().toUpperCase();
+    if (value === "") return;
+    const targetIds = new Set(bulkPlatformTargets.map((t) => t.id));
+    if (targetIds.size === 0) return;
+    saveTransfers(
+      getTransfers().map((t) =>
+        targetIds.has(t.id) ? { ...t, platform: value } : t,
+      ),
+    );
+    clearSelection();
+    setBulkPlatform("");
+    setPendingBulkPlatform(false);
+    refresh();
+  };
+
   // Explicit, user-confirmed bulk correction of mismatched transfer tokens.
   // Only rewrites rows with a determinable suggestion; others stay for manual
   // Edit. Detection-only elsewhere — this runs solely on the confirm click.
@@ -853,7 +1026,7 @@ export default function TransfersPage() {
     // changed a pill and nothing else — the balance still counted the money as
     // idle. Fixed 2026-07-30 (applies to every transfer type equally).
     const expensed = transfers.reduce(
-      (sum, t) => (t.moneyStatus === "expense" ? sum + t.amount : sum),
+      (sum, t) => (isExpensedTransfer(t) ? sum + t.amount : sum),
       0,
     );
     // Money linked to a position ("Mark as deployed") is no longer idle — it
@@ -862,10 +1035,18 @@ export default function TransfersPage() {
     // expense guard keeps the two subtractions mutually exclusive, so a row
     // that is somehow both can never be deducted twice.
     const deployed = transfers.reduce(
-      (sum, t) =>
-        t.deployedToPositionId && t.moneyStatus !== "expense"
-          ? sum + t.amount
-          : sum,
+      (sum, t) => (isDeployedTransfer(t) ? sum + t.amount : sum),
+      0,
+    );
+    // Money sent to a platform for yield (AAVE …) is no longer idle either: it
+    // is working somewhere else. Excluded from Available from this release on
+    // — a deliberate, user-confirmed change (Redeployed money WITH a platform
+    // used to stay counted as available). isTransferredToPlatform re-tests the
+    // expense and deploy states, so the three subtractions below can never
+    // overlap: a transfer that is deployed AND platformed counts once, as
+    // Deployed; one later marked Expense counts once, as an Expense.
+    const transferredToPlatform = transfers.reduce(
+      (sum, t) => (isTransferredToPlatform(t) ? sum + t.amount : sum),
       0,
     );
     const withdrawn = withdrawalTotal + expensed;
@@ -875,7 +1056,9 @@ export default function TransfersPage() {
       expensed,
       withdrawn,
       deployed,
-      available: lifetimeEarned - withdrawn - deployed,
+      transferredToPlatform,
+      available:
+        lifetimeEarned - withdrawn - deployed - transferredToPlatform,
     };
   }, [transfers, withdrawals]);
 
@@ -1021,8 +1204,10 @@ export default function TransfersPage() {
             onDone={refresh}
           />
 
-          {/* Money Flow ledger: earned − withdrawn − deployed = available now. */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Money Flow ledger: earned − withdrawn − deployed − transferred
+              = available now. The three subtracted buckets are mutually
+              exclusive (see the state predicates at the top of this file). */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <SummaryStat
               label="Lifetime Earned (USD)"
               value={formatUsd(balance.lifetimeEarned)}
@@ -1039,9 +1224,14 @@ export default function TransfersPage() {
               hint="Redeployed money you've linked to a position — now inside its Deposited, no longer idle."
             />
             <SummaryStat
+              label="Transferred to Platforms (USD)"
+              value={formatUsd(balance.transferredToPlatform)}
+              hint="Money sent somewhere for yield (a transfer with a Platform assigned, e.g. AAVE) — working elsewhere, so no longer idle."
+            />
+            <SummaryStat
               label="Available Balance (USD)"
               value={formatUsd(balance.available)}
-              hint="Lifetime Earned − Expenses/Withdrawn − Deployed = what's still idle."
+              hint="Lifetime Earned − Expenses/Withdrawn − Deployed − Transferred = what's still idle."
             />
           </div>
 
@@ -1143,6 +1333,11 @@ export default function TransfersPage() {
               <>
                 {/* Bulk-select toolbar (Part 4). */}
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--border)] bg-[var(--surface-2)]/30 px-5 py-2.5">
+                  <datalist id="known-platforms">
+                    {knownPlatforms.map((p) => (
+                      <option key={p} value={p} />
+                    ))}
+                  </datalist>
                   <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
                     <input
                       type="checkbox"
@@ -1212,6 +1407,51 @@ export default function TransfersPage() {
                           </button>
                         </>
                       )}
+                      {/* Bulk Send to Platform (Part 3): type a platform once
+                          and route every still-idle row in this filtered view
+                          to it. Confirmed, like every other bulk action. */}
+                      {bulkPlatformTargets.length > 0 &&
+                        (pendingBulkPlatform ? (
+                          <>
+                            <span className="text-[12px] text-[var(--foreground)]">
+                              Send {bulkPlatformTargets.length} idle shown to{" "}
+                              {bulkPlatform.trim().toUpperCase()}?
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => applyBulkSendToPlatform(bulkPlatform)}
+                              className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-[12px] font-medium text-white hover:bg-[var(--accent)]/90"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingBulkPlatform(false)}
+                              className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <input
+                              value={bulkPlatform}
+                              onChange={(e) => setBulkPlatform(e.target.value)}
+                              list="known-platforms"
+                              placeholder="Platform (e.g. AAVE)"
+                              className="h-7 w-40 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2 text-[12px] uppercase text-[var(--foreground)] placeholder:normal-case placeholder:text-[var(--muted)]/60 focus:border-[var(--accent)] focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              disabled={bulkPlatform.trim() === ""}
+                              onClick={() => setPendingBulkPlatform(true)}
+                              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[12px] font-medium text-amber-300 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Send all {bulkPlatformTargets.length} idle shown to
+                              platform
+                            </button>
+                          </>
+                        ))}
                     </div>
                   )}
                   {selectedIds.size > 0 && (
@@ -1335,6 +1575,10 @@ export default function TransfersPage() {
                               setModal({ kind: "deploy", transfer: tr })
                             }
                             onUnlinkDeployed={handleUnlinkDeployed}
+                            onSendToPlatform={(tr) =>
+                              setModal({ kind: "platform", transfer: tr })
+                            }
+                            onRemovePlatform={handleRemovePlatform}
                           />
                         ))}
                       </div>
@@ -1516,6 +1760,16 @@ export default function TransfersPage() {
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(positionId) =>
                 handleMarkDeployed(modal.transfer, positionId)
+              }
+            />
+          )}
+          {modal.kind === "platform" && (
+            <SendToPlatformModal
+              transfer={modal.transfer}
+              knownPlatforms={knownPlatforms}
+              onCancel={() => setModal({ kind: "none" })}
+              onSubmit={(platform) =>
+                handleSendToPlatform(modal.transfer, platform)
               }
             />
           )}
@@ -2119,6 +2373,69 @@ function DeployLinkModal({
           type="button"
           disabled={positionId === ""}
           onClick={() => onSubmit(positionId)}
+          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Confirm
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+// Names the platform a single transfer's money was sent to (Part 2). Free
+// text with autocomplete over platforms already in use, since platforms are
+// user-defined strings everywhere else in the app; stored uppercase like every
+// other platform value. Assigning it is what moves the money into the
+// Transferred state, so the balance consequence is spelled out here.
+function SendToPlatformModal({
+  transfer,
+  knownPlatforms,
+  onCancel,
+  onSubmit,
+}: {
+  transfer: Transfer;
+  knownPlatforms: string[];
+  onCancel: () => void;
+  onSubmit: (platform: string) => void;
+}) {
+  const [platform, setPlatform] = useState(transfer.platform ?? "");
+  return (
+    <ModalShell title="Send to Platform" onCancel={onCancel}>
+      <Section title="Where did this money go?">
+        <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
+          Name the platform this {formatUsd(transfer.amount)} was sent to for
+          yield (AAVE, a CEX, anywhere it is working). It stays in the list but
+          leaves Available Balance and joins Transferred to Platforms — clear
+          the platform again to bring it back.
+        </p>
+        <Field label="Platform" htmlFor="send-platform">
+          <input
+            id="send-platform"
+            list="send-platform-options"
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value.toUpperCase())}
+            placeholder="AAVE"
+            className={inputClass}
+          />
+          <datalist id="send-platform-options">
+            {knownPlatforms.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
+        </Field>
+      </Section>
+      <div className="flex justify-end gap-2 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={platform.trim() === ""}
+          onClick={() => onSubmit(platform)}
           className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Confirm
