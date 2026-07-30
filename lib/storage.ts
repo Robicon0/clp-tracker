@@ -75,7 +75,10 @@ export function saveClaims(claims: FeeClaim[]): void {
   writeValue(KEYS.claims, claims);
 }
 
-export function getTransfers(): Transfer[] {
+// Every stored transfer, soft-deleted ones included. Only the Recently Deleted
+// UI and the save/restore/purge plumbing should read this — everything that
+// shows or counts money must use getTransfers() so deleted rows stay invisible.
+export function getAllTransfers(): Transfer[] {
   // Backfill legacy records: destination (Sprint 9) and moneyStatus. The
   // "Needs Review" (unset) state was retired; unset always behaved as
   // "redeployed" in every calculation, so defaulting it here changes no total.
@@ -89,8 +92,66 @@ export function getTransfers(): Transfer[] {
   }));
 }
 
+// The live list: what every page, total and balance sees. Filtering here rather
+// than at each call site is what makes a soft-deleted transfer behave exactly
+// like a fully deleted one everywhere (Available Balance, Lifetime Earned,
+// Deployed, Transferred, Expenses, Data Health, CSV export, the Sidebar …)
+// without touching any of those readers.
+export function getTransfers(): Transfer[] {
+  return getAllTransfers().filter((t) => t.deletedAt === undefined);
+}
+
+export function getDeletedTransfers(): Transfer[] {
+  return getAllTransfers()
+    .filter((t) => t.deletedAt !== undefined)
+    .sort((a, b) => (b.deletedAt ?? "").localeCompare(a.deletedAt ?? ""));
+}
+
+// Writes the live set while PRESERVING soft-deleted records the caller never
+// saw. This matters because almost every mutation in the app is shaped
+// saveTransfers(getTransfers().map(...)) — and getTransfers() hides deleted
+// rows, so a plain overwrite would silently empty the Recently Deleted bin on
+// the next edit anywhere in the app. Callers that legitimately need to remove a
+// deleted record go through purgeTransfer instead.
 export function saveTransfers(transfers: Transfer[]): void {
-  writeValue(KEYS.transfers, transfers);
+  const kept = new Set(transfers.map((t) => t.id));
+  const orphanedDeleted = getAllTransfers().filter(
+    (t) => t.deletedAt !== undefined && !kept.has(t.id),
+  );
+  writeValue(KEYS.transfers, [...transfers, ...orphanedDeleted]);
+}
+
+// Soft delete: keep the record, hide it everywhere. Reversible via restore.
+export function softDeleteTransfer(id: string): void {
+  writeValue(
+    KEYS.transfers,
+    getAllTransfers().map((t) =>
+      t.id === id ? { ...t, deletedAt: new Date().toISOString() } : t,
+    ),
+  );
+}
+
+// Restore: drop deletedAt and nothing else, so the row comes back with its
+// platform, deploy-link, sourceClaimId and notes exactly as they were.
+export function restoreTransfer(id: string): void {
+  writeValue(
+    KEYS.transfers,
+    getAllTransfers().map((t) => {
+      if (t.id !== id) return t;
+      const { deletedAt: _d, ...rest } = t;
+      void _d;
+      return rest;
+    }),
+  );
+}
+
+// The only path that actually erases a transfer. Deliberately a raw write:
+// saveTransfers would re-attach the very record being purged.
+export function purgeTransfer(id: string): void {
+  writeValue(
+    KEYS.transfers,
+    getAllTransfers().filter((t) => t.id !== id),
+  );
 }
 
 // One-time persisted backfill so every stored transfer has an explicit

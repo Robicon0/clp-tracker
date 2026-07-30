@@ -95,6 +95,15 @@ export interface Transfer {
   // (the money now lives inside that position's Deposited, entered separately).
   deployedToPositionId?: string;
   deployedAt?: string;
+  // Soft delete. Deleting a transfer sets this ISO timestamp instead of
+  // removing the record: the row leaves every list, total and balance exactly
+  // as if it were gone, but keeps all its data (platform, deploy-link,
+  // sourceClaimId …) so Restore can bring it back untouched. There is no
+  // automatic expiry — this is financial history. Only the explicit
+  // "Permanently delete" action in Recently Deleted actually erases a record.
+  // Absent on every live and legacy transfer; getTransfers() hides any record
+  // that has it, and getAllTransfers() is the only reader that sees them.
+  deletedAt?: string;
   notes: string;
 }
 

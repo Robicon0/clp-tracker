@@ -1748,6 +1748,76 @@ at the plan gate.
   deployedToPositionId / deployedAt survive. Zero console errors; seeds
   removed. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Made Platform optional on Edit Transfer. Added soft-delete +
+  Recently Deleted/Restore for Transfers — deleting no longer permanently erases
+  data; deleted transfers are recoverable indefinitely unless explicitly
+  permanently deleted via a separate, confirmed action.
+  PART 1: the Platform input was `required`, so ANY unrelated edit (a notes
+  typo, a money-status change) could not be saved on the auto-created transfers
+  that deliberately carry a blank platform (666ec71) — the quirk logged in
+  a6df1f0. The attribute is gone and the hint now says "optional. Filling this
+  in marks the money as Transferred to that platform." Nothing else changed:
+  the Transferred state is driven by the field's VALUE, never by the form
+  validating it, so Send to Platform / Change platform / Remove platform behave
+  exactly as before (re-verified live).
+  PART 2 — WHERE THE FILTER LIVES (the design call): Transfer gained an
+  optional `deletedAt`, and lib/storage.ts now splits into getAllTransfers()
+  (everything, for the bin and the plumbing) and getTransfers() (live only,
+  = the old behaviour minus deleted rows). Filtering ONCE at the storage layer
+  is what makes a soft-deleted transfer behave exactly like a fully deleted one
+  in every reader without touching any of them — Available Balance, Lifetime
+  Earned, Deployed, Transferred, Expenses, By Token/Destination, chain
+  grouping, Data Health, the Sidebar count, the Settings CSV export and the
+  automation/backfill dedup all excluded it with zero changes.
+  THE TRAP, AND THE GUARD: almost every mutation in the app is shaped
+  saveTransfers(getTransfers().map(...)), and getTransfers() no longer returns
+  deleted rows — so a plain overwrite would have silently emptied the bin on
+  the next edit ANYWHERE in the app (including the position-delete cascade in
+  app/positions/page.tsx). saveTransfers therefore re-attaches any soft-deleted
+  record missing from the incoming list. Do not "simplify" it back to a raw
+  write. Because of that merge, purging needs its own raw-write path:
+  purgeTransfer(id). Helpers are softDeleteTransfer / restoreTransfer /
+  purgeTransfer; restore drops ONLY deletedAt, so platform, destination,
+  deployedToPositionId/deployedAt, sourceClaimId/sourceCloseId and notes all
+  come back untouched (verified byte-for-byte).
+  UI: RecentlyDeletedSection on the Transfers page, above the balance cards,
+  collapsed by default and styled like Show/Hide Closed Positions. Hidden
+  entirely at zero rows. Each entry shows amount, date, type, money status,
+  deletion date, platform, destination, token, deploy-link and notes, with
+  Restore and a separately-labelled "Permanently delete" behind its own
+  two-step confirm ("Yes, delete forever") and explicit no-undo copy. No expiry
+  sweep — deleted transfers are kept indefinitely because this is financial
+  history. The row's delete confirm now reads "You can restore it from Recently
+  Deleted."
+  JUDGMENT CALLS: (1) Platform is optional on ADD too — the form is shared, and
+  a blank platform is already a valid state (that is what "idle" money is).
+  (2) The position-delete cascade still HARD-deletes its live linked transfers
+  (unchanged, per scope), but no longer disturbs soft-deleted ones; a deleted
+  transfer whose position was later removed stays restorable and shows "—" for
+  its pair. (3) A soft-deleted auto transfer is invisible to the backfill dedup,
+  so a backfill can legitimately re-create it — deleted means gone.
+  Verified live on localhost:3001 with a seeded 2-position / 5-transfer /
+  1-withdrawal set (lifetime $1,050, expenses $75, deployed $300, transferred
+  $400, available $275): (A) a blank-platform auto transfer (sourceClaimId C1)
+  saved a notes-only edit — previously impossible — with platform still "" and
+  the claim id intact. (B) deleting the rich $300 transfer (deploy-link,
+  platform KRAKEN, destination RAKA, notes, sourceCloseId): Lifetime $1,050 →
+  $750, Deployed $300 → $0, Total Transfers 5 → 4, By Token ETH 2/$350 →
+  1/$50, the RAKA destination row gone; Available correctly held at $275 since
+  that money was already in the Deployed bucket. (C) it appeared under "Show
+  Recently Deleted (1)" with every field shown. (D) Restore returned every
+  total to the exact pre-delete figure and the stored record matched
+  field-for-field with deletedAt cleanly absent. Mutating an unrelated transfer
+  while one sat deleted did NOT wipe the bin (the merge guard). (E) deleting
+  the $200 Undeployed row moved Lifetime $1,050 → $850 and Available $275 →
+  $75, then "Permanently delete" required its own confirm and left 4 records in
+  storage with that id genuinely gone and the section hidden. (F) deleting
+  position ETH/USDC removed the position and its LIVE transfer exactly as
+  before (modal counted "1 transfer", not the deleted one) while the
+  soft-deleted record survived in the bin; diff touches only
+  app/transfers/page.tsx, lib/storage.ts and lib/types.ts — no positions or
+  claims delete code. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

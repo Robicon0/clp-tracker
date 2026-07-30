@@ -11,15 +11,19 @@ import {
 } from "react";
 import {
   getClaims,
+  getDeletedTransfers,
   getOutlierDismissals,
   getPositions,
   getSettings,
   getTransfers,
   getWithdrawals,
   migrateTransferMoneyStatus,
+  purgeTransfer,
+  restoreTransfer,
   saveOutlierDismissals,
   saveTransfers,
   saveWithdrawals,
+  softDeleteTransfer,
 } from "../../lib/storage";
 import {
   correctTransferSymbol,
@@ -440,7 +444,8 @@ function TransferListRow({
             {pendingDelete === t.id ? (
               <>
                 <span className="text-xs text-[var(--muted)]">
-                  Delete this transfer?
+                  Delete this transfer? You can restore it from Recently
+                  Deleted.
                 </span>
                 <button
                   type="button"
@@ -528,6 +533,173 @@ function TransferListRow({
             </p>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Recently Deleted: the safety net for the Delete action. Collapsed by default
+// and styled like the Show/Hide Closed Positions toggle, so it reads as the
+// same "there is more below" affordance. Deleted transfers are kept
+// indefinitely — no expiry sweep — because this is financial history; the only
+// way a record actually leaves storage is the Permanently delete action here,
+// which is separately labelled and needs its own confirm.
+function RecentlyDeletedSection({
+  rows,
+  open,
+  onToggle,
+  pairLabelFor,
+  deployedLabelFor,
+  pendingPurge,
+  onPurgeRequest,
+  onPurgeConfirm,
+  onPurgeCancel,
+  onRestore,
+}: {
+  rows: Transfer[];
+  open: boolean;
+  onToggle: () => void;
+  pairLabelFor: (t: Transfer) => string;
+  deployedLabelFor: (t: Transfer) => string;
+  pendingPurge: string | null;
+  onPurgeRequest: (id: string) => void;
+  onPurgeConfirm: (id: string) => void;
+  onPurgeCancel: () => void;
+  onRestore: (id: string) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between border-b border-[var(--border)] px-5 py-4 text-left transition-colors hover:bg-[var(--surface-2)]/50"
+      >
+        <span className="text-sm font-semibold tracking-tight">
+          {open ? "Hide" : "Show"} Recently Deleted ({rows.length})
+        </span>
+        <span className="text-xs text-[var(--muted)]" aria-hidden>
+          {open ? "▴" : "▾"}
+        </span>
+      </button>
+
+      {open && (
+        <>
+          <p className="px-5 pt-4 text-[11px] leading-relaxed text-[var(--muted)]">
+            These transfers are hidden from every list, total and balance, but
+            nothing has been lost — Restore brings a record back exactly as it
+            was. They are kept indefinitely.
+          </p>
+          <div className="mt-3 divide-y divide-[var(--border)] border-t border-[var(--border)]">
+            {rows.map((t) => (
+              <div key={t.id} className="px-5 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-[var(--foreground)]">
+                      {pairLabelFor(t)}
+                    </p>
+                    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--muted)]">
+                      <span className="tabular-nums">
+                        {formatDateDDMMYYYY(t.date)}
+                      </span>
+                      <TypePill type={t.transferType} />
+                      <MoneyStatusPill status={t.moneyStatus} />
+                      <span>Deleted {formatDateDDMMYYYY(t.deletedAt ?? "")}</span>
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--foreground)]">
+                    {formatUsd(t.amount)}
+                  </span>
+                </div>
+                {/* Everything the record still holds, shown so the user can see
+                    nothing was stripped while it sat in here. */}
+                <dl className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+                  <div>
+                    <dt className="uppercase tracking-wider text-[var(--muted)]">
+                      Platform
+                    </dt>
+                    <dd className="text-[var(--foreground)]">
+                      {t.platform || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="uppercase tracking-wider text-[var(--muted)]">
+                      Destination
+                    </dt>
+                    <dd className="text-[var(--foreground)]">
+                      {t.destination || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="uppercase tracking-wider text-[var(--muted)]">
+                      Token
+                    </dt>
+                    <dd className="text-[var(--foreground)]">
+                      {t.token || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="uppercase tracking-wider text-[var(--muted)]">
+                      Deployed to
+                    </dt>
+                    <dd className="text-[var(--foreground)]">
+                      {deployedLabelFor(t)}
+                    </dd>
+                  </div>
+                </dl>
+                {t.notes && (
+                  <p className="mt-2 text-[12px] text-[var(--muted)]">
+                    {t.notes}
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {pendingPurge === t.id ? (
+                    <>
+                      <span className="text-xs text-rose-300">
+                        Permanently delete this transfer? This cannot be undone.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onPurgeConfirm(t.id)}
+                        className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                      >
+                        Yes, delete forever
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onPurgeCancel}
+                        className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onRestore(t.id)}
+                        className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+                      >
+                        Restore
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onPurgeRequest(t.id)}
+                        className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+                      >
+                        Permanently delete
+                      </button>
+                      <span className="text-[11px] text-[var(--muted)]">
+                        Permanent deletion cannot be undone.
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -654,10 +826,16 @@ export default function TransfersPage() {
   >(null);
 
   const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
+  // Recently Deleted: soft-deleted transfers, collapsed by default, plus the
+  // two-step confirm for the one action that is genuinely irreversible.
+  const [deletedTransfers, setDeletedTransfers] = useState<Transfer[]>([]);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [pendingPurge, setPendingPurge] = useState<string | null>(null);
 
   const refresh = () => {
     setSettings(getSettings());
     setTransfers(getTransfers());
+    setDeletedTransfers(getDeletedTransfers());
     setWithdrawals(getWithdrawals());
     setPositions(getPositions());
     setClaims(getClaims());
@@ -916,10 +1094,25 @@ export default function TransfersPage() {
     setModal({ kind: "none" });
   };
 
+  // Deleting is now reversible: the record keeps every field and simply drops
+  // out of the live list (and therefore out of every total and balance) until
+  // it is restored or explicitly purged.
   const handleDelete = (id: string) => {
-    saveTransfers(getTransfers().filter((t) => t.id !== id));
+    softDeleteTransfer(id);
     refresh();
     setPendingDelete(null);
+  };
+
+  const handleRestore = (id: string) => {
+    restoreTransfer(id);
+    refresh();
+  };
+
+  // The only irreversible action on this page. Gated by its own confirm.
+  const handlePurge = (id: string) => {
+    purgeTransfer(id);
+    refresh();
+    setPendingPurge(null);
   };
 
   // Link a Redeployed transfer to the position its money went into. The row
@@ -1202,6 +1395,30 @@ export default function TransfersPage() {
             positions={positions}
             transfers={transfers}
             onDone={refresh}
+          />
+
+          <RecentlyDeletedSection
+            rows={deletedTransfers}
+            open={showDeleted}
+            onToggle={() => {
+              setShowDeleted((v) => !v);
+              setPendingPurge(null);
+            }}
+            pairLabelFor={(t) =>
+              t.transferType === "expense"
+                ? "Expense"
+                : positionPairById.get(t.positionId) ?? "—"
+            }
+            deployedLabelFor={(t) =>
+              t.deployedToPositionId
+                ? positionPairById.get(t.deployedToPositionId) ?? "position"
+                : "—"
+            }
+            pendingPurge={pendingPurge}
+            onPurgeRequest={setPendingPurge}
+            onPurgeConfirm={handlePurge}
+            onPurgeCancel={() => setPendingPurge(null)}
+            onRestore={handleRestore}
           />
 
           {/* Money Flow ledger: earned − withdrawn − deployed − transferred
@@ -2155,14 +2372,19 @@ function TransferFormModal({
                 onChange={(e) => set("amount", e.target.value)}
               />
             </Field>
+            {/* Platform is OPTIONAL. It used to be `required`, which blocked
+                saving any unrelated edit (a typo in the notes, a money-status
+                change) on the auto-created transfers that deliberately start
+                with a blank platform. Assigning one is still what moves money
+                into the Transferred state — that is driven by the field's
+                value, never by the form validating it. */}
             <Field
               label="Platform (from)"
               htmlFor="platform"
-              hint="Where the money came from."
+              hint="Where the money came from — optional. Filling this in marks the money as Transferred to that platform."
             >
               <input
                 id="platform"
-                required
                 className={inputClass}
                 placeholder="AAVE"
                 value={form.platform}
