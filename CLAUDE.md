@@ -1818,7 +1818,7 @@ at the plan gate.
   app/transfers/page.tsx, lib/storage.ts and lib/types.ts — no positions or
   claims delete code. Zero console errors; seeds removed. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Added Delete inside Edit Expense/Edit Transfer modals (same
+- 16b9f6a: Added Delete inside Edit Expense/Edit Transfer modals (same
   soft-delete behavior as row-level Delete). Verified Available Balance
   correctly updates when an Expense is deleted. Added "Revert to auto-created"
   for automation-created transfers — recomputes fresh from the linked
