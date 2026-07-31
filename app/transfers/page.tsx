@@ -37,11 +37,15 @@ import { OutlierBanner } from "../../components/OutlierBanner";
 import { PositionCombobox } from "../../components/PositionCombobox";
 import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import {
+  applyRevertToAuto,
   buildClaimTransfers,
   createUpsideTransfer,
   eligibleClaimsForBackfill,
   eligibleClosesForBackfill,
+  isAutoCreated,
+  planRevertToAuto,
   reconcileClaimTransfers,
+  type AutoRevertPlan,
 } from "../../lib/transferAutomation";
 import { useHydrated } from "../../lib/useHydrated";
 import type {
@@ -260,6 +264,7 @@ type ModalState =
   | { kind: "editExpense"; transfer: Transfer }
   | { kind: "deploy"; transfer: Transfer }
   | { kind: "platform"; transfer: Transfer }
+  | { kind: "revert"; transfer: Transfer }
   | { kind: "addWithdrawal" }
   | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
@@ -317,6 +322,7 @@ function TransferListRow({
   onUnlinkDeployed,
   onSendToPlatform,
   onRemovePlatform,
+  onRevertToAuto,
 }: {
   transfer: Transfer;
   pairLabel: string;
@@ -332,6 +338,7 @@ function TransferListRow({
   onUnlinkDeployed: (t: Transfer) => void;
   onSendToPlatform: (t: Transfer) => void;
   onRemovePlatform: (t: Transfer) => void;
+  onRevertToAuto: (t: Transfer) => void;
 }) {
   const [open, setOpen] = useState(false);
   // Settled money is visually locked (dimmed). THREE states count as settled
@@ -502,6 +509,18 @@ function TransferListRow({
                     className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
                   >
                     {isTransferred ? "Change platform" : "Send to Platform"}
+                  </button>
+                )}
+                {/* Only automation-created rows have an auto state to go back
+                    to; a hand-logged transfer has none, so it never offers
+                    this. */}
+                {isAutoCreated(t) && (
+                  <button
+                    type="button"
+                    onClick={() => onRevertToAuto(t)}
+                    className="rounded-md border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-300 hover:bg-sky-500/20"
+                  >
+                    Revert to auto-created
                   </button>
                 )}
                 {canSendToPlatform && isTransferred && (
@@ -1101,6 +1120,14 @@ export default function TransfersPage() {
     softDeleteTransfer(id);
     refresh();
     setPendingDelete(null);
+  };
+
+  // Delete from inside an Edit modal: the same soft delete, then close the
+  // modal (the record it was editing is no longer in the live list).
+  const handleDeleteFromModal = (id: string) => {
+    softDeleteTransfer(id);
+    refresh();
+    setModal({ kind: "none" });
   };
 
   const handleRestore = (id: string) => {
@@ -1796,6 +1823,9 @@ export default function TransfersPage() {
                               setModal({ kind: "platform", transfer: tr })
                             }
                             onRemovePlatform={handleRemovePlatform}
+                            onRevertToAuto={(tr) =>
+                              setModal({ kind: "revert", transfer: tr })
+                            }
                           />
                         ))}
                       </div>
@@ -1959,6 +1989,7 @@ export default function TransfersPage() {
               positions={positions}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(form) => handleEdit(modal.transfer, form)}
+              onDelete={() => handleDeleteFromModal(modal.transfer.id)}
             />
           )}
           {modal.kind === "editExpense" && (
@@ -1968,6 +1999,19 @@ export default function TransfersPage() {
               initial={expenseToForm(modal.transfer)}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(form) => handleEditExpense(modal.transfer, form)}
+              onDelete={() => handleDeleteFromModal(modal.transfer.id)}
+            />
+          )}
+          {modal.kind === "revert" && (
+            <RevertToAutoModal
+              transfer={modal.transfer}
+              claims={claims}
+              positions={positions}
+              onCancel={() => setModal({ kind: "none" })}
+              onApplied={() => {
+                refresh();
+                setModal({ kind: "none" });
+              }}
             />
           )}
           {modal.kind === "deploy" && (
@@ -2274,11 +2318,46 @@ function Section({ title, children }: SectionProps) {
 interface FormActionsProps {
   onCancel: () => void;
   submitLabel: string;
+  // Present only when editing an existing record. Calls the SAME soft-delete
+  // handler the row-level Delete uses, so the record lands in Recently Deleted
+  // and stays restorable — there is deliberately no second delete path.
+  onDelete?: () => void;
 }
 
-function FormActions({ onCancel, submitLabel }: FormActionsProps) {
+function FormActions({ onCancel, submitLabel, onDelete }: FormActionsProps) {
+  const [confirming, setConfirming] = useState(false);
   return (
-    <div className="flex justify-end gap-2 px-5 py-4">
+    <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4">
+      {onDelete &&
+        (confirming ? (
+          <div className="mr-auto flex flex-wrap items-center gap-2">
+            <span className="text-xs text-[var(--muted)]">
+              Delete this? You can restore it from Recently Deleted.
+            </span>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
+            >
+              Yes
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="mr-auto inline-flex h-9 items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/10 px-4 text-sm font-medium text-rose-300 hover:bg-rose-500/20"
+          >
+            Delete
+          </button>
+        ))}
       <button
         type="button"
         onClick={onCancel}
@@ -2303,6 +2382,7 @@ interface TransferFormModalProps {
   positions: Position[];
   onCancel: () => void;
   onSubmit: (form: TransferFormState) => void;
+  onDelete?: () => void;
 }
 
 function TransferFormModal({
@@ -2312,6 +2392,7 @@ function TransferFormModal({
   positions,
   onCancel,
   onSubmit,
+  onDelete,
 }: TransferFormModalProps) {
   const [form, setForm] = useState<TransferFormState>(initial);
 
@@ -2438,7 +2519,11 @@ function TransferFormModal({
             </Field>
           </div>
         </Section>
-        <FormActions onCancel={onCancel} submitLabel={submitLabel} />
+        <FormActions
+          onCancel={onCancel}
+          submitLabel={submitLabel}
+          onDelete={onDelete}
+        />
       </form>
     </ModalShell>
   );
@@ -2667,18 +2752,147 @@ function SendToPlatformModal({
   );
 }
 
+// Shows what "Revert to auto-created" would produce BEFORE anything is written:
+// the plan is computed on open (the dual-token case fetches historical prices,
+// hence the loading state), rendered as a current → new comparison, and only
+// applied on an explicit Confirm. A dual-token claim owns two transfers whose
+// amounts are computed against each other, so the whole source group is shown
+// and rebuilt together — reverting one leg in isolation could not reproduce the
+// split.
+function RevertToAutoModal({
+  transfer,
+  claims,
+  positions,
+  onCancel,
+  onApplied,
+}: {
+  transfer: Transfer;
+  claims: FeeClaim[];
+  positions: Position[];
+  onCancel: () => void;
+  onApplied: () => void;
+}) {
+  const [plan, setPlan] = useState<AutoRevertPlan | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    planRevertToAuto(transfer, claims, positions)
+      .then((p) => {
+        if (live) setPlan(p);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [transfer, claims, positions]);
+
+  const describe = (t: Transfer) =>
+    `${t.token || "—"} · ${formatUsd(t.amount)} · platform ${
+      t.platform || "(none)"
+    } · ${t.moneyStatus ?? "idle"}`;
+
+  return (
+    <ModalShell title="Revert to auto-created" onCancel={onCancel}>
+      <Section
+        title={
+          plan?.source === "close"
+            ? "Recomputed from the linked close"
+            : "Recomputed from the linked fee claim"
+        }
+      >
+        {failed || (plan && plan.error) ? (
+          <p className="text-[12px] leading-relaxed text-amber-300">
+            {plan?.error ??
+              "Could not recompute this transfer right now. Nothing has been changed."}
+          </p>
+        ) : !plan ? (
+          <p className="text-[12px] text-[var(--muted)]">
+            Recomputing from the linked record…
+          </p>
+        ) : (
+          <>
+            <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
+              This will discard your changes to{" "}
+              {plan.current.length === 1
+                ? "this transfer"
+                : `these ${plan.current.length} transfers`}{" "}
+              and rebuild{" "}
+              {plan.next.length === 1 ? "it" : "them"} from the linked record as
+              it stands now. Platform, destination, money status, any deploy
+              link and the notes all go back to what the automation writes.
+            </p>
+            <div className="space-y-3">
+              {plan.next.map((next, i) => {
+                const before = plan.current[i];
+                return (
+                  <div
+                    key={next.id}
+                    className="rounded-md border border-[var(--border)] bg-[var(--surface-2)]/30 px-3 py-2.5"
+                  >
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                      Now
+                    </p>
+                    <p className="text-[12px] text-[var(--muted)] line-through">
+                      {before ? describe(before) : "— (new record)"}
+                    </p>
+                    <p className="mt-2 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                      After revert
+                    </p>
+                    <p className="text-[13px] font-medium text-[var(--foreground)]">
+                      {describe(next)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--muted)]">
+                      dated {formatDateDDMMYYYY(next.date)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </Section>
+      <div className="flex justify-end gap-2 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={!plan || plan.next.length === 0}
+          onClick={() => {
+            if (!plan) return;
+            applyRevertToAuto(plan);
+            onApplied();
+          }}
+          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Continue
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function ExpenseFormModal({
   title,
   submitLabel,
   initial,
   onCancel,
   onSubmit,
+  onDelete,
 }: {
   title: string;
   submitLabel: string;
   initial: ExpenseFormState;
   onCancel: () => void;
   onSubmit: (form: ExpenseFormState) => void;
+  onDelete?: () => void;
 }) {
   const [form, setForm] = useState<ExpenseFormState>(initial);
 
@@ -2742,7 +2956,11 @@ function ExpenseFormModal({
             </Field>
           </div>
         </Section>
-        <FormActions onCancel={onCancel} submitLabel={submitLabel} />
+        <FormActions
+          onCancel={onCancel}
+          submitLabel={submitLabel}
+          onDelete={onDelete}
+        />
       </form>
     </ModalShell>
   );

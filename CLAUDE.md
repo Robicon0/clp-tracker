@@ -1818,6 +1818,70 @@ at the plan gate.
   app/transfers/page.tsx, lib/storage.ts and lib/types.ts — no positions or
   claims delete code. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Added Delete inside Edit Expense/Edit Transfer modals (same
+  soft-delete behavior as row-level Delete). Verified Available Balance
+  correctly updates when an Expense is deleted. Added "Revert to auto-created"
+  for automation-created transfers — recomputes fresh from the linked
+  claim/close's current data using the same logic the automation itself uses,
+  discarding manual edits after explicit confirmation.
+  PART 1: FormActions (the shared modal footer) gained an optional onDelete,
+  rendered as a left-aligned Delete with its own inline confirm. Both edit
+  modals pass handleDeleteFromModal, which calls the SAME softDeleteTransfer as
+  the row action — there is deliberately no second delete path, so a record
+  deleted from a modal lands in Recently Deleted and restores identically.
+  Add mode passes no onDelete, so the button only exists when editing.
+  PART 2 — MEASURED, AND THE ANSWER IS NOT WHAT IT LOOKS LIKE. Deleting an
+  Expense-STATUS transfer leaves Available Balance UNCHANGED, and that is
+  correct: the transfer's amount sits in Lifetime Earned as well as in the
+  Expenses bucket, so removing the record drops it from both sides at once
+  (measured: Lifetime $2,100 → $1,950, Expenses $210 → $60, Available $1,890
+  both before and after — 2100−210 = 1950−60). This is the same "nets to zero"
+  property recorded in the 2026-07-30 entry. The case where Available DOES rise
+  by exactly the amount is a LOGGED expense/withdrawal (the Log an Expense
+  button, stored in clp_withdrawals), which is not part of Lifetime Earned —
+  measured: deleting a $60 withdrawal moved Available $1,890 → $1,950. Do not
+  "fix" the first case to behave like the second; that would double-count.
+  PART 3 — RECOMPUTATION, NOT A SNAPSHOT: planRevertToAuto /
+  applyRevertToAuto / isAutoCreated in lib/transferAutomation.ts. The plan runs
+  the SAME buildClaimTransfers / buildUpsideTransfer the automation uses
+  (including the dual-token historical-price split via /api/prices/historical),
+  so there is no second copy of the logic and it works retroactively on every
+  auto transfer ever created — no migration, no stored original.
+  WHOLE-GROUP REVERT (the design call): a dual-token claim owns TWO transfers
+  whose amounts are computed against each other, so reverting one leg alone
+  could not reproduce the split. The plan therefore targets the whole source
+  group (all rows sharing that sourceClaimId/sourceCloseId), previews every
+  leg, and rebuilds them together. Existing record ids are carried over in
+  order (alignIds), so a revert edits rows in place rather than minting new
+  ones and orphaning outlier dismissals.
+  Reverting discards EVERY manual edit on those rows — amount, token, platform,
+  destination, money status, notes AND any deploy-link — because that is the
+  state the automation produces (the same fields isUntouchedAuto tests). The
+  modal says so before you confirm. Preview is computed on open (async for the
+  dual case), rendered as struck-through "Now" → "After revert" per leg, and
+  only written on Continue; a missing claim/position or a no-longer-positive
+  scalp renders an amber explanation with Continue disabled.
+  The action appears ONLY on rows where isAutoCreated is true — manual
+  Undeployed Tokens, hand-logged fees and expenses never show it.
+  Verified live on localhost:3001 with 3 positions / 2 claims / 6 transfers:
+  (A) Delete inside Edit Expense soft-deleted the $75 legacy expense and inside
+  Edit Transfer soft-deleted the $150 expense-status fees row — both landed in
+  Recently Deleted, both modals closed. (B) numbers above. (C) an auto transfer
+  hand-edited to $999/KRAKEN, with its claim's stableAmount then changed
+  500 → 550, reverted to SUI · $550.00 · platform "" · redeployed · auto note,
+  same id — proving it recomputes from the claim as it stands now. (D) the
+  confirm showed "SUI · $999.00 · platform KRAKEN · redeployed" struck through
+  above "SUI · $550.00 · platform (none) · redeployed, dated 10/07/2026".
+  (E) side by side in one view, the auto row offered Revert while the manual
+  Undeployed row (and the Expense row) did not. (F) dual ETH+WBTC claim
+  ($1,000; legs mangled to $111/$889 with a platform): both legs previewed and
+  rebuilt to $582.91 + $417.09 via real historical prices, summing to exactly
+  $1,000.00, ids preserved. A close-sourced upside transfer mangled to
+  "WRONG · $1.00 · AAVE" reverted to USDC · $275.00 after its position's Scalp
+  was changed 250 → 275. The two soft-deleted rows survived every one of these
+  writes (the saveTransfers merge guard). Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

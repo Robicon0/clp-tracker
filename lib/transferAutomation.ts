@@ -274,6 +274,112 @@ export function createUpsideTransfer(position: Position): boolean {
   return true;
 }
 
+// ── Revert to auto-created ──────────────────────────────────────────────────
+
+// Only a transfer the automation made has an "auto-created" state to go back
+// to. Manually-logged rows (Undeployed Tokens, hand-entered fees, expenses)
+// carry neither source id and must never offer the action.
+export function isAutoCreated(t: Transfer): boolean {
+  return t.sourceClaimId !== undefined || t.sourceCloseId !== undefined;
+}
+
+export interface AutoRevertPlan {
+  source: "claim" | "close";
+  // The stored records that will be replaced — the WHOLE source group, because
+  // a dual-token claim produces two legs whose amounts are computed against
+  // each other. Reverting one leg alone could not reproduce the split.
+  current: Transfer[];
+  // What the automation produces from the linked claim/close as it stands now.
+  // Ids are carried over from `current` in order, so a revert edits records in
+  // place instead of minting new ones.
+  next: Transfer[];
+  // Set when the plan cannot be built; `next` is empty and nothing may apply.
+  error?: string;
+}
+
+function alignIds(built: Transfer[], existing: Transfer[]): Transfer[] {
+  return built.map((t, i) =>
+    existing[i] ? { ...t, id: existing[i].id } : t,
+  );
+}
+
+// Recomputes what the automation WOULD produce right now from the linked
+// claim/close's current stored data — deliberately a recomputation, not a
+// stored snapshot, so it works on every auto transfer ever created with no
+// migration. Runs the same buildClaimTransfers / buildUpsideTransfer the
+// automation itself uses (including the dual-token historical price split), so
+// there is no second copy of this logic to drift.
+export async function planRevertToAuto(
+  transfer: Transfer,
+  claims: FeeClaim[],
+  positions: Position[],
+): Promise<AutoRevertPlan> {
+  const all = getTransfers();
+
+  if (transfer.sourceClaimId !== undefined) {
+    const current = all.filter((t) => t.sourceClaimId === transfer.sourceClaimId);
+    const claim = claims.find((c) => c.id === transfer.sourceClaimId);
+    if (!claim) {
+      return {
+        source: "claim",
+        current,
+        next: [],
+        error:
+          "The fee claim this transfer was created from no longer exists, so there is nothing to recompute from.",
+      };
+    }
+    let built = buildClaimTransfers(claim);
+    if (built.needsPrices) {
+      const prices = await fetchClaimDayPrices(claim, built.dualSymbols);
+      built = buildClaimTransfers(claim, prices ?? {});
+    }
+    if (built.transfers.length === 0) {
+      return {
+        source: "claim",
+        current,
+        next: [],
+        error: "This claim no longer produces a transfer.",
+      };
+    }
+    return { source: "claim", current, next: alignIds(built.transfers, current) };
+  }
+
+  const current = all.filter((t) => t.sourceCloseId === transfer.sourceCloseId);
+  const position = positions.find((p) => p.id === transfer.sourceCloseId);
+  if (!position) {
+    return {
+      source: "close",
+      current,
+      next: [],
+      error:
+        "The closed position this transfer was created from no longer exists, so there is nothing to recompute from.",
+    };
+  }
+  const built = buildUpsideTransfer(position);
+  if (!built) {
+    return {
+      source: "close",
+      current,
+      next: [],
+      error:
+        "This position's Scalp is no longer positive, so the automation would not create an upside transfer for it now.",
+    };
+  }
+  return { source: "close", current, next: alignIds([built], current) };
+}
+
+// Applies a plan: the source group is replaced wholesale by the rebuilt set.
+// Every manual edit on those records — platform, destination, money status,
+// deploy-link, notes, amount — is discarded, which is the point of the action.
+export function applyRevertToAuto(plan: AutoRevertPlan): void {
+  if (plan.next.length === 0) return;
+  const replaced = new Set(plan.current.map((t) => t.id));
+  saveTransfers([
+    ...getTransfers().filter((t) => !replaced.has(t.id)),
+    ...plan.next,
+  ]);
+}
+
 // ── Backfill eligibility (pure) ─────────────────────────────────────────────
 
 // A claim already has a fee transfer if an auto row points at it (by
