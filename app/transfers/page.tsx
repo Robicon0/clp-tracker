@@ -323,6 +323,7 @@ function TransferListRow({
   onSendToPlatform,
   onRemovePlatform,
   onRevertToAuto,
+  defaultOpen = false,
 }: {
   transfer: Transfer;
   pairLabel: string;
@@ -339,8 +340,15 @@ function TransferListRow({
   onSendToPlatform: (t: Transfer) => void;
   onRemovePlatform: (t: Transfer) => void;
   onRevertToAuto: (t: Transfer) => void;
+  // Rows start expanded when the list is narrowed to a single position: at
+  // that point there are only a handful and the user is working on them, so
+  // details and actions should be there without a click. Across all positions
+  // the list can run to hundreds of rows, where auto-expanding is unusable —
+  // hence collapsed by default there. The parent keys each row on this value,
+  // so flipping the filter re-mounts the rows and resets any manual toggling.
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   // Settled money is visually locked (dimmed). THREE states count as settled
   // and read identically — "this money has been put to use": a deploy-link
   // (inside a position), a platform (sent out for yield) and an Expense
@@ -547,8 +555,8 @@ function TransferListRow({
           {isExpensed && t.transferType !== "expense" && (
             <p className="mt-2 text-[11px] text-[var(--muted)]">
               Marked as an Expense, so this money has left the business and
-              can&apos;t be deployed. Switch Money Status back to Redeployed in
-              Edit to make it available again.
+              can&apos;t be deployed. Undo the Expense — in Edit, or with the
+              bulk action above — to make it available again.
             </p>
           )}
         </div>
@@ -1003,6 +1011,10 @@ export default function TransfersPage() {
   );
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+
+  // Narrowed to one position = a working view: show every row's details and
+  // actions straight away. "All positions" stays collapsed (see the row).
+  const expandRowsByDefault = positionFilter !== "";
 
   // Only idle rows are eligible for the bulk send — money already deployed,
   // expensed or sitting at a platform is not "currently idle" and is left
@@ -1600,11 +1612,9 @@ export default function TransfersPage() {
                       {pendingBulk?.scope === "visible" ? (
                         <>
                           <span className="text-[12px] text-[var(--foreground)]">
-                            Mark all {visibleIds.length} shown{" "}
                             {pendingBulk.status === "expense"
-                              ? "as Expense"
-                              : "as Redeployed"}
-                            ?
+                              ? `Mark all ${visibleIds.length} shown as Expense?`
+                              : `Undo Expense on all ${visibleIds.length} shown?`}
                           </span>
                           <button
                             type="button"
@@ -1635,7 +1645,7 @@ export default function TransfersPage() {
                             }
                             className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--foreground)] hover:border-[var(--accent)]"
                           >
-                            Mark all {visibleIds.length} shown as Redeployed
+                            Undo Expense on all {visibleIds.length} shown
                           </button>
                           <button
                             type="button"
@@ -1706,15 +1716,15 @@ export default function TransfersPage() {
                       {pendingBulk?.scope === "selected" ? (
                         <div className="flex items-center gap-2">
                           <span className="text-[12px] text-[var(--foreground)]">
-                            Mark{" "}
-                            {
-                              visibleIds.filter((id) => selectedIds.has(id))
-                                .length
-                            }{" "}
                             {pendingBulk.status === "expense"
-                              ? "as Expense"
-                              : "as Redeployed"}
-                            ?
+                              ? `Mark ${
+                                  visibleIds.filter((id) => selectedIds.has(id))
+                                    .length
+                                } as Expense?`
+                              : `Undo Expense on ${
+                                  visibleIds.filter((id) => selectedIds.has(id))
+                                    .length
+                                }?`}
                           </span>
                           <button
                             type="button"
@@ -1745,7 +1755,7 @@ export default function TransfersPage() {
                             }
                             className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-[12px] font-medium text-[var(--foreground)] hover:border-[var(--accent)]"
                           >
-                            Mark as Redeployed
+                            Undo Expense
                           </button>
                           <button
                             type="button"
@@ -1790,7 +1800,8 @@ export default function TransfersPage() {
                       <div className="divide-y divide-[var(--border)]">
                         {list.map((t) => (
                           <TransferListRow
-                            key={t.id}
+                            key={`${t.id}-${expandRowsByDefault}`}
+                            defaultOpen={expandRowsByDefault}
                             transfer={t}
                             pairLabel={
                               t.transferType === "expense"
@@ -2498,7 +2509,7 @@ function TransferFormModal({
               <Field
                 label="Money Status"
                 htmlFor="moneyStatus"
-                hint="Redeployed = still working in the business (e.g. moved to AAVE). Expense = money that has left the business. Only expenses reduce Overall P&L."
+                hint="Redeployed is the normal state every transfer starts in — money still working in the business. Switch to Expense only when the money has genuinely left the business; setting it back to Redeployed is how you undo that."
               >
                 <MoneyStatusToggle
                   value={form.moneyStatus}
