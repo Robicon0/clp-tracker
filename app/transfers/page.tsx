@@ -952,6 +952,48 @@ export default function TransfersPage() {
     return map;
   }, [transfers]);
 
+  // Positions whose fee money is entirely gone: EVERY transfer belonging to the
+  // position is Expense-status. One non-expense transfer (redeployed, deployed
+  // or transferred) disqualifies it — partial expensing is not "fully", and a
+  // position with no transfers at all cannot be fully anything, so both are
+  // excluded by construction (the counter only records ids it has seen).
+  const fullyExpensedPositions = useMemo(() => {
+    const tally = new Map<string, { total: number; expensed: number }>();
+    for (const t of transfers) {
+      if (!t.positionId) continue;
+      const entry = tally.get(t.positionId) ?? { total: 0, expensed: 0 };
+      entry.total += 1;
+      if (isExpensedTransfer(t)) entry.expensed += 1;
+      tally.set(t.positionId, entry);
+    }
+    const ids = new Set<string>();
+    for (const [id, { total, expensed }] of tally) {
+      if (total > 0 && total === expensed) ids.add(id);
+    }
+    return ids;
+  }, [transfers]);
+
+  // The picker annotation. Fully-expensed wins the slot when both could apply:
+  // "this position's money is all spent" is the more important warning, and in
+  // practice they are mutually exclusive anyway — deployed money is by
+  // definition not expensed, so a position holding deployed money always has at
+  // least one non-expense transfer.
+  const positionNote = (
+    p: Position,
+  ): { text: string; tone: "muted" | "danger" } | null => {
+    if (fullyExpensedPositions.has(p.id)) {
+      return { text: "fully expensed", tone: "danger" };
+    }
+    const already = deployedByPosition.get(p.id);
+    if (already) {
+      return {
+        text: `already has ${formatUsd(already.amount)} deployed`,
+        tone: "muted",
+      };
+    }
+    return null;
+  };
+
   // One place decides what a deploy-link is called, so the row badge and the
   // Recently Deleted entry can never word it differently. The unknown sentinel
   // has no pair to look up and says so rather than implying a position.
@@ -1618,6 +1660,7 @@ export default function TransfersPage() {
                   clearSelection();
                 }}
                 allValue=""
+                noteFor={positionNote}
               />
               <div>
                 <label className="block text-xs font-medium text-[var(--muted)]">
@@ -2093,7 +2136,7 @@ export default function TransfersPage() {
             <DeployLinkModal
               transfer={modal.transfer}
               positions={positions}
-              deployedByPosition={deployedByPosition}
+              noteFor={positionNote}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(positionId) =>
                 handleMarkDeployed(modal.transfer, positionId)
@@ -2703,16 +2746,17 @@ function WithdrawalFormModal({
 function DeployLinkModal({
   transfer,
   positions,
-  deployedByPosition,
+  noteFor,
   onCancel,
   onSubmit,
 }: {
   transfer: Transfer;
   positions: Position[];
-  // How much is already deployed into each position, keyed by position id.
-  // Informational only — it never blocks picking the same position again,
+  // Per-position memory aid ("already has $X deployed", "fully expensed"),
+  // shared with the page's position filter so the two can never word it
+  // differently. Informational only — it never blocks picking a position,
   // since topping one up is legitimate.
-  deployedByPosition: Map<string, { count: number; amount: number }>;
+  noteFor: (p: Position) => { text: string; tone: "muted" | "danger" } | null;
   onCancel: () => void;
   onSubmit: (positionId: string) => void;
 }) {
@@ -2777,15 +2821,25 @@ function DeployLinkModal({
               Not sure which position (deployed, unknown)
             </option>
             {sorted.map((p) => {
-              // Memory aid: which positions you have already put money into.
-              const already = deployedByPosition.get(p.id);
+              // Memory aid: money already put in, or money already all spent.
+              // A native <option> cannot be reliably coloured (macOS draws the
+              // popup itself and ignores option colour), so the danger case
+              // carries a text marker as well — the words, not the red, are
+              // what has to survive.
+              const note = noteFor(p);
               return (
-                <option key={p.id} value={p.id}>
+                <option
+                  key={p.id}
+                  value={p.id}
+                  className={
+                    note?.tone === "danger" ? "text-rose-400" : undefined
+                  }
+                >
                   {p.pair}
                   {p.status === "closed" ? " (closed)" : ""} · opened{" "}
                   {formatDateDDMMYYYY(p.entryDatetime)}
-                  {already
-                    ? ` · already has ${formatUsd(already.amount)} deployed`
+                  {note
+                    ? `${note.tone === "danger" ? " · ⚠ " : " · "}${note.text}`
                     : ""}
                 </option>
               );

@@ -1981,6 +1981,60 @@ at the plan gate.
   with a real measured shadow. (E) balances held at $1,600 / $0 / $650 / $0 /
   $950 throughout. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Position dropdown "bleed-through" — REAL root cause found,
+  distinct from the 36e3595 shadow fix. Plus a red "fully expensed" indicator on
+  positions in both pickers. No calculation touched.
+  PART 1 — IT WAS NEVER A STACKING BUG, and 36e3595 treated a symptom. Evidence:
+  elementFromPoint over a 13x13 grid inside the open panel, at six scroll
+  positions including the exact one from the bug report, returned the panel or
+  its own children at ALL 169 points every time — 0 foreign hits. The suspected
+  culprit, the bulk toolbar's "Platform (e.g. AAVE)" input, computes to
+  position:static / z-index:auto and therefore cannot paint above a z-40
+  absolutely-positioned element; the screenshot that looks like its placeholder
+  showing through is actually correct occlusion (the "P" is hidden behind the
+  panel edge, "latform…" continues beyond it).
+  THE ACTUAL CAUSE, measured: the panel painted in --surface rgb(17,19,25) while
+  the card it floats over is ALSO --surface rgb(17,19,25) — byte-identical
+  backgrounds separated by a single 1px border — and the panel is ~549px wide
+  inside a ~1152px card, so row amounts and toolbar controls sit at the same
+  vertical positions immediately either side of it and read as continuing
+  through it. Correct occlusion with zero visual separation, and it changes as
+  you scroll past different content, which is exactly what the user described.
+  36e3595's missing shadow was a contributing factor, not the cause.
+  FIX: a new --surface-raised (#1e2431) token in globals.css, deliberately
+  lighter than both the card (#111319) and the page (#0a0b0f), for any panel
+  that overlays a card. The dropdown and its sticky search header use it, with
+  the explicit shadow kept and ring-1 ring-white/10 for an edge. Interior tints
+  had to move off --surface-2 (now DARKER than the panel) to white/10 hover and
+  white/[0.06] chain headers. Verified: panel bg now rgb(30,36,49) vs card
+  rgb(17,19,25), 0/169 foreign hits at six scroll positions, visually a clearly
+  raised layer at every one. STILL TRUE from 36e3595: Tailwind's shadow-*
+  utilities render nothing in this project — use explicit arbitrary shadows.
+  The orange circle in the user's screenshot is the macOS dictation button, not
+  app UI — confirmed unrelated.
+  PART 2 — fullyExpensedPositions: a position is flagged only when it has ≥1
+  transfer AND every transfer carrying its positionId is Expense-status. One
+  non-expense transfer disqualifies it (partial expensing is not "fully"), and a
+  position with no transfers is excluded by construction since the tally only
+  records ids it has seen. positionNote() is the single source for BOTH picker
+  hints, shared by DeployLinkModal and the Transfers position filter so they can
+  never word it differently; fully-expensed takes the slot when both could
+  apply, though they are mutually exclusive in practice (deployed money is by
+  definition not expensed).
+  PositionCombobox gained an OPTIONAL noteFor prop — callers that pass nothing
+  (Fee Claims, Add Transfer) render exactly as before, verified 0 notes there.
+  In the combobox the note renders in real rose-400. In DeployLinkModal it is a
+  native <option>, which macOS draws itself and will not reliably colour, so the
+  danger case also carries a "⚠" text marker — the words, not the red, are what
+  has to survive.
+  Verified live (7 positions, 7 transfers): AAA/USDC with both its transfers
+  Expense → red "· fully expensed" (computed lab(64.41 63.03 19.21) = rose-400)
+  in the combobox and "· ⚠ fully expensed" with class text-rose-400 in the
+  modal; BBB/USDC with 1 of 3 Expense → NO indicator; CCC/USDC → the muted
+  "already has $550.00 deployed" and no red; DDD/EEE/FFF/GGG with zero transfers
+  → nothing. No option ever showed both. Balances held at $1,560 / $310 / $550 /
+  $0 / $700 throughout. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

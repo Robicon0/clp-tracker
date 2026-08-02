@@ -4,6 +4,12 @@
   --background: #0a0b0f;
   --surface: #111319;
   --surface-2: #161a22;
+  /* Floating layers (dropdown panels, popovers) that sit ON TOP of a --surface
+     card. Deliberately lighter than both --surface and --surface-2: a panel
+     painted in --surface over a --surface card is pixel-identical to what is
+     behind it, so it reads as if the page were showing through even though it
+     is correctly occluding. Anything that overlays a card uses this. */
+  --surface-raised: #1e2431;
   --border: #1f2430;
   --border-strong: #2a3140;
   --foreground: #e6e8ee;
@@ -17,6 +23,7 @@
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-raised: var(--surface-raised);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-muted: var(--muted);

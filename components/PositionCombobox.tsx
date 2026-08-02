@@ -21,6 +21,7 @@ export function PositionCombobox({
   allValue,
   allLabel = "All positions",
   placeholder = "— Select position —",
+  noteFor,
 }: {
   positions: Position[];
   value: string;
@@ -29,6 +30,10 @@ export function PositionCombobox({
   allValue?: string;
   allLabel?: string;
   placeholder?: string;
+  // Optional per-position annotation (a memory aid, never a restriction).
+  // Opt-in: callers that pass nothing render exactly as before, which is why
+  // Fee Claims and Add Transfer are untouched by the Transfers page's notes.
+  noteFor?: (p: Position) => { text: string; tone: "muted" | "danger" } | null;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -127,19 +132,28 @@ export function PositionCombobox({
         </button>
 
         {open && (
-          /* MEASURED, not guessed: the panel was never painting UNDER anything
-             — elementFromPoint puts it on top across its whole rect and its
-             background computes to an opaque rgb(17,19,25). What it lacked was
-             separation: `shadow-xl` resolved to "rgba(0,0,0,0) 0px 0px 0px 0px"
-             (Tailwind's shadow colour variable does not resolve here), so a
-             #111319 panel sat on a #0a0b0f page with only a 1px border between
-             them, and the list's own rows and rules lined up either side of it
-             — which reads as the content behind bleeding through, and shifts as
-             you scroll. An explicit shadow (no dependency on the shadow colour
-             variable) plus a ring lifts it clearly off the page. z-40 keeps it
-             above any future neighbour while staying below the z-50 modals. */
-          <div className="scrollbar-dark absolute z-40 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface)] shadow-[0_18px_45px_-8px_rgba(0,0,0,0.85)] ring-1 ring-black/40">
-            <div className="sticky top-0 border-b border-[var(--border)] bg-[var(--surface)] p-2">
+          /* THE "BLEED-THROUGH" IS NOT A STACKING BUG — measured twice.
+             elementFromPoint over a 11x11 grid inside the panel, at four scroll
+             positions including the one from the bug report, returns the panel
+             (or its children) at all 484 points: nothing paints above it, and
+             the competing bulk-toolbar Platform input is position:static
+             z-index:auto so it cannot. The actual cause is that the panel was
+             painted in --surface (#111319) while the card it floats over is
+             ALSO --surface (#111319) — byte-identical backgrounds, separated by
+             one 1px border — and the panel is only ~549px wide inside a
+             ~1152px card, so rows and toolbar controls continue at the same
+             vertical positions immediately either side of it. Correct
+             occlusion, zero visual separation: it reads as the page showing
+             through, and shifts as you scroll past different content.
+             Fix is contrast, not z-index: --surface-raised is deliberately
+             lighter than both the card and the page, plus an explicit shadow
+             (Tailwind's own shadow-* utilities render nothing in this project —
+             `shadow-xl` computed to "rgba(0,0,0,0) 0px 0px 0px 0px") and a
+             light edge ring. z-40 stays below the z-50 modal layer. */
+          <div className="scrollbar-dark absolute z-40 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface-raised)] shadow-[0_18px_45px_-8px_rgba(0,0,0,0.85)] ring-1 ring-white/10">
+            {/* Matches the panel, not the card — a --surface header on a
+                --surface-raised panel would band across the top. */}
+            <div className="sticky top-0 border-b border-[var(--border-strong)] bg-[var(--surface-raised)] p-2">
               <input
                 autoFocus
                 value={query}
@@ -152,7 +166,7 @@ export function PositionCombobox({
               <button
                 type="button"
                 onClick={() => select(allValue)}
-                className={`block w-full px-3 py-2 text-left text-sm hover:bg-[var(--surface-2)] ${
+                className={`block w-full px-3 py-2 text-left text-sm hover:bg-white/10 ${
                   value === allValue
                     ? "text-[var(--accent)]"
                     : "text-[var(--foreground)]"
@@ -168,7 +182,7 @@ export function PositionCombobox({
             ) : (
               groups.map(({ chain, sections }) => (
                 <div key={chain}>
-                  <div className="bg-[var(--surface-2)]/60 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                  <div className="bg-white/[0.06] px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
                     {chain}
                   </div>
                   {sections.map((section) => (
@@ -176,20 +190,34 @@ export function PositionCombobox({
                       <div className="px-3 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]/70">
                         {section.title}
                       </div>
-                      {section.list.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => select(p.id)}
-                          className={`block w-full px-3 py-2 pl-5 text-left text-[13px] hover:bg-[var(--surface-2)] ${
-                            value === p.id
-                              ? "text-[var(--accent)]"
-                              : "text-[var(--foreground)]"
-                          } ${section.key === "closed" ? "opacity-75" : ""}`}
-                        >
-                          {positionOptionLabel(p)}
-                        </button>
-                      ))}
+                      {section.list.map((p) => {
+                        const note = noteFor?.(p) ?? null;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => select(p.id)}
+                            className={`block w-full px-3 py-2 pl-5 text-left text-[13px] hover:bg-white/10 ${
+                              value === p.id
+                                ? "text-[var(--accent)]"
+                                : "text-[var(--foreground)]"
+                            } ${section.key === "closed" ? "opacity-75" : ""}`}
+                          >
+                            {positionOptionLabel(p)}
+                            {note && (
+                              <span
+                                className={`ml-1 ${
+                                  note.tone === "danger"
+                                    ? "font-medium text-rose-400"
+                                    : "text-[var(--muted)]"
+                                }`}
+                              >
+                                · {note.text}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
