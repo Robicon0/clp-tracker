@@ -1981,7 +1981,7 @@ at the plan gate.
   with a real measured shadow. (E) balances held at $1,600 / $0 / $650 / $0 /
   $950 throughout. Zero console errors; seeds removed. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Position dropdown "bleed-through" — REAL root cause found,
+- 91950ab: Position dropdown "bleed-through" — REAL root cause found,
   distinct from the 36e3595 shadow fix. Plus a red "fully expensed" indicator on
   positions in both pickers. No calculation touched.
   PART 1 — IT WAS NEVER A STACKING BUG, and 36e3595 treated a symptom. Evidence:
