@@ -234,6 +234,15 @@ function buildExpense(id: string, form: ExpenseFormState): Transfer {
 // Note the states are keyed off platform/deploy-link, NOT off moneyStatus
 // "redeployed" specifically: an idle Undeployed Tokens transfer carries an
 // UNSET moneyStatus (d20f3e3) and must be able to reach Transferred too.
+// Sentinel deployedToPositionId for "I know this money went into a position,
+// I just can't remember which". It deliberately reuses the SAME field rather
+// than adding a flag, so every presence-based reader — the Deployed bucket in
+// the balance memo, isDeployedTransfer, isUntouchedAuto — treats it exactly
+// like a real link with no changes at all. Only the label lookups need to know
+// about it. The double-underscore form cannot collide with a stored position id
+// (those are crypto.randomUUID values).
+const UNKNOWN_POSITION_ID = "__unknown_position__";
+
 function isExpensedTransfer(t: Transfer): boolean {
   return t.moneyStatus === "expense";
 }
@@ -377,10 +386,19 @@ function TransferListRow({
       }`}
     >
       <div className="flex items-start gap-2 px-3 py-2.5">
+        {/* Selecting a row also opens it, in the one click: if you are picking
+            a row out for a bulk action you want to see what it is. Unchecking
+            deliberately LEAVES it open — collapsing would yank the details out
+            from under someone still reading them, and would also silently undo
+            an expansion the user had opened by hand before selecting. Closing
+            stays where it always was: the row's own toggle. */}
         <input
           type="checkbox"
           checked={selected}
-          onChange={() => onToggleSelect(t.id)}
+          onChange={() => {
+            if (!selected) setOpen(true);
+            onToggleSelect(t.id);
+          }}
           aria-label="Select transfer"
           className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
         />
@@ -491,13 +509,26 @@ function TransferListRow({
                     to money already marked as an Expense. */}
                 {canDeploy &&
                   (t.deployedToPositionId ? (
-                    <button
-                      type="button"
-                      onClick={() => onUnlinkDeployed(t)}
-                      className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
-                    >
-                      Remove deploy link
-                    </button>
+                    <>
+                      {/* A deploy-link is changeable, not just removable —
+                          that is what makes "Unknown position" safe to pick:
+                          you can name the position later without unlinking
+                          and re-linking. */}
+                      <button
+                        type="button"
+                        onClick={() => onMarkDeployed(t)}
+                        className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+                      >
+                        Change position
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onUnlinkDeployed(t)}
+                        className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+                      >
+                        Remove deploy link
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -882,6 +913,15 @@ export default function TransfersPage() {
     for (const p of positions) map.set(p.id, p.pair);
     return map;
   }, [positions]);
+
+  // One place decides what a deploy-link is called, so the row badge and the
+  // Recently Deleted entry can never word it differently. The unknown sentinel
+  // has no pair to look up and says so rather than implying a position.
+  const deployedLabelOf = (t: Transfer): string | null => {
+    if (!t.deployedToPositionId) return null;
+    if (t.deployedToPositionId === UNKNOWN_POSITION_ID) return "Unknown position";
+    return positionPairById.get(t.deployedToPositionId) ?? "position";
+  };
 
   // Data Health: a transfer's token must belong to its linked position's pair,
   // and its amount should sit within that position's usual range.
@@ -1448,11 +1488,7 @@ export default function TransfersPage() {
                 ? "Expense"
                 : positionPairById.get(t.positionId) ?? "—"
             }
-            deployedLabelFor={(t) =>
-              t.deployedToPositionId
-                ? positionPairById.get(t.deployedToPositionId) ?? "position"
-                : "—"
-            }
+            deployedLabelFor={(t) => deployedLabelOf(t) ?? "—"}
             pendingPurge={pendingPurge}
             onPurgeRequest={setPendingPurge}
             onPurgeConfirm={handlePurge}
@@ -1808,13 +1844,7 @@ export default function TransfersPage() {
                                 ? "Expense"
                                 : positionPairById.get(t.positionId) ?? "—"
                             }
-                            deployedLabel={
-                              t.deployedToPositionId
-                                ? positionPairById.get(
-                                    t.deployedToPositionId,
-                                  ) ?? "position"
-                                : null
-                            }
+                            deployedLabel={deployedLabelOf(t)}
                             selected={selectedIds.has(t.id)}
                             onToggleSelect={toggleSelect}
                             pendingDelete={pendingDelete}
@@ -2629,11 +2659,12 @@ function WithdrawalFormModal({
 
 // Minimal modal for position-less expenses — Date, Amount, Notes only.
 // moneyStatus/transferType are set to "expense" by buildExpense, not the user.
-// Picks the position a Redeployed transfer's money went into (Part 2). All
-// positions are offered — usually a new active one, but a top-up into any
-// existing position is valid, so we don't over-restrict; active are listed
-// first, closed labelled. Confirming records the link; the position itself is
-// never modified.
+// Picks the position a Redeployed transfer's money went into. All positions are
+// offered — usually a new active one, but a top-up into any existing position is
+// valid, so we don't over-restrict; active are listed first, closed labelled.
+// "Not sure which position" is offered too, so money the user knows was deployed
+// is not left sitting in Available Balance just because they can't place it.
+// Confirming records the link; the position itself is never modified.
 function DeployLinkModal({
   transfer,
   positions,
@@ -2648,20 +2679,49 @@ function DeployLinkModal({
   const [positionId, setPositionId] = useState(
     transfer.deployedToPositionId ?? "",
   );
+  // Memory aid, not a guess: money usually goes into a position opened just
+  // AFTER it came in, so positions opened soonest after this transfer's date
+  // come first, then everything else by how far away it is in either
+  // direction. The existing active-before-closed grouping is kept as the
+  // primary key — it is a deliberate convention (a top-up into a closed
+  // position is legal but rare), so proximity only reorders WITHIN each group.
+  const transferTime = new Date(transfer.date).getTime();
+  const proximityRank = (p: Position): number => {
+    const opened = new Date(p.entryDatetime).getTime();
+    if (!Number.isFinite(opened) || !Number.isFinite(transferTime)) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+    const delta = opened - transferTime;
+    // Opened after the transfer sorts ahead of the same gap before it; the
+    // small penalty is what breaks the tie without hiding earlier positions.
+    return delta >= 0 ? delta : -delta * 1.5;
+  };
   const sorted = [...positions].sort((a, b) => {
     if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+    const rank = proximityRank(a) - proximityRank(b);
+    if (rank !== 0) return rank;
     return a.pair.localeCompare(b.pair);
   });
   return (
     <ModalShell title="Mark as deployed" onCancel={onCancel}>
       <Section title="Deploy into a position">
         <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
-          Link this {formatUsd(transfer.amount)} transfer to the position its
-          money went into. It stays in the list but leaves Available Balance
+          {/* Explicit {" "} — the literal space after the expression is
+              trimmed at build time, rendering "$500.00transfer". */}
+          Link this {formatUsd(transfer.amount)}{" "}
+          transfer to the position its money went into. It stays in the list but leaves Available Balance
           until you undo. The position&apos;s own Deposited figure is unchanged
-          — you entered that separately when you opened it.
+          — you entered that separately when you opened it. If you can&apos;t
+          remember which position, say so — the money still counts as deployed
+          and you can name it later.
         </p>
-        <Field label="Position" htmlFor="deploy-position">
+        <Field
+          label="Position"
+          htmlFor="deploy-position"
+          hint={`Ordered by how close each position's opening date is to this transfer (${formatDateDDMMYYYY(
+            transfer.date,
+          )}) — a memory aid, not a guess. You can change this later.`}
+        >
           <select
             id="deploy-position"
             required
@@ -2670,10 +2730,17 @@ function DeployLinkModal({
             className={inputClass}
           >
             <option value="">— Select position —</option>
+            {/* For money you know was deployed but can't place. It counts as
+                Deployed exactly like a named link, and the row says
+                "Unknown position" rather than implying one. */}
+            <option value={UNKNOWN_POSITION_ID}>
+              Not sure which position (deployed, unknown)
+            </option>
             {sorted.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.pair}
-                {p.status === "closed" ? " (closed)" : ""}
+                {p.status === "closed" ? " (closed)" : ""} · opened{" "}
+                {formatDateDDMMYYYY(p.entryDatetime)}
               </option>
             ))}
           </select>

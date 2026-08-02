@@ -1882,6 +1882,64 @@ at the plan gate.
   writes (the saveTransfers merge guard). Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Added an "Unknown position" option to Mark as Deployed —
+  money you know was deployed but can't place still counts as Deployed (out of
+  Available Balance) without inventing a link, and can be named later. The
+  position list is now ordered by how close each position's opening date is to
+  the transfer. Also: checking a row's checkbox expands it in the same click
+  (UI only).
+  SENTINEL, NOT A NEW FIELD: deployedToPositionId carries
+  UNKNOWN_POSITION_ID = "__unknown_position__" (app/transfers/page.tsx, beside
+  the money-state predicates). Reusing the same field is what makes this a
+  ~10-line feature: every PRESENCE-based reader — the Deployed bucket in the
+  balance memo, isDeployedTransfer, isUntouchedAuto in transferAutomation —
+  treats it exactly like a real link with no change at all, so the four-state
+  precedence (Expense > Deployed > Transferred > Idle) and its
+  no-double-counting guarantee carry over untouched. Only the label needs to
+  know: deployedLabelOf() is now the single place that names a deploy-link
+  (used by both the row badge and the Recently Deleted entry) and returns
+  "Unknown position" for the sentinel rather than implying a pair. The
+  double-underscore form cannot collide with a stored position id
+  (crypto.randomUUID). No schema change, no migration.
+  EDITABLE LATER (this is what makes picking "unknown" safe): a deployed row
+  previously offered only "Remove deploy link", so there was no way to CHANGE a
+  link. It now offers "Change position" alongside it, opening the same modal
+  with the current value preselected.
+  DATE-PROXIMITY ORDER: money usually goes into a position opened just AFTER it
+  arrives, so proximityRank sorts by |opened − transfer date| with a 1.5x
+  penalty on positions opened BEFORE, putting the nearest-after first while
+  still surfacing near-misses on the other side. Existing conventions are
+  preserved: active-before-closed stays the PRIMARY key (proximity only
+  reorders within each group), closed rows keep their "(closed)" tag, and pair
+  name remains the final tiebreak. Each option now shows its opening date, and
+  the field hint says plainly it is a memory aid, not a guess. This is the
+  DeployLinkModal's own <select>; the shared PositionCombobox (Fee Claims, Add
+  Transfer, the Transfers position filter) is untouched, so its chain grouping
+  and most-recent-first order are unaffected.
+  CHECKBOX EXPANDS (Part 1): checking a row calls setOpen(true) before
+  onToggleSelect — if you are singling a row out for a bulk action you want to
+  see what it is. UNCHECKING DELIBERATELY LEAVES IT OPEN: collapsing would pull
+  details out from under someone still reading, and would also silently undo an
+  expansion they had opened by hand before selecting. Closing stays the row's
+  own toggle. Independent of, and composes with, the filtered-to-one-position
+  auto-expand from 170b669.
+  DRIVE-BY FIX: the modal read "Link this $500.00transfer" — the literal space
+  after {formatUsd(...)} was being trimmed at build time. Now an explicit {" "}.
+  Verified live on localhost:3001 (5 positions, 3 transfers, $1,000 lifetime):
+  (A) one checkbox click both selected and expanded a row, on the All-positions
+  view and again on a position-filtered view where rows were already expanded.
+  (B) "Not sure which position" on a $500 transfer → Deployed $0 → $500,
+  Available $1,000 → $500, badge "USED → UNKNOWN POSITION", moneyStatus
+  untouched. (C) reopening showed "Not sure which position" preselected;
+  switching to BBB/USDC gave "USED → BBB/USDC" with Deployed/Available unmoved.
+  (D) for a transfer dated 10/07/2026 the list came back Unknown, BBB (opened
+  12/07, +2d), DDD (08/07, −2d), CCC (25/07, +15d), AAA (05/01, −186d), then
+  EEE (closed, 13/07) — nearest-after first, before-dates just behind, closed
+  last. (E) marking that unknown-deployed row as an Expense moved it Deployed
+  $500 → $0 / Expenses $0 → $500 with Available unchanged at $500 — subtracted
+  exactly once, same precedence as a named link. Zero console errors; seeds
+  removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
