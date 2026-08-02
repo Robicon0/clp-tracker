@@ -332,11 +332,15 @@ function TransferListRow({
   onSendToPlatform,
   onRemovePlatform,
   onRevertToAuto,
-  defaultOpen = false,
+  datesLabel,
 }: {
   transfer: Transfer;
   pairLabel: string;
   deployedLabel: string | null;
+  // Replaces the row's single bare date when one date can't tell the whole
+  // story — an Out-of-Range-Upside transfer belongs to a position CLOSE, so it
+  // shows that position's opened AND closed dates instead.
+  datesLabel: string | null;
   selected: boolean;
   onToggleSelect: (id: string) => void;
   pendingDelete: string | null;
@@ -349,15 +353,12 @@ function TransferListRow({
   onSendToPlatform: (t: Transfer) => void;
   onRemovePlatform: (t: Transfer) => void;
   onRevertToAuto: (t: Transfer) => void;
-  // Rows start expanded when the list is narrowed to a single position: at
-  // that point there are only a handful and the user is working on them, so
-  // details and actions should be there without a click. Across all positions
-  // the list can run to hundreds of rows, where auto-expanding is unusable —
-  // hence collapsed by default there. The parent keys each row on this value,
-  // so flipping the filter re-mounts the rows and resets any manual toggling.
-  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  // Every row starts collapsed, in every view. Expansion is only ever driven by
+  // this row's own two controls — its checkbox and its header toggle. Nothing
+  // about the filter state opens rows any more: auto-expanding a whole filtered
+  // list (170b669) turned out to be too much at once in real use.
+  const [open, setOpen] = useState(false);
   // Settled money is visually locked (dimmed). THREE states count as settled
   // and read identically — "this money has been put to use": a deploy-link
   // (inside a position), a platform (sent out for yield) and an Expense
@@ -386,17 +387,17 @@ function TransferListRow({
       }`}
     >
       <div className="flex items-start gap-2 px-3 py-2.5">
-        {/* Selecting a row also opens it, in the one click: if you are picking
-            a row out for a bulk action you want to see what it is. Unchecking
-            deliberately LEAVES it open — collapsing would yank the details out
-            from under someone still reading them, and would also silently undo
-            an expansion the user had opened by hand before selecting. Closing
-            stays where it always was: the row's own toggle. */}
+        {/* The checkbox carries the expansion with it: checking a row opens it
+            (if you are singling a row out you want to see what it is) and
+            unchecking closes it again, so selecting and de-selecting leaves the
+            list exactly as it found it. The header toggle still works for a
+            look without selecting. Deliberately NOT wired to "select all
+            visible" — that would re-create the bulk expansion just removed. */}
         <input
           type="checkbox"
           checked={selected}
           onChange={() => {
-            if (!selected) setOpen(true);
+            setOpen(!selected);
             onToggleSelect(t.id);
           }}
           aria-label="Select transfer"
@@ -421,7 +422,9 @@ function TransferListRow({
               </span>
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--muted)]">
-              <span className="tabular-nums">{formatDateDDMMYYYY(t.date)}</span>
+              <span className="tabular-nums">
+                {datesLabel ?? formatDateDDMMYYYY(t.date)}
+              </span>
               <TypePill type={t.transferType} />
               <MoneyStatusPill status={t.moneyStatus} />
               {deployedLabel && (
@@ -914,6 +917,41 @@ export default function TransfersPage() {
     return map;
   }, [positions]);
 
+  const positionById = useMemo(() => {
+    const map = new Map<string, Position>();
+    for (const p of positions) map.set(p.id, p);
+    return map;
+  }, [positions]);
+
+  // An Out-of-Range-Upside transfer is the profit from ONE position close, so a
+  // single unlabelled date (the close day) can't say which close it came from —
+  // especially on a pair that has been opened and closed more than once. Show
+  // the linked position's own opened and closed dates instead. Falls back to
+  // the plain transfer date if the position is gone or somehow still open.
+  const upsideDatesLabel = (t: Transfer): string | null => {
+    if (t.transferType !== "outOfRangeUpside") return null;
+    const p = positionById.get(t.sourceCloseId ?? t.positionId);
+    if (!p) return null;
+    const opened = `Opened ${formatDateDDMMYYYY(p.entryDatetime)}`;
+    if (!p.exitDatetime) return opened;
+    return `${opened} · Closed ${formatDateDDMMYYYY(p.exitDatetime)}`;
+  };
+
+  // Positions that already hold deployed money, for the Mark as Deployed
+  // picker. Counted exactly like the Deployed balance card (expense-marked rows
+  // are excluded — that money left the business), so the two always agree.
+  const deployedByPosition = useMemo(() => {
+    const map = new Map<string, { count: number; amount: number }>();
+    for (const t of transfers) {
+      if (!isDeployedTransfer(t) || !t.deployedToPositionId) continue;
+      const entry = map.get(t.deployedToPositionId) ?? { count: 0, amount: 0 };
+      entry.count += 1;
+      entry.amount += t.amount;
+      map.set(t.deployedToPositionId, entry);
+    }
+    return map;
+  }, [transfers]);
+
   // One place decides what a deploy-link is called, so the row badge and the
   // Recently Deleted entry can never word it differently. The unknown sentinel
   // has no pair to look up and says so rather than implying a position.
@@ -1051,10 +1089,6 @@ export default function TransfersPage() {
   );
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
-
-  // Narrowed to one position = a working view: show every row's details and
-  // actions straight away. "All positions" stays collapsed (see the row).
-  const expandRowsByDefault = positionFilter !== "";
 
   // Only idle rows are eligible for the bulk send — money already deployed,
   // expensed or sitting at a platform is not "currently idle" and is left
@@ -1836,8 +1870,8 @@ export default function TransfersPage() {
                       <div className="divide-y divide-[var(--border)]">
                         {list.map((t) => (
                           <TransferListRow
-                            key={`${t.id}-${expandRowsByDefault}`}
-                            defaultOpen={expandRowsByDefault}
+                            key={t.id}
+                            datesLabel={upsideDatesLabel(t)}
                             transfer={t}
                             pairLabel={
                               t.transferType === "expense"
@@ -2059,6 +2093,7 @@ export default function TransfersPage() {
             <DeployLinkModal
               transfer={modal.transfer}
               positions={positions}
+              deployedByPosition={deployedByPosition}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(positionId) =>
                 handleMarkDeployed(modal.transfer, positionId)
@@ -2668,11 +2703,16 @@ function WithdrawalFormModal({
 function DeployLinkModal({
   transfer,
   positions,
+  deployedByPosition,
   onCancel,
   onSubmit,
 }: {
   transfer: Transfer;
   positions: Position[];
+  // How much is already deployed into each position, keyed by position id.
+  // Informational only — it never blocks picking the same position again,
+  // since topping one up is legitimate.
+  deployedByPosition: Map<string, { count: number; amount: number }>;
   onCancel: () => void;
   onSubmit: (positionId: string) => void;
 }) {
@@ -2736,13 +2776,20 @@ function DeployLinkModal({
             <option value={UNKNOWN_POSITION_ID}>
               Not sure which position (deployed, unknown)
             </option>
-            {sorted.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.pair}
-                {p.status === "closed" ? " (closed)" : ""} · opened{" "}
-                {formatDateDDMMYYYY(p.entryDatetime)}
-              </option>
-            ))}
+            {sorted.map((p) => {
+              // Memory aid: which positions you have already put money into.
+              const already = deployedByPosition.get(p.id);
+              return (
+                <option key={p.id} value={p.id}>
+                  {p.pair}
+                  {p.status === "closed" ? " (closed)" : ""} · opened{" "}
+                  {formatDateDDMMYYYY(p.entryDatetime)}
+                  {already
+                    ? ` · already has ${formatUsd(already.amount)} deployed`
+                    : ""}
+                </option>
+              );
+            })}
           </select>
         </Field>
       </Section>

@@ -1940,6 +1940,47 @@ at the plan gate.
   exactly once, same precedence as a named link. Zero console errors; seeds
   removed. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Four Transfers UI fixes, no calculation touched. (1) REVERTED
+  the filtered-to-one-position auto-expand from 170b669 — in real use it was too
+  much at once. Rows now start collapsed in EVERY view; expansion comes only
+  from the row's own checkbox (check opens, uncheck closes, so selecting and
+  de-selecting leaves the list as it found it) or its header toggle. Deliberately
+  NOT wired to "select all visible" — that would re-create the bulk expansion
+  just removed. (2) Out-of-Range-Upside rows show the linked position's
+  "Opened DD/MM/YYYY · Closed DD/MM/YYYY" instead of one bare date: that transfer
+  is the profit from ONE close, and a single date can't say which close on a pair
+  opened and closed more than once. Other types keep the plain transfer date;
+  falls back to it if the position is missing or still open. (3) The Mark as
+  Deployed picker tags positions that already hold deployed money — "· already
+  has $X deployed" — counted through isDeployedTransfer, the same predicate as
+  the Deployed balance card, so picker and card can never disagree.
+  Informational only; picking the same position again (a top-up) is still
+  allowed. (4) Position combobox dropdown "blur/overlap glitch" FIXED — and the
+  cause was NOT what it looked like. MEASURED: elementFromPoint put the panel on
+  top across its whole rect and its background computed to an opaque
+  rgb(17,19,25), so nothing was painting over it. What it lacked was separation:
+  `shadow-xl` resolved to "rgba(0,0,0,0) 0px 0px 0px 0px" — Tailwind's shadow
+  colour variable does not resolve here, so the class rendered NO shadow at all.
+  A #111319 panel on a #0a0b0f page with only a 1px border, with the list's rows
+  and rules continuing either side of it, reads as content bleeding through and
+  shifts as you scroll. Fixed with an explicit
+  shadow-[0_18px_45px_-8px_rgba(0,0,0,0.85)] (no dependency on the shadow colour
+  variable) plus ring-1 ring-black/40, and z-30 → z-40 (still below the z-50
+  modal layer). NOTE for future work: `shadow-*` utilities appear to be inert in
+  this project — use explicit arbitrary shadows.
+  Verified live on localhost:3001 (7 positions, 6 transfers, $1,600 lifetime):
+  (A) on All positions, on a type filter (Out of Range Upside) and on a
+  position filter (BBB/USDC), rows arrived 0-expanded; checking one box gave
+  exactly 1 expanded row and unchecking returned it to 0 — identical in all
+  three. (B) the upside row read "Opened 13/05/2026 · Closed 28/05/2026",
+  matching its position's stored entry/exit exactly, while every other row kept
+  its single date. (C) the picker showed "already has $100.00 deployed" on
+  BBB/USDC and "$550.00" on CCC/USDC (= the $650 Deployed card, 100 + 400 + 150)
+  with the five untouched positions unmarked, date-proximity order and
+  closed-last intact. (D) the panel rendered cleanly at three scroll positions
+  with a real measured shadow. (E) balances held at $1,600 / $0 / $650 / $0 /
+  $950 throughout. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

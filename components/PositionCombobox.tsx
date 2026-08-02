@@ -127,7 +127,18 @@ export function PositionCombobox({
         </button>
 
         {open && (
-          <div className="scrollbar-dark absolute z-30 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface)] shadow-xl">
+          /* MEASURED, not guessed: the panel was never painting UNDER anything
+             — elementFromPoint puts it on top across its whole rect and its
+             background computes to an opaque rgb(17,19,25). What it lacked was
+             separation: `shadow-xl` resolved to "rgba(0,0,0,0) 0px 0px 0px 0px"
+             (Tailwind's shadow colour variable does not resolve here), so a
+             #111319 panel sat on a #0a0b0f page with only a 1px border between
+             them, and the list's own rows and rules lined up either side of it
+             — which reads as the content behind bleeding through, and shifts as
+             you scroll. An explicit shadow (no dependency on the shadow colour
+             variable) plus a ring lifts it clearly off the page. z-40 keeps it
+             above any future neighbour while staying below the z-50 modals. */
+          <div className="scrollbar-dark absolute z-40 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface)] shadow-[0_18px_45px_-8px_rgba(0,0,0,0.85)] ring-1 ring-black/40">
             <div className="sticky top-0 border-b border-[var(--border)] bg-[var(--surface)] p-2">
               <input
                 autoFocus
