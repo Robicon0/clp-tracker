@@ -1882,7 +1882,7 @@ at the plan gate.
   writes (the saveTransfers merge guard). Zero console errors; seeds removed.
   tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Added an "Unknown position" option to Mark as Deployed —
+- 9dd89d3: Added an "Unknown position" option to Mark as Deployed —
   money you know was deployed but can't place still counts as Deployed (out of
   Available Balance) without inventing a link, and can be named later. The
   position list is now ordered by how close each position's opening date is to
