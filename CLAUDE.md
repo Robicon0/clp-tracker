@@ -1940,7 +1940,7 @@ at the plan gate.
   exactly once, same precedence as a named link. Zero console errors; seeds
   removed. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Four Transfers UI fixes, no calculation touched. (1) REVERTED
+- 36e3595: Four Transfers UI fixes, no calculation touched. (1) REVERTED
   the filtered-to-one-position auto-expand from 170b669 — in real use it was too
   much at once. Rows now start collapsed in EVERY view; expansion comes only
   from the row's own checkbox (check opens, uncheck closes, so selecting and
