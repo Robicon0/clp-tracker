@@ -2035,6 +2035,43 @@ at the plan gate.
   → nothing. No option ever showed both. Balances held at $1,560 / $310 / $550 /
   $0 / $700 throughout. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Mark as Deployed's native <select> replaced with the shared
+  PositionCombobox, so the red "fully expensed" warning renders as real colour
+  instead of leaning on a ⚠ glyph (macOS draws select popups itself and ignores
+  option colour). Search, chain grouping and the Open/Closed split come with it,
+  matching every other picker. UI only — no calculation changed.
+  THE "UNKNOWN POSITION" ENTRY rides in on the combobox's existing allValue slot
+  (allValue={UNKNOWN_POSITION_ID}, allLabel="Not sure which position (deployed,
+  unknown)"), so it stays pinned above the chain groups and selectable without
+  the component needing a second concept. That required two small fixes to
+  PositionCombobox, because it had only ever been used with allValue="":
+  selectedLabel now returns the PLACEHOLDER for an empty value instead of
+  falling through to allLabel (otherwise an untouched picker would have claimed
+  "Not sure which position" was already chosen), and isPlaceholder treats "" as
+  a placeholder in all cases. Both are no-ops for allValue="" callers, verified
+  live.
+  DATE-PROXIMITY SURVIVED THE MOVE: the combobox owns the grouping, but the
+  order WITHIN a chain's Open/Closed section is now an optional
+  sortWithinSection prop, defaulting to the existing most-recent-first. Mark as
+  Deployed passes the 9dd89d3 proximity comparator, so its nudge is intact
+  rather than silently dropped — verified BASE listing DDD (08 Jul, −2d) before
+  CCC (25 Jul, +15d), and SUI listing BBB (12 Jul, +2d) before AAA (02 Jul,
+  −8d), which most-recent-first would have reversed.
+  Verified live (5 positions, 7 transfers): AAA/USDC (all its transfers Expense)
+  showed "· fully expensed" in lab(64.4125 63.0291 19.2068) = rose-400 and
+  visibly red in a zoomed screenshot, no ⚠ fallback; CCC/USDC kept the muted
+  "already has $550.00 deployed"; BBB (1 of 3 Expense) and the transfer-less
+  positions showed nothing. Zero <select> elements remain in the modal. Search
+  by pair ("aaa" → AAA/USDC), by chain ("solana" → EEE/USDC), the "No positions
+  match" empty state and clearing back to all 6 entries all work. Selecting
+  "Not sure which position" → Confirm stored __unknown_position__, Deployed
+  $550 → $1,050, Available $700 → $200, badge "USED → UNKNOWN POSITION";
+  reopening preselected it, switching to DDD/USDC stored PD and flipped the
+  badge with balances unmoved. The other three call sites are untouched:
+  Transfers filter still reads "All positions", Add Transfer still reads
+  "— Select position —" in muted. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

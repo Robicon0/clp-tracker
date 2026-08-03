@@ -22,6 +22,7 @@ export function PositionCombobox({
   allLabel = "All positions",
   placeholder = "— Select position —",
   noteFor,
+  sortWithinSection,
 }: {
   positions: Position[];
   value: string;
@@ -34,6 +35,12 @@ export function PositionCombobox({
   // Opt-in: callers that pass nothing render exactly as before, which is why
   // Fee Claims and Add Transfer are untouched by the Transfers page's notes.
   noteFor?: (p: Position) => { text: string; tone: "muted" | "danger" } | null;
+  // Optional ordering INSIDE each chain's Open/Closed section. Default is
+  // most-recent-first, which every existing caller keeps. Mark as Deployed
+  // passes a date-proximity comparator so the nudge added in 9dd89d3 survives
+  // the move onto this component — the grouping is the shared behaviour, the
+  // order within a group is not.
+  sortWithinSection?: (a: Position, b: Position) => number;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -55,6 +62,12 @@ export function PositionCombobox({
     if (allValue !== undefined && value === allValue) return allLabel;
     const p = positions.find((pos) => pos.id === value);
     if (p) return positionOptionLabel(p);
+    // "" means nothing chosen yet. That only reads as the all-entry when the
+    // all-entry IS "" (the Fee Claims / Transfers filters, caught above); when
+    // allValue is a real sentinel — Mark as Deployed's "Not sure which
+    // position" — an empty value must still show the placeholder, not silently
+    // claim the sentinel was picked.
+    if (value === "") return placeholder;
     return allValue !== undefined ? allLabel : placeholder;
   })();
 
@@ -80,9 +93,11 @@ export function PositionCombobox({
       if (p.status === "closed") entry.closed.push(p);
       else entry.open.push(p);
     }
-    const byEntryDesc = (a: Position, b: Position) =>
-      (new Date(b.entryDatetime).getTime() || 0) -
-      (new Date(a.entryDatetime).getTime() || 0);
+    const byEntryDesc =
+      sortWithinSection ??
+      ((a: Position, b: Position) =>
+        (new Date(b.entryDatetime).getTime() || 0) -
+        (new Date(a.entryDatetime).getTime() || 0));
     return [...byChain.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([chain, entry]) => ({
@@ -98,7 +113,7 @@ export function PositionCombobox({
           .filter((s) => s.list.length > 0)
           .map((s) => ({ ...s, list: [...s.list].sort(byEntryDesc) })),
       }));
-  }, [positions, query]);
+  }, [positions, query, sortWithinSection]);
 
   const select = (v: string) => {
     onChange(v);
@@ -107,8 +122,7 @@ export function PositionCombobox({
   };
 
   const isPlaceholder =
-    (allValue === undefined && value === "") ||
-    (allValue !== undefined && value === allValue);
+    value === "" || (allValue !== undefined && value === allValue);
 
   return (
     <div className="space-y-1.5" ref={ref}>

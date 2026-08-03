@@ -2780,12 +2780,12 @@ function DeployLinkModal({
     // small penalty is what breaks the tie without hiding earlier positions.
     return delta >= 0 ? delta : -delta * 1.5;
   };
-  const sorted = [...positions].sort((a, b) => {
-    if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+  // Applied inside each chain's Open/Closed section by the shared combobox,
+  // which owns the chain grouping and the open-before-closed split.
+  const byProximity = (a: Position, b: Position) => {
     const rank = proximityRank(a) - proximityRank(b);
-    if (rank !== 0) return rank;
-    return a.pair.localeCompare(b.pair);
-  });
+    return rank !== 0 ? rank : a.pair.localeCompare(b.pair);
+  };
   return (
     <ModalShell title="Mark as deployed" onCancel={onCancel}>
       <Section title="Deploy into a position">
@@ -2799,53 +2799,28 @@ function DeployLinkModal({
           remember which position, say so — the money still counts as deployed
           and you can name it later.
         </p>
-        <Field
+        {/* The shared searchable picker rather than a native <select>: macOS
+            draws select popups itself and ignores option colour, so the red
+            "fully expensed" warning could only be a ⚠ glyph there. Here the
+            colour is real. Search, chain grouping and the Open/Closed split all
+            come with it, matching the pickers everywhere else. "Not sure which
+            position" rides in on the existing all-entry slot, so it stays
+            selectable above the real positions. */}
+        <PositionCombobox
+          positions={positions}
+          value={positionId}
+          onChange={setPositionId}
           label="Position"
-          htmlFor="deploy-position"
-          hint={`Ordered by how close each position's opening date is to this transfer (${formatDateDDMMYYYY(
-            transfer.date,
-          )}) — a memory aid, not a guess. You can change this later.`}
-        >
-          <select
-            id="deploy-position"
-            required
-            value={positionId}
-            onChange={(e) => setPositionId(e.target.value)}
-            className={inputClass}
-          >
-            <option value="">— Select position —</option>
-            {/* For money you know was deployed but can't place. It counts as
-                Deployed exactly like a named link, and the row says
-                "Unknown position" rather than implying one. */}
-            <option value={UNKNOWN_POSITION_ID}>
-              Not sure which position (deployed, unknown)
-            </option>
-            {sorted.map((p) => {
-              // Memory aid: money already put in, or money already all spent.
-              // A native <option> cannot be reliably coloured (macOS draws the
-              // popup itself and ignores option colour), so the danger case
-              // carries a text marker as well — the words, not the red, are
-              // what has to survive.
-              const note = noteFor(p);
-              return (
-                <option
-                  key={p.id}
-                  value={p.id}
-                  className={
-                    note?.tone === "danger" ? "text-rose-400" : undefined
-                  }
-                >
-                  {p.pair}
-                  {p.status === "closed" ? " (closed)" : ""} · opened{" "}
-                  {formatDateDDMMYYYY(p.entryDatetime)}
-                  {note
-                    ? `${note.tone === "danger" ? " · ⚠ " : " · "}${note.text}`
-                    : ""}
-                </option>
-              );
-            })}
-          </select>
-        </Field>
+          allValue={UNKNOWN_POSITION_ID}
+          allLabel="Not sure which position (deployed, unknown)"
+          noteFor={noteFor}
+          sortWithinSection={byProximity}
+        />
+        <p className="mt-2 text-[11px] leading-relaxed text-[var(--muted)]">
+          Within each chain, positions opened closest to this transfer&apos;s
+          date ({formatDateDDMMYYYY(transfer.date)}) come first — a memory aid,
+          not a guess. You can change this later.
+        </p>
       </Section>
       <div className="flex justify-end gap-2 px-5 py-4">
         <button
