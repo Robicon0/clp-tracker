@@ -2035,7 +2035,7 @@ at the plan gate.
   → nothing. No option ever showed both. Balances held at $1,560 / $310 / $550 /
   $0 / $700 throughout. Zero console errors; seeds removed. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Mark as Deployed's native <select> replaced with the shared
+- ef1d96a: Mark as Deployed's native <select> replaced with the shared
   PositionCombobox, so the red "fully expensed" warning renders as real colour
   instead of leaning on a ⚠ glyph (macOS draws select popups itself and ignores
   option colour). Search, chain grouping and the Open/Closed split come with it,
