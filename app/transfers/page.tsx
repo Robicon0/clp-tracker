@@ -34,7 +34,10 @@ import {
   type TransferSymbolMismatchRow,
 } from "../../lib/dataHealth";
 import { OutlierBanner } from "../../components/OutlierBanner";
-import { PositionCombobox } from "../../components/PositionCombobox";
+import {
+  PositionCombobox,
+  type NoteTone,
+} from "../../components/PositionCombobox";
 import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import {
   applyRevertToAuto,
@@ -984,10 +987,17 @@ export default function TransfersPage() {
   // unrelated things: the settled notes look at the transfers BELONGING to the
   // position, while "already has $X deployed" looks at transfers POINTING AT it
   // as a deploy target — which usually come from other positions entirely.
+  // COLOUR RULE (user, 2026-08-05): red means the money is simply GONE, so it
+  // is reserved for a category whose settled money is 100% Expense. Every other
+  // fully-settled outcome is green — fully transferred, fully deployed, or a
+  // mix that still has some money working somewhere. A mix always contains at
+  // least one non-expense state (a single state would be the uniform case), so
+  // mixes are green by construction, including expense+deployed with nothing
+  // transferred. Muted stays for the unrelated "already has $X deployed" hint.
   const positionNotes = (
     p: Position,
-  ): { text: string; tone: "muted" | "danger" }[] => {
-    const notes: { text: string; tone: "muted" | "danger" }[] = [];
+  ): { text: string; tone: NoteTone }[] => {
+    const notes: { text: string; tone: NoteTone }[] = [];
     const byType = settledByPosition.get(p.id);
     if (byType) {
       const uniform = new Map<SettledKey, string[]>();
@@ -1005,9 +1015,8 @@ export default function TransfersPage() {
           text: `${label}: ${present
             .map((s) => `${formatUsd(b.amounts[s.key])} ${s.verb}`)
             .join(", ")}`,
-          // Red whenever real money was spent, muted when it is merely parked
-          // somewhere — the colour keeps meaning "gone", not "settled".
-          tone: b.counts.expense > 0 ? "danger" : "muted",
+          // Green: a mix always has money still working somewhere.
+          tone: "success",
         });
       }
       for (const { key, verb } of SETTLED_STATES) {
@@ -1015,7 +1024,7 @@ export default function TransfersPage() {
         if (!labels) continue;
         notes.push({
           text: `${joinCategories(labels)} fully ${verb}`,
-          tone: key === "expense" ? "danger" : "muted",
+          tone: key === "expense" ? "danger" : "success",
         });
       }
     }
@@ -1097,8 +1106,19 @@ export default function TransfersPage() {
     };
     for (const t of transfers) {
       amount += t.amount;
-      breakdown[t.transferType] += 1;
+      // Fees / Undeployed / Out-of-Range-Upside are TYPES and keep counting by
+      // transferType. Expense is not a type — it is a money STATUS that any of
+      // those three can carry. Counting it by transferType only ever matched
+      // the retired position-less expense record (the Log-an-Expense-as-a-
+      // transfer flow removed in d20f3e3), so the tile sat at 0 forever while
+      // real expensed transfers were being counted under their own type.
+      if (t.transferType !== "expense") breakdown[t.transferType] += 1;
+      if (isExpensedTransfer(t)) breakdown.expense += 1;
     }
+    // NOTE the four numbers deliberately no longer sum to the total: a fees
+    // transfer marked as an Expense is counted in BOTH Fees and Expense,
+    // because it genuinely is both. The tile answers "how many of each", not
+    // "how does the total split".
     return { count: transfers.length, amount, breakdown };
   }, [transfers]);
 
@@ -2748,7 +2768,7 @@ function DeployLinkModal({
   // shared with the page's position filter so the two can never word it
   // differently. Informational only — it never blocks picking a position,
   // since topping one up is legitimate.
-  noteFor: (p: Position) => { text: string; tone: "muted" | "danger" }[];
+  noteFor: (p: Position) => { text: string; tone: NoteTone }[];
   onCancel: () => void;
   onSubmit: (positionId: string) => void;
 }) {

@@ -5,6 +5,13 @@ import { positionOptionLabel } from "./ClaimFormModal";
 import { normalizeChain } from "../lib/nameNormalization";
 import type { Position } from "../lib/types";
 
+// How an option's annotation reads at a glance:
+//   danger  — the money is gone (100% expensed)
+//   success — settled but still working somewhere (transferred / deployed / a
+//             mix that keeps some of it in play)
+//   muted   — neutral context, not a state of that position's own money
+export type NoteTone = "muted" | "danger" | "success";
+
 // Searchable, two-level-grouped position picker shared by the Fee Claims filter
 // and the Add Transfer form. Type any of pair/chain/platform to filter live;
 // positions are grouped by (normalized) chain, then split within each chain into
@@ -37,7 +44,7 @@ export function PositionCombobox({
   // Returns every annotation that applies, so unrelated hints (money spent vs
   // money already deployed here) can appear together rather than one hiding the
   // other. Empty array = no annotation.
-  noteFor?: (p: Position) => { text: string; tone: "muted" | "danger" }[];
+  noteFor?: (p: Position) => { text: string; tone: NoteTone }[];
   // Optional ordering INSIDE each chain's Open/Closed section. Default is
   // most-recent-first, which every existing caller keeps. Mark as Deployed
   // passes a date-proximity comparator so the nudge added in 9dd89d3 survives
@@ -235,7 +242,9 @@ export function PositionCombobox({
                                 className={`ml-1 ${
                                   note.tone === "danger"
                                     ? "font-medium text-rose-400"
-                                    : "text-[var(--muted)]"
+                                    : note.tone === "success"
+                                      ? "font-medium text-emerald-400"
+                                      : "text-[var(--muted)]"
                                 }`}
                               >
                                 · {note.text}

@@ -2239,6 +2239,43 @@ at the plan gate.
   copy ("aremarked as an Expense") — a literal space after {expr} is trimmed at
   build time. Use {" "}.
 
+- PLACEHOLDER_HASH: REAL BUG FIXED — the Breakdown by Type card's Expense tile
+  was permanently 0. Plus a colour rule for the settled-state indicators. Both
+  display/counting only; no P&L or balance calculation touched.
+  PART 2 ROOT CAUSE (read in the code, then reproduced on the pre-fix build):
+  the totals memo did `breakdown[t.transferType] += 1`, so the Expense bucket
+  only ever incremented for transferType === "expense" — the position-less
+  legacy record from the Log-an-Expense-as-a-transfer flow RETIRED in d20f3e3.
+  Expense is not a type; it is a money STATUS that a Fees / Undeployed /
+  Out-of-Range-Upside transfer carries. Every modern expensed transfer keeps its
+  real type, lands in one of the other three buckets, and never in Expense.
+  Measured before the fix with 10 seeded transfers, 4 of them Expense-status:
+  card read FEES 9 · UNDEPLOYED 1 · OOR UPSIDE 0 · EXPENSE 0, while
+  transferType === "expense" matched 0 records — exactly as predicted.
+  FIX, scoped to that one tile: the three real types still count by
+  transferType; Expense counts isExpensedTransfer. NOTE the four numbers now
+  deliberately DO NOT sum to the total — a fees transfer marked as an Expense is
+  counted in both Fees and Expense, because it genuinely is both. The tile
+  answers "how many of each", not "how the total splits". Do not "fix" that
+  overlap by subtracting.
+  PART 1 COLOUR RULE (user): red is reserved for money that is simply GONE —
+  a category whose settled money is 100% Expense. Everything else fully settled
+  is green: fully transferred, fully deployed, or any MIX, since a mix always
+  contains at least one non-expense state (a single state would be the uniform
+  case) and that money is still working somewhere. That covers the
+  expense+deployed-with-zero-transferred case by construction. The unrelated
+  "already has $X deployed" hint stays muted. NoteTone gained "success" and is
+  now exported from PositionCombobox, so both pickers share one vocabulary.
+  Verified live in BOTH pickers with one position per case: pure expense → red
+  lab(64.41 63.03 19.21) = rose-400; fully transferred, fully deployed,
+  expense+transferred mix and expense+deployed mix → all green
+  lab(75.08 -60.73 19.41) = emerald-400; deploy-target hint → muted grey.
+  A category still holding idle money still shows nothing. After the count fix:
+  FEES 9 · UNDEPLOYED 1 · OOR UPSIDE 0 · EXPENSE 4, matching the data exactly,
+  with the other three unchanged. Balances untouched throughout (Lifetime $640,
+  Expenses $290, Deployed $160, Transferred $160, Available $30 — all
+  reconciling). tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
