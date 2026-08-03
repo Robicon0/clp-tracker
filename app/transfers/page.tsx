@@ -246,6 +246,19 @@ const UNKNOWN_POSITION_ID = "__unknown_position__";
 function isExpensedTransfer(t: Transfer): boolean {
   return t.moneyStatus === "expense";
 }
+
+// Whether a transfer's money can still be sent somewhere — deploy-linked or
+// pushed to a platform. NOT gated by transferType: Fees, Out of Range Upside
+// and idle Undeployed Tokens all qualify (measured live 2026-07-30). The one
+// state that disqualifies is Expense — that money has left the business, so
+// there is nothing left to place. Module-level so the toolbar buttons and the
+// batch previews that count "skipped" rows apply the identical test.
+function canPlaceTransfer(t: Transfer): boolean {
+  return (
+    t.transferType !== "expense" &&
+    (t.moneyStatus === "redeployed" || t.moneyStatus === undefined)
+  );
+}
 function isDeployedTransfer(t: Transfer): boolean {
   return !isExpensedTransfer(t) && t.deployedToPositionId !== undefined;
 }
@@ -256,24 +269,17 @@ function isTransferredToPlatform(t: Transfer): boolean {
     (t.platform ?? "").trim() !== ""
   );
 }
-// Idle money is the only kind that can still be sent somewhere: not spent, not
-// already inside a position, not already sitting at a platform.
-function isIdleTransfer(t: Transfer): boolean {
-  return (
-    !isExpensedTransfer(t) &&
-    !isDeployedTransfer(t) &&
-    !isTransferredToPlatform(t)
-  );
-}
 
 type ModalState =
   | { kind: "none" }
   | { kind: "add" }
   | { kind: "edit"; transfer: Transfer }
   | { kind: "editExpense"; transfer: Transfer }
-  | { kind: "deploy"; transfer: Transfer }
-  | { kind: "platform"; transfer: Transfer }
-  | { kind: "revert"; transfer: Transfer }
+  // These three act on the SELECTION, so they carry a list. A single selected
+  // row is just a one-element list — there is no separate single-record path.
+  | { kind: "deploy"; transfers: Transfer[] }
+  | { kind: "platform"; transfers: Transfer[] }
+  | { kind: "revert"; transfers: Transfer[] }
   | { kind: "addWithdrawal" }
   | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
@@ -390,15 +396,17 @@ function TransferListRow({
   );
 }
 
-// The actions that apply to ONE transfer, shown in the toolbar while exactly
-// one row is selected. Every gate here is carried over unchanged from the row
-// that used to host these buttons — including the variants (Change position /
-// Remove deploy link, Change platform / Remove platform) that only appear once
-// the money is already somewhere, and the note explaining why an expensed
-// transfer offers neither. Dropping those variants would have lost real
-// functionality, so they moved with the buttons rather than being simplified.
-function SingleTransferActions({
-  transfer: t,
+// The actions the toolbar offers for the current SELECTION. Everything except
+// Edit works on one row or many — the same buttons, the same handlers, just a
+// longer list — so there is exactly one selection model behind all of them.
+//
+// Edit stays single-only: it opens one record's form, and there is no coherent
+// way to point that at several different records at once.
+// Remove deploy link / Remove platform are also single-only. They are undo
+// operations on a specific placement rather than batch verbs, and nothing has
+// asked for them in bulk; the batch equivalents (re-deploy, re-platform) exist.
+function SelectionActions({
+  selected,
   pendingDelete,
   onEdit,
   onMarkDeployed,
@@ -410,28 +418,25 @@ function SingleTransferActions({
   onDeleteConfirm,
   onDeleteCancel,
 }: {
-  transfer: Transfer;
-  pendingDelete: string | null;
+  selected: Transfer[];
+  pendingDelete: boolean;
   onEdit: (t: Transfer) => void;
-  onMarkDeployed: (t: Transfer) => void;
+  onMarkDeployed: (list: Transfer[]) => void;
   onUnlinkDeployed: (t: Transfer) => void;
-  onSendToPlatform: (t: Transfer) => void;
+  onSendToPlatform: (list: Transfer[]) => void;
   onRemovePlatform: (t: Transfer) => void;
-  onRevertToAuto: (t: Transfer) => void;
-  onDeleteRequest: (id: string) => void;
-  onDeleteConfirm: (id: string) => void;
+  onRevertToAuto: (list: Transfer[]) => void;
+  onDeleteRequest: () => void;
+  onDeleteConfirm: () => void;
   onDeleteCancel: () => void;
 }) {
-  const isExpensed = isExpensedTransfer(t);
-  const isTransferred = isTransferredToPlatform(t);
-  // Deploy-linking is available on ANY transfer whose money is still available
-  // — Fees, Out of Range Upside and idle Undeployed Tokens alike. It is NOT
-  // gated by transferType (measured live 2026-07-30: all three types offer it).
-  // The one state that hides it is Expense — that money has left the business,
-  // so there is nothing left to deploy. Sending to a platform is gated the same.
-  const canDeploy =
-    t.transferType !== "expense" &&
-    (t.moneyStatus === "redeployed" || t.moneyStatus === undefined);
+  if (selected.length === 0) return null;
+  const single = selected.length === 1 ? selected[0] : null;
+  const total = selected.reduce((sum, t) => sum + t.amount, 0);
+  // Counted here so a button never promises more than it will do: these are the
+  // same predicates the confirmation previews use.
+  const placeable = selected.filter(canPlaceTransfer).length;
+  const revertable = selected.filter(isAutoCreated).length;
   const btn =
     "rounded-md border px-2.5 py-1 text-[12px] font-medium transition-colors";
   const neutral = `${btn} border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--foreground)] hover:border-[var(--accent)]`;
@@ -440,14 +445,17 @@ function SingleTransferActions({
   const sky = `${btn} border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20`;
   const rose = `${btn} border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`;
 
-  if (pendingDelete === t.id) {
+  if (pendingDelete) {
     return (
       <div className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--border)] pt-2">
-        <span className="text-[12px] text-[var(--muted)]">
-          Delete this transfer? You can restore it from Recently Deleted.
+        <span className="text-[12px] text-[var(--foreground)]">
+          Delete {selected.length}{" "}
+          {selected.length === 1 ? "transfer" : "transfers"} ({formatUsd(total)}
+          )? You can restore {selected.length === 1 ? "it" : "them"} from
+          Recently Deleted.
         </span>
-        <button type="button" onClick={() => onDeleteConfirm(t.id)} className={rose}>
-          Yes
+        <button type="button" onClick={onDeleteConfirm} className={rose}>
+          Yes, delete {selected.length}
         </button>
         <button type="button" onClick={onDeleteCancel} className={neutral}>
           Cancel
@@ -459,75 +467,70 @@ function SingleTransferActions({
   return (
     <div className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--border)] pt-2">
       <span className="text-[11px] uppercase tracking-wider text-[var(--muted)]">
-        This transfer
+        {single ? "This transfer" : `These ${selected.length}`}
       </span>
-      <button type="button" onClick={() => onEdit(t)} className={neutral}>
-        Edit
-      </button>
-      {canDeploy &&
-        (t.deployedToPositionId ? (
-          <>
-            <button
-              type="button"
-              onClick={() => onMarkDeployed(t)}
-              className={green}
-            >
-              Change position
-            </button>
-            <button
-              type="button"
-              onClick={() => onUnlinkDeployed(t)}
-              className={neutral}
-            >
-              Remove deploy link
-            </button>
-          </>
-        ) : (
+      {single && (
+        <button type="button" onClick={() => onEdit(single)} className={neutral}>
+          Edit
+        </button>
+      )}
+      {placeable > 0 && (
+        <>
           <button
             type="button"
-            onClick={() => onMarkDeployed(t)}
+            onClick={() => onMarkDeployed(selected)}
             className={green}
           >
             Mark as deployed
           </button>
-        ))}
-      {canDeploy && (
+          <button
+            type="button"
+            onClick={() => onSendToPlatform(selected)}
+            className={amber}
+          >
+            Send to Platform
+          </button>
+        </>
+      )}
+      {single && canPlaceTransfer(single) && single.deployedToPositionId && (
         <button
           type="button"
-          onClick={() => onSendToPlatform(t)}
-          className={amber}
+          onClick={() => onUnlinkDeployed(single)}
+          className={neutral}
         >
-          {isTransferred ? "Change platform" : "Send to Platform"}
+          Remove deploy link
         </button>
       )}
-      {canDeploy && isTransferred && (
+      {single && canPlaceTransfer(single) && isTransferredToPlatform(single) && (
         <button
           type="button"
-          onClick={() => onRemovePlatform(t)}
+          onClick={() => onRemovePlatform(single)}
           className={neutral}
         >
           Remove platform
         </button>
       )}
-      {/* Only automation-created rows have an auto state to go back to. */}
-      {isAutoCreated(t) && (
-        <button type="button" onClick={() => onRevertToAuto(t)} className={sky}>
+      {revertable > 0 && (
+        <button
+          type="button"
+          onClick={() => onRevertToAuto(selected)}
+          className={sky}
+        >
           Revert to auto-created
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => onDeleteRequest(t.id)}
-        className={rose}
-      >
+      <button type="button" onClick={onDeleteRequest} className={rose}>
         Delete
       </button>
       {/* Why the deploy/platform actions are absent, said out loud — the action
           vanishing silently is what made this look like a per-type bug. */}
-      {isExpensed && t.transferType !== "expense" && (
+      {placeable === 0 && (
         <span className="text-[11px] text-[var(--muted)]">
-          Marked as an Expense, so this money has left the business and
-          can&apos;t be deployed. Undo the Expense to make it available again.
+          {/* Explicit {" "} — the literal space after an expression is trimmed
+              at build time, which rendered "aremarked as an Expense". */}
+          {single ? "This transfer is" : "All of these are"}{" "}
+          marked as an Expense, so the money has left the business and
+          can&apos;t be placed. Undo the Expense to make it available again.
         </span>
       )}
     </div>
@@ -814,9 +817,7 @@ export default function TransfersPage() {
   // Bulk "send all shown to platform" (Part 3): the typed platform plus its
   // own confirm step, kept separate from pendingBulk so the two bulk actions
   // can never fire each other's confirm.
-  const [bulkPlatform, setBulkPlatform] = useState("");
-  const [pendingBulkPlatform, setPendingBulkPlatform] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState(false);
   const [pendingWithdrawalDelete, setPendingWithdrawalDelete] = useState<
     string | null
   >(null);
@@ -1166,20 +1167,12 @@ export default function TransfersPage() {
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
 
-  // The one transfer whose individual actions the toolbar offers. Deliberately
-  // derived from the VISIBLE selection: a stale id left selected behind a
-  // filter change must not put another transfer's actions on screen.
-  const singleSelected = useMemo(() => {
-    const chosen = searchedFiltered.filter((t) => selectedIds.has(t.id));
-    return chosen.length === 1 ? chosen[0] : null;
-  }, [searchedFiltered, selectedIds]);
-
-  // Only idle rows are eligible for the bulk send — money already deployed,
-  // expensed or sitting at a platform is not "currently idle" and is left
-  // alone (a single row can still be re-platformed via Change platform).
-  const bulkPlatformTargets = useMemo(
-    () => searchedFiltered.filter(isIdleTransfer),
-    [searchedFiltered],
+  // The transfers the toolbar's actions operate on. Deliberately derived from
+  // the VISIBLE selection: a stale id left selected behind a filter change must
+  // never end up in a batch the user cannot see.
+  const selectedTransfers = useMemo(
+    () => searchedFiltered.filter((t) => selectedIds.has(t.id)),
+    [searchedFiltered, selectedIds],
   );
 
   // Platforms already used anywhere, offered as autocomplete so the same
@@ -1213,7 +1206,7 @@ export default function TransfersPage() {
   const clearSelection = () => {
     setSelectedIds(new Set());
     setPendingBulk(null);
-    setPendingBulkPlatform(false);
+    setPendingDelete(false);
   };
 
   // The only new way data changes here (Part 4): set moneyStatus on every
@@ -1286,10 +1279,11 @@ export default function TransfersPage() {
   // Deleting is now reversible: the record keeps every field and simply drops
   // out of the live list (and therefore out of every total and balance) until
   // it is restored or explicitly purged.
-  const handleDelete = (id: string) => {
-    softDeleteTransfer(id);
+  const handleDelete = (ids: string[]) => {
+    for (const id of ids) softDeleteTransfer(id);
+    clearSelection();
     refresh();
-    setPendingDelete(null);
+    setPendingDelete(false);
   };
 
   // Delete from inside an Edit modal: the same soft delete, then close the
@@ -1315,10 +1309,15 @@ export default function TransfersPage() {
   // Link a Redeployed transfer to the position its money went into. The row
   // stays in the list but drops out of Available Balance. Records the date so
   // the link is auditable. Never touches the position itself.
-  const handleMarkDeployed = (target: Transfer, positionId: string) => {
+  // Applies to every ELIGIBLE transfer in the batch; expensed rows are skipped
+  // here exactly as the preview said they would be, so what the confirmation
+  // promised and what is written can never drift apart.
+  const handleMarkDeployed = (targets: Transfer[], positionId: string) => {
+    const ids = new Set(targets.filter(canPlaceTransfer).map((t) => t.id));
+    if (ids.size === 0) return;
     saveTransfers(
       getTransfers().map((t) =>
-        t.id === target.id
+        ids.has(t.id)
           ? {
               ...t,
               deployedToPositionId: positionId,
@@ -1348,13 +1347,13 @@ export default function TransfersPage() {
   // Send money to a platform (Part 2): assigning a Platform is what puts a
   // transfer in the Transferred state, so this writes that one field and
   // nothing else — transferType, moneyStatus and any deploy-link stay put.
-  const handleSendToPlatform = (target: Transfer, platform: string) => {
+  const handleSendToPlatform = (targets: Transfer[], platform: string) => {
     const value = platform.trim().toUpperCase();
     if (value === "") return;
+    const ids = new Set(targets.filter(canPlaceTransfer).map((t) => t.id));
+    if (ids.size === 0) return;
     saveTransfers(
-      getTransfers().map((t) =>
-        t.id === target.id ? { ...t, platform: value } : t,
-      ),
+      getTransfers().map((t) => (ids.has(t.id) ? { ...t, platform: value } : t)),
     );
     refresh();
     setModal({ kind: "none" });
@@ -1367,25 +1366,6 @@ export default function TransfersPage() {
         t.id === target.id ? { ...t, platform: "" } : t,
       ),
     );
-    refresh();
-  };
-
-  // Bulk send (Part 3): same shape as the bulk money-status marking — only
-  // rows that are BOTH visible and still idle are touched, so an already
-  // deployed/expensed/platformed row can never be silently re-routed.
-  const applyBulkSendToPlatform = (platform: string) => {
-    const value = platform.trim().toUpperCase();
-    if (value === "") return;
-    const targetIds = new Set(bulkPlatformTargets.map((t) => t.id));
-    if (targetIds.size === 0) return;
-    saveTransfers(
-      getTransfers().map((t) =>
-        targetIds.has(t.id) ? { ...t, platform: value } : t,
-      ),
-    );
-    clearSelection();
-    setBulkPlatform("");
-    setPendingBulkPlatform(false);
     refresh();
   };
 
@@ -1816,51 +1796,6 @@ export default function TransfersPage() {
                           </button>
                         </>
                       )}
-                      {/* Bulk Send to Platform (Part 3): type a platform once
-                          and route every still-idle row in this filtered view
-                          to it. Confirmed, like every other bulk action. */}
-                      {bulkPlatformTargets.length > 0 &&
-                        (pendingBulkPlatform ? (
-                          <>
-                            <span className="text-[12px] text-[var(--foreground)]">
-                              Send {bulkPlatformTargets.length} idle shown to{" "}
-                              {bulkPlatform.trim().toUpperCase()}?
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => applyBulkSendToPlatform(bulkPlatform)}
-                              className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-[12px] font-medium text-white hover:bg-[var(--accent)]/90"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPendingBulkPlatform(false)}
-                              className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] hover:bg-[var(--surface-2)]"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <input
-                              value={bulkPlatform}
-                              onChange={(e) => setBulkPlatform(e.target.value)}
-                              list="known-platforms"
-                              placeholder="Platform (e.g. AAVE)"
-                              className="h-7 w-40 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2 text-[12px] uppercase text-[var(--foreground)] placeholder:normal-case placeholder:text-[var(--muted)]/60 focus:border-[var(--accent)] focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              disabled={bulkPlatform.trim() === ""}
-                              onClick={() => setPendingBulkPlatform(true)}
-                              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[12px] font-medium text-amber-300 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              Send all {bulkPlatformTargets.length} idle shown to
-                              platform
-                            </button>
-                          </>
-                        ))}
                     </div>
                   )}
                   {selectedIds.size > 0 && (
@@ -1935,42 +1870,39 @@ export default function TransfersPage() {
                       )}
                     </div>
                   )}
-                  {/* Exactly one row selected → that transfer's own actions,
-                      inline. These are per-record operations (open THIS one,
-                      link THIS one, delete THIS one), so they deliberately do
-                      not appear once a second row is checked — there is no
-                      sensible way to apply them to several transfers at once.
-                      The bulk actions above stay visible either way. */}
-                  {singleSelected && (
-                    <SingleTransferActions
-                      transfer={singleSelected}
-                      pendingDelete={pendingDelete}
-                      onEdit={(tr) =>
-                        setModal(
-                          tr.transferType === "expense"
-                            ? { kind: "editExpense", transfer: tr }
-                            : { kind: "edit", transfer: tr },
-                        )
-                      }
-                      onMarkDeployed={(tr) =>
-                        setModal({ kind: "deploy", transfer: tr })
-                      }
-                      onUnlinkDeployed={handleUnlinkDeployed}
-                      onSendToPlatform={(tr) =>
-                        setModal({ kind: "platform", transfer: tr })
-                      }
-                      onRemovePlatform={handleRemovePlatform}
-                      onRevertToAuto={(tr) =>
-                        setModal({ kind: "revert", transfer: tr })
-                      }
-                      onDeleteRequest={setPendingDelete}
-                      onDeleteConfirm={(id) => {
-                        handleDelete(id);
-                        clearSelection();
-                      }}
-                      onDeleteCancel={() => setPendingDelete(null)}
-                    />
-                  )}
+                  {/* Actions for whatever is selected — one row or a hundred.
+                      Only Edit and the two "remove" undos are single-only; the
+                      rest take the whole selection, which is the same list the
+                      bulk money-status buttons above use. One selection model,
+                      reached either by individual checkboxes or Select all
+                      visible. */}
+                  <SelectionActions
+                    selected={selectedTransfers}
+                    pendingDelete={pendingDelete}
+                    onEdit={(tr) =>
+                      setModal(
+                        tr.transferType === "expense"
+                          ? { kind: "editExpense", transfer: tr }
+                          : { kind: "edit", transfer: tr },
+                      )
+                    }
+                    onMarkDeployed={(list) =>
+                      setModal({ kind: "deploy", transfers: list })
+                    }
+                    onUnlinkDeployed={handleUnlinkDeployed}
+                    onSendToPlatform={(list) =>
+                      setModal({ kind: "platform", transfers: list })
+                    }
+                    onRemovePlatform={handleRemovePlatform}
+                    onRevertToAuto={(list) =>
+                      setModal({ kind: "revert", transfers: list })
+                    }
+                    onDeleteRequest={() => setPendingDelete(true)}
+                    onDeleteConfirm={() =>
+                      handleDelete(selectedTransfers.map((t) => t.id))
+                    }
+                    onDeleteCancel={() => setPendingDelete(false)}
+                  />
                 </div>
 
                 <div className="divide-y divide-[var(--border)]">
@@ -2180,7 +2112,7 @@ export default function TransfersPage() {
           )}
           {modal.kind === "revert" && (
             <RevertToAutoModal
-              transfer={modal.transfer}
+              transfers={modal.transfers}
               claims={claims}
               positions={positions}
               onCancel={() => setModal({ kind: "none" })}
@@ -2192,22 +2124,22 @@ export default function TransfersPage() {
           )}
           {modal.kind === "deploy" && (
             <DeployLinkModal
-              transfer={modal.transfer}
+              transfers={modal.transfers}
               positions={positions}
               noteFor={positionNotes}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(positionId) =>
-                handleMarkDeployed(modal.transfer, positionId)
+                handleMarkDeployed(modal.transfers, positionId)
               }
             />
           )}
           {modal.kind === "platform" && (
             <SendToPlatformModal
-              transfer={modal.transfer}
+              transfers={modal.transfers}
               knownPlatforms={knownPlatforms}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(platform) =>
-                handleSendToPlatform(modal.transfer, platform)
+                handleSendToPlatform(modal.transfers, platform)
               }
             />
           )}
@@ -2802,13 +2734,15 @@ function WithdrawalFormModal({
 // is not left sitting in Available Balance just because they can't place it.
 // Confirming records the link; the position itself is never modified.
 function DeployLinkModal({
-  transfer,
+  transfers,
   positions,
   noteFor,
   onCancel,
   onSubmit,
 }: {
-  transfer: Transfer;
+  // The whole selection. Expensed rows ride along so the preview can say how
+  // many are being skipped and why, rather than quietly shrinking the batch.
+  transfers: Transfer[];
   positions: Position[];
   // Per-position memory aid ("already has $X deployed", "fully expensed"),
   // shared with the page's position filter so the two can never word it
@@ -2818,16 +2752,26 @@ function DeployLinkModal({
   onCancel: () => void;
   onSubmit: (positionId: string) => void;
 }) {
+  const eligible = transfers.filter(canPlaceTransfer);
+  const skipped = transfers.length - eligible.length;
+  const total = eligible.reduce((sum, t) => sum + t.amount, 0);
+  // Preselect only when the batch already agrees on a destination, so a mixed
+  // batch never looks like it has one.
+  const shared = eligible[0]?.deployedToPositionId;
   const [positionId, setPositionId] = useState(
-    transfer.deployedToPositionId ?? "",
+    shared && eligible.every((t) => t.deployedToPositionId === shared)
+      ? shared
+      : "",
   );
   // Memory aid, not a guess: money usually goes into a position opened just
-  // AFTER it came in, so positions opened soonest after this transfer's date
-  // come first, then everything else by how far away it is in either
-  // direction. The existing active-before-closed grouping is kept as the
+  // AFTER it came in, so positions opened soonest after the batch's EARLIEST
+  // transfer date come first, then everything else by how far away it is in
+  // either direction. The existing active-before-closed grouping is kept as the
   // primary key — it is a deliberate convention (a top-up into a closed
   // position is legal but rare), so proximity only reorders WITHIN each group.
-  const transferTime = new Date(transfer.date).getTime();
+  const transferTime = Math.min(
+    ...eligible.map((t) => new Date(t.date).getTime() || Infinity),
+  );
   const proximityRank = (p: Position): number => {
     const opened = new Date(p.entryDatetime).getTime();
     if (!Number.isFinite(opened) || !Number.isFinite(transferTime)) {
@@ -2847,16 +2791,29 @@ function DeployLinkModal({
   return (
     <ModalShell title="Mark as deployed" onCancel={onCancel}>
       <Section title="Deploy into a position">
-        <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
+        <p className="mb-3 text-[11px] leading-relaxed text-[var(--muted)]">
           {/* Explicit {" "} — the literal space after the expression is
               trimmed at build time, rendering "$500.00transfer". */}
-          Link this {formatUsd(transfer.amount)}{" "}
-          transfer to the position its money went into. It stays in the list but leaves Available Balance
-          until you undo. The position&apos;s own Deposited figure is unchanged
-          — you entered that separately when you opened it. If you can&apos;t
-          remember which position, say so — the money still counts as deployed
-          and you can name it later.
+          Link{" "}
+          {eligible.length === 1
+            ? `this ${formatUsd(total)} transfer`
+            : `these ${eligible.length} transfers (${formatUsd(total)})`}{" "}
+          to the position the money went into. They stay in the list but leave
+          Available Balance until you undo. The position&apos;s own Deposited
+          figure is unchanged — you entered that separately when you opened it.
+          If you can&apos;t remember which position, say so — the money still
+          counts as deployed and you can name it later.
         </p>
+        {/* Real counts before committing: a batch that silently dropped rows
+            would be indistinguishable from one that worked. */}
+        {skipped > 0 && (
+          <p className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+            {eligible.length} of {transfers.length} selected will be linked.{" "}
+            {skipped} {skipped === 1 ? "is" : "are"} marked as an Expense — that
+            money has left the business, so {skipped === 1 ? "it" : "they"}{" "}
+            cannot be deployed and will be left untouched.
+          </p>
+        )}
         {/* The shared searchable picker rather than a native <select>: macOS
             draws select popups itself and ignores option colour, so the red
             "fully expensed" warning could only be a ⚠ glyph there. Here the
@@ -2876,7 +2833,8 @@ function DeployLinkModal({
         />
         <p className="mt-2 text-[11px] leading-relaxed text-[var(--muted)]">
           Within each chain, positions opened closest to this transfer&apos;s
-          date ({formatDateDDMMYYYY(transfer.date)}) come first — a memory aid,
+          date ({formatDateDDMMYYYY(new Date(transferTime).toISOString())})
+          come first — a memory aid,
           not a guess. You can change this later.
         </p>
       </Section>
@@ -2890,7 +2848,7 @@ function DeployLinkModal({
         </button>
         <button
           type="button"
-          disabled={positionId === ""}
+          disabled={positionId === "" || eligible.length === 0}
           onClick={() => onSubmit(positionId)}
           className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -2907,26 +2865,46 @@ function DeployLinkModal({
 // other platform value. Assigning it is what moves the money into the
 // Transferred state, so the balance consequence is spelled out here.
 function SendToPlatformModal({
-  transfer,
+  transfers,
   knownPlatforms,
   onCancel,
   onSubmit,
 }: {
-  transfer: Transfer;
+  // The whole selection; expensed rows ride along only so the preview can
+  // report them as skipped.
+  transfers: Transfer[];
   knownPlatforms: string[];
   onCancel: () => void;
   onSubmit: (platform: string) => void;
 }) {
-  const [platform, setPlatform] = useState(transfer.platform ?? "");
+  const eligible = transfers.filter(canPlaceTransfer);
+  const skipped = transfers.length - eligible.length;
+  const total = eligible.reduce((sum, t) => sum + t.amount, 0);
+  // Prefill only when the batch already shares one platform.
+  const shared = eligible[0]?.platform ?? "";
+  const [platform, setPlatform] = useState(
+    shared !== "" && eligible.every((t) => t.platform === shared) ? shared : "",
+  );
   return (
     <ModalShell title="Send to Platform" onCancel={onCancel}>
       <Section title="Where did this money go?">
-        <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
-          Name the platform this {formatUsd(transfer.amount)} was sent to for
-          yield (AAVE, a CEX, anywhere it is working). It stays in the list but
-          leaves Available Balance and joins Transferred to Platforms — clear
-          the platform again to bring it back.
+        <p className="mb-3 text-[11px] leading-relaxed text-[var(--muted)]">
+          Name the platform{" "}
+          {eligible.length === 1
+            ? `this ${formatUsd(total)}`
+            : `these ${eligible.length} transfers (${formatUsd(total)})`}{" "}
+          went to for yield (AAVE, a CEX, anywhere it is working). They stay in
+          the list but leave Available Balance and join Transferred to Platforms
+          — clear the platform again to bring it back.
         </p>
+        {skipped > 0 && (
+          <p className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+            {eligible.length} of {transfers.length} selected will be sent.{" "}
+            {skipped} {skipped === 1 ? "is" : "are"} marked as an Expense — that
+            money has already left the business, so {skipped === 1 ? "it" : "they"}{" "}
+            cannot be transferred and will be left untouched.
+          </p>
+        )}
         <Field label="Platform" htmlFor="send-platform">
           <input
             id="send-platform"
@@ -2953,7 +2931,7 @@ function SendToPlatformModal({
         </button>
         <button
           type="button"
-          disabled={platform.trim() === ""}
+          disabled={platform.trim() === "" || eligible.length === 0}
           onClick={() => onSubmit(platform)}
           className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -2972,26 +2950,43 @@ function SendToPlatformModal({
 // and rebuilt together — reverting one leg in isolation could not reproduce the
 // split.
 function RevertToAutoModal({
-  transfer,
+  transfers,
   claims,
   positions,
   onCancel,
   onApplied,
 }: {
-  transfer: Transfer;
+  // The whole selection. Manually-created rows ride along so the preview can
+  // report them as skipped rather than the batch quietly shrinking.
+  transfers: Transfer[];
   claims: FeeClaim[];
   positions: Position[];
   onCancel: () => void;
   onApplied: () => void;
 }) {
-  const [plan, setPlan] = useState<AutoRevertPlan | null>(null);
+  const [plans, setPlans] = useState<AutoRevertPlan[] | null>(null);
   const [failed, setFailed] = useState(false);
+
+  const eligible = useMemo(
+    () => transfers.filter(isAutoCreated),
+    [transfers],
+  );
+  const skipped = transfers.length - eligible.length;
 
   useEffect(() => {
     let live = true;
-    planRevertToAuto(transfer, claims, positions)
-      .then((p) => {
-        if (live) setPlan(p);
+    // One plan per SOURCE GROUP, not per selected row: a dual-token claim owns
+    // two transfers, and selecting both must not rebuild that claim twice.
+    const seen = new Set<string>();
+    const roots = eligible.filter((t) => {
+      const key = t.sourceClaimId ?? `close:${t.sourceCloseId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    Promise.all(roots.map((t) => planRevertToAuto(t, claims, positions)))
+      .then((ps) => {
+        if (live) setPlans(ps);
       })
       .catch(() => {
         if (live) setFailed(true);
@@ -2999,69 +2994,84 @@ function RevertToAutoModal({
     return () => {
       live = false;
     };
-  }, [transfer, claims, positions]);
+  }, [eligible, claims, positions]);
 
   const describe = (t: Transfer) =>
     `${t.token || "—"} · ${formatUsd(t.amount)} · platform ${
       t.platform || "(none)"
     } · ${t.moneyStatus ?? "idle"}`;
 
+  const usable = (plans ?? []).filter((p) => p.next.length > 0);
+  const blocked = (plans ?? []).filter((p) => p.next.length === 0);
+  const rebuilt = usable.reduce((n, p) => n + p.next.length, 0);
+
   return (
     <ModalShell title="Revert to auto-created" onCancel={onCancel}>
-      <Section
-        title={
-          plan?.source === "close"
-            ? "Recomputed from the linked close"
-            : "Recomputed from the linked fee claim"
-        }
-      >
-        {failed || (plan && plan.error) ? (
-          <p className="text-[12px] leading-relaxed text-amber-300">
-            {plan?.error ??
-              "Could not recompute this transfer right now. Nothing has been changed."}
+      <Section title="Recomputed from the linked records">
+        {skipped > 0 && (
+          <p className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+            {eligible.length} of {transfers.length} selected can be reverted.{" "}
+            {skipped} {skipped === 1 ? "was" : "were"} created by hand, not by
+            the automation, so {skipped === 1 ? "it has" : "they have"} no
+            auto-created state to go back to and will be left untouched.
           </p>
-        ) : !plan ? (
+        )}
+        {failed ? (
+          <p className="text-[12px] leading-relaxed text-amber-300">
+            Could not recompute right now. Nothing has been changed.
+          </p>
+        ) : !plans ? (
           <p className="text-[12px] text-[var(--muted)]">
-            Recomputing from the linked record…
+            Recomputing from the linked records…
           </p>
         ) : (
           <>
-            <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
-              This will discard your changes to{" "}
-              {plan.current.length === 1
-                ? "this transfer"
-                : `these ${plan.current.length} transfers`}{" "}
-              and rebuild{" "}
-              {plan.next.length === 1 ? "it" : "them"} from the linked record as
-              it stands now. Platform, destination, money status, any deploy
-              link and the notes all go back to what the automation writes.
-            </p>
+            {usable.length > 0 && (
+              <p className="mb-4 text-[11px] leading-relaxed text-[var(--muted)]">
+                This will discard your changes to{" "}
+                {rebuilt === 1 ? "this transfer" : `these ${rebuilt} transfers`}{" "}
+                and rebuild {rebuilt === 1 ? "it" : "them"} from the linked
+                records as they stand now. Platform, destination, money status,
+                any deploy link and the notes all go back to what the automation
+                writes.
+              </p>
+            )}
+            {blocked.map((p, i) => (
+              <p
+                key={`blocked-${i}`}
+                className="mb-3 text-[12px] leading-relaxed text-amber-300"
+              >
+                {p.error ?? "One selected transfer could not be recomputed."}
+              </p>
+            ))}
             <div className="space-y-3">
-              {plan.next.map((next, i) => {
-                const before = plan.current[i];
-                return (
-                  <div
-                    key={next.id}
-                    className="rounded-md border border-[var(--border)] bg-[var(--surface-2)]/30 px-3 py-2.5"
-                  >
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                      Now
-                    </p>
-                    <p className="text-[12px] text-[var(--muted)] line-through">
-                      {before ? describe(before) : "— (new record)"}
-                    </p>
-                    <p className="mt-2 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                      After revert
-                    </p>
-                    <p className="text-[13px] font-medium text-[var(--foreground)]">
-                      {describe(next)}
-                    </p>
-                    <p className="mt-1 text-[11px] text-[var(--muted)]">
-                      dated {formatDateDDMMYYYY(next.date)}
-                    </p>
-                  </div>
-                );
-              })}
+              {usable.flatMap((plan) =>
+                plan.next.map((next, i) => {
+                  const before = plan.current[i];
+                  return (
+                    <div
+                      key={next.id}
+                      className="rounded-md border border-[var(--border)] bg-[var(--surface-2)]/30 px-3 py-2.5"
+                    >
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                        Now
+                      </p>
+                      <p className="text-[12px] text-[var(--muted)] line-through">
+                        {before ? describe(before) : "— (new record)"}
+                      </p>
+                      <p className="mt-2 text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                        After revert
+                      </p>
+                      <p className="text-[13px] font-medium text-[var(--foreground)]">
+                        {describe(next)}
+                      </p>
+                      <p className="mt-1 text-[11px] text-[var(--muted)]">
+                        dated {formatDateDDMMYYYY(next.date)}
+                      </p>
+                    </div>
+                  );
+                }),
+              )}
             </div>
           </>
         )}
@@ -3076,10 +3086,11 @@ function RevertToAutoModal({
         </button>
         <button
           type="button"
-          disabled={!plan || plan.next.length === 0}
+          disabled={usable.length === 0}
           onClick={() => {
-            if (!plan) return;
-            applyRevertToAuto(plan);
+            // Applied one group at a time; each write re-reads storage, so the
+            // groups cannot clobber one another.
+            for (const plan of usable) applyRevertToAuto(plan);
             onApplied();
           }}
           className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
@@ -3090,6 +3101,7 @@ function RevertToAutoModal({
     </ModalShell>
   );
 }
+
 
 function ExpenseFormModal({
   title,

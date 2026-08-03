@@ -2190,6 +2190,55 @@ at the plan gate.
   as before; "already has $500.00 deployed" still shows alongside. Zero console
   errors; seeds removed. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: CORRECTION to b112301. Mark as deployed, Send to Platform,
+  Revert to auto-created and Delete now work on the WHOLE selection (1..N), not
+  only on a single selected row. Edit stays single-only — it opens one record's
+  form and cannot meaningfully point at several. Display/action plumbing only;
+  no calculation changed.
+  ONE SELECTION MODEL. The position-scoped "Send all N idle shown to platform"
+  control (its own targets, its own confirm state, its own apply function) is
+  GONE, along with bulkPlatform/pendingBulkPlatform/bulkPlatformTargets/
+  applyBulkSendToPlatform. Everything now reads selectedTransfers =
+  searchedFiltered ∩ selectedIds, reached either by individual checkboxes or
+  Select all visible. "All shown" is now just Select all visible. The
+  position-scoped Undo Expense / Mark as Expense shortcuts are untouched.
+  Deriving from the VISIBLE selection matters: a stale id left selected behind a
+  filter change can never end up in a batch the user cannot see.
+  MODALS TAKE LISTS. The deploy / platform / revert modal kinds carry
+  transfers: Transfer[]; a single row is a one-element list, so there is no
+  separate single-record path to drift. Each modal previews REAL counts and
+  dollars before committing, and the SAME predicate decides both the preview and
+  the write, so what was promised and what happens cannot diverge:
+  canPlaceTransfer (module-level now, shared with the toolbar) for deploy and
+  platform, isAutoCreated for revert. Delete has no eligibility filter and
+  confirms inline with count + total.
+  Revert plans ONE PER SOURCE GROUP, not per selected row — a dual-token claim
+  owns two transfers, and selecting both must not rebuild that claim twice.
+  Groups that cannot be recomputed (e.g. the linked claim is gone) are reported
+  individually and skipped rather than blocking the rest.
+  Remove deploy link / Remove platform stay single-only: they are undo
+  operations on one specific placement, nothing asked for them in bulk, and the
+  batch equivalents (re-deploy, re-platform) already exist.
+  Verified live, 18 transfers / 2 positions: (A) 5 selected (3 idle + 2
+  expensed) → "3 of 5 selected will be linked. 2 are marked as an Expense …
+  will be left untouched", applied to exactly those 3 (Deployed $0 → $33.00,
+  Available $2,185 → $2,152). (B) filtered to one position, Select all visible
+  (16): Send to Platform previewed "13 of 16 … 3 are marked as an Expense",
+  applied → Transferred $0 → $265.00 (the other $33 stayed in Deployed, since
+  precedence keeps the buckets exclusive), Available $2,152 → $1,887; Revert
+  previewed "13 of 16 selected can be reverted. 3 were created by hand …" with
+  10 comparison blocks and 3 individually-reported blocked groups, applied →
+  all 10 rebuilt from their claims ($10-$19 → $200-$209), platforms and
+  deploy-links cleared, manual rows untouched, Lifetime $2,488 → $4,388;
+  Delete confirmed "Delete 3 transfers ($153.00)?" → 16 rows → 13, Recently
+  Deleted (3), Lifetime $4,388 → $4,235. (C) Edit absent at 2 selected, present
+  again at 1. (D) single selection unchanged — all five actions, Edit opens the
+  correct record, and Remove platform reappears once that row has a platform.
+  (E) every balance above reconciles exactly. tsc/lint/build clean.
+  Same JSX whitespace trap as the earlier "$500.00transfer" bug bit again in new
+  copy ("aremarked as an Expense") — a literal space after {expr} is trimmed at
+  build time. Use {" "}.
+
 ## Known Issues
 
 - None currently tracked.
