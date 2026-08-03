@@ -2239,7 +2239,7 @@ at the plan gate.
   copy ("aremarked as an Expense") — a literal space after {expr} is trimmed at
   build time. Use {" "}.
 
-- PLACEHOLDER_HASH: REAL BUG FIXED — the Breakdown by Type card's Expense tile
+- 3630381: REAL BUG FIXED — the Breakdown by Type card's Expense tile
   was permanently 0. Plus a colour rule for the settled-state indicators. Both
   display/counting only; no P&L or balance calculation touched.
   PART 2 ROOT CAUSE (read in the code, then reproduced on the pre-fix build):
