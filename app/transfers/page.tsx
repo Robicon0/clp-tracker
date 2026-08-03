@@ -952,46 +952,89 @@ export default function TransfersPage() {
     return map;
   }, [transfers]);
 
-  // Positions whose fee money is entirely gone: EVERY transfer belonging to the
-  // position is Expense-status. One non-expense transfer (redeployed, deployed
-  // or transferred) disqualifies it — partial expensing is not "fully", and a
-  // position with no transfers at all cannot be fully anything, so both are
-  // excluded by construction (the counter only records ids it has seen).
-  const fullyExpensedPositions = useMemo(() => {
-    const tally = new Map<string, { total: number; expensed: number }>();
+  // "Fully expensed" is judged PER TRANSFER TYPE, not across the position as a
+  // whole (user decision, 2026-08-04). The combined rule hid the answer people
+  // actually want: a position can have every fee it ever paid out spent while
+  // the profit from its close is still working, and vice versa — the two are
+  // separate pots of money and reading them together made both invisible.
+  // A category qualifies when the position has at least one transfer of that
+  // type AND every one of them is Expense-status. A type with no transfers is
+  // never reported (nothing to be "fully" anything), which falls out of the
+  // tally only recording types it has actually seen.
+  // Undeployed Tokens is included for completeness even though it is the rare
+  // one: those rows are hand-logged idle capital and carry an UNSET money
+  // status by design (d20f3e3), so they only reach Expense if the user
+  // deliberately edits them. Leaving it out would have been a silent gap in a
+  // rule the user asked to apply per type; including it costs one line and an
+  // idle row correctly blocks its own category.
+  const EXPENSED_CATEGORIES: { key: TransferType; label: string }[] = useMemo(
+    () => [
+      { key: "fees", label: "Fees" },
+      { key: "outOfRangeUpside", label: "Upside" },
+      { key: "undeployed", label: "Undeployed" },
+    ],
+    [],
+  );
+
+  const fullyExpensedByPosition = useMemo(() => {
+    const tally = new Map<
+      string,
+      Map<TransferType, { total: number; expensed: number }>
+    >();
     for (const t of transfers) {
       if (!t.positionId) continue;
-      const entry = tally.get(t.positionId) ?? { total: 0, expensed: 0 };
+      let byType = tally.get(t.positionId);
+      if (!byType) {
+        byType = new Map();
+        tally.set(t.positionId, byType);
+      }
+      const entry = byType.get(t.transferType) ?? { total: 0, expensed: 0 };
       entry.total += 1;
       if (isExpensedTransfer(t)) entry.expensed += 1;
-      tally.set(t.positionId, entry);
+      byType.set(t.transferType, entry);
     }
-    const ids = new Set<string>();
-    for (const [id, { total, expensed }] of tally) {
-      if (total > 0 && total === expensed) ids.add(id);
+    const out = new Map<string, string[]>();
+    for (const [id, byType] of tally) {
+      const labels = EXPENSED_CATEGORIES.filter(({ key }) => {
+        const e = byType.get(key);
+        return e !== undefined && e.total > 0 && e.total === e.expensed;
+      }).map((c) => c.label);
+      if (labels.length > 0) out.set(id, labels);
     }
-    return ids;
-  }, [transfers]);
+    return out;
+  }, [transfers, EXPENSED_CATEGORIES]);
 
-  // The picker annotation. Fully-expensed wins the slot when both could apply:
-  // "this position's money is all spent" is the more important warning, and in
-  // practice they are mutually exclusive anyway — deployed money is by
-  // definition not expensed, so a position holding deployed money always has at
-  // least one non-expense transfer.
-  const positionNote = (
+  // "Fees & Upside fully expensed" rather than one note per category: the
+  // qualifying categories share the same predicate and the same warning, so
+  // repeating "fully expensed" per type would trade a compact row for noise.
+  const joinCategories = (labels: string[]): string =>
+    labels.length <= 1
+      ? labels.join("")
+      : `${labels.slice(0, -1).join(", ")} & ${labels[labels.length - 1]}`;
+
+  // Both notes can now apply at once and both are shown. They describe
+  // unrelated things: fully-expensed looks at the transfers BELONGING to the
+  // position, while "already has $X deployed" looks at transfers POINTING AT it
+  // as a deploy target — which usually come from other positions entirely.
+  const positionNotes = (
     p: Position,
-  ): { text: string; tone: "muted" | "danger" } | null => {
-    if (fullyExpensedPositions.has(p.id)) {
-      return { text: "fully expensed", tone: "danger" };
+  ): { text: string; tone: "muted" | "danger" }[] => {
+    const notes: { text: string; tone: "muted" | "danger" }[] = [];
+    const labels = fullyExpensedByPosition.get(p.id);
+    if (labels) {
+      notes.push({
+        text: `${joinCategories(labels)} fully expensed`,
+        tone: "danger",
+      });
     }
     const already = deployedByPosition.get(p.id);
     if (already) {
-      return {
+      notes.push({
         text: `already has ${formatUsd(already.amount)} deployed`,
         tone: "muted",
-      };
+      });
     }
-    return null;
+    return notes;
   };
 
   // One place decides what a deploy-link is called, so the row badge and the
@@ -1660,7 +1703,7 @@ export default function TransfersPage() {
                   clearSelection();
                 }}
                 allValue=""
-                noteFor={positionNote}
+                noteFor={positionNotes}
               />
               <div>
                 <label className="block text-xs font-medium text-[var(--muted)]">
@@ -2136,7 +2179,7 @@ export default function TransfersPage() {
             <DeployLinkModal
               transfer={modal.transfer}
               positions={positions}
-              noteFor={positionNote}
+              noteFor={positionNotes}
               onCancel={() => setModal({ kind: "none" })}
               onSubmit={(positionId) =>
                 handleMarkDeployed(modal.transfer, positionId)
@@ -2756,7 +2799,7 @@ function DeployLinkModal({
   // shared with the page's position filter so the two can never word it
   // differently. Informational only — it never blocks picking a position,
   // since topping one up is legitimate.
-  noteFor: (p: Position) => { text: string; tone: "muted" | "danger" } | null;
+  noteFor: (p: Position) => { text: string; tone: "muted" | "danger" }[];
   onCancel: () => void;
   onSubmit: (positionId: string) => void;
 }) {

@@ -2102,6 +2102,43 @@ at the plan gate.
   long enough to scroll WITHIN the container, at many offsets. A short list
   proves nothing.
 
+- PLACEHOLDER_HASH: "Fully expensed" is now judged PER TRANSFER TYPE, not across
+  a position as a whole (user decision after the 6a2f0d1 investigation). Display
+  only — no calculation changed.
+  WHY: the combined rule hid the answer people actually want. The reported
+  SUI/USDC (0.175%) BLUEFIN position had 11 Fees transfers ALL expensed plus one
+  Out-of-Range-Upside still Redeployed, so the single check said "not fully
+  expensed" and showed nothing — technically true, useless in practice. Fees and
+  close-profit are separate pots; read together, both became invisible.
+  RULE, per category: at least one transfer of that type AND every one of them
+  Expense-status. A type with no transfers is never reported, which falls out of
+  the tally only recording types it has seen. Categories are independent — Fees
+  can qualify while Upside does not, and vice versa.
+  UNDEPLOYED TOKENS IS INCLUDED, and is the rare one: those rows are hand-logged
+  idle capital carrying an UNSET money status by design (d20f3e3), so they only
+  reach Expense if the user deliberately edits them. Left out it would have been
+  a silent gap in a rule asked for "per type"; included it costs one line, and an
+  idle row correctly blocks its own category.
+  FORMATTING: qualifying categories are combined into ONE note rather than one
+  note each — "Fees fully expensed", "Fees & Upside fully expensed", "Fees,
+  Upside & Undeployed fully expensed". They share a predicate and a warning, so
+  repeating "fully expensed" per type would trade a compact row for noise.
+  BOTH NOTES CAN NOW SHOW AT ONCE. noteFor returns an ARRAY (PositionCombobox
+  renders each), because the two hints describe unrelated things: fully-expensed
+  reads the transfers BELONGING to a position, while "already has $X deployed"
+  reads transfers POINTING AT it as a deploy target — usually from other
+  positions entirely. The old single-slot version let the red one hide the
+  deployed one.
+  Verified live in BOTH pickers (main Position filter and Mark as Deployed),
+  5 positions / 20 transfers: (A) 11 fees expensed + 1 upside redeployed →
+  "· Fees fully expensed" in rose-400, the exact case that showed nothing
+  before; (B) all three types expensed → "· Fees, Upside & Undeployed fully
+  expensed"; (C) nothing expensed → no indicator; (D) identical output in both
+  pickers, screenshot-confirmed red; (E) a deploy-target-only position still
+  shows just "· already has $500.00 deployed", and a position that is BOTH
+  fees-expensed and a deploy target shows both notes side by side.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

@@ -34,7 +34,10 @@ export function PositionCombobox({
   // Optional per-position annotation (a memory aid, never a restriction).
   // Opt-in: callers that pass nothing render exactly as before, which is why
   // Fee Claims and Add Transfer are untouched by the Transfers page's notes.
-  noteFor?: (p: Position) => { text: string; tone: "muted" | "danger" } | null;
+  // Returns every annotation that applies, so unrelated hints (money spent vs
+  // money already deployed here) can appear together rather than one hiding the
+  // other. Empty array = no annotation.
+  noteFor?: (p: Position) => { text: string; tone: "muted" | "danger" }[];
   // Optional ordering INSIDE each chain's Open/Closed section. Default is
   // most-recent-first, which every existing caller keeps. Mark as Deployed
   // passes a date-proximity comparator so the nudge added in 9dd89d3 survives
@@ -213,7 +216,7 @@ export function PositionCombobox({
                         {section.title}
                       </div>
                       {section.list.map((p) => {
-                        const note = noteFor?.(p) ?? null;
+                        const notes = noteFor?.(p) ?? [];
                         return (
                           <button
                             key={p.id}
@@ -226,8 +229,9 @@ export function PositionCombobox({
                             } ${section.key === "closed" ? "opacity-75" : ""}`}
                           >
                             {positionOptionLabel(p)}
-                            {note && (
+                            {notes.map((note) => (
                               <span
+                                key={note.text}
                                 className={`ml-1 ${
                                   note.tone === "danger"
                                     ? "font-medium text-rose-400"
@@ -236,7 +240,7 @@ export function PositionCombobox({
                               >
                                 · {note.text}
                               </span>
-                            )}
+                            ))}
                           </button>
                         );
                       })}
