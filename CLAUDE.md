@@ -2072,6 +2072,36 @@ at the plan gate.
   "— Select position —" in muted. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: REAL layout overlap in the position dropdown — a different
+  bug from 91950ab's contrast fix, and this one was a genuine paint-order
+  failure. The sticky search header carried NO explicit z-index, so options
+  scrolling under it could paint OVER it. One-line fix: `z-10` on the header.
+  EVIDENCE (measured, and reproduced only with a list long enough to scroll
+  INSIDE the panel — 40 positions, 2652px of content in a 318px viewport):
+  hit-testing 5 points inside the stuck header returned an option BUTTON instead
+  of the header at scrollTop=1600 ("XXHHX"), and a zoomed screenshot showed an
+  option's text — "Jul 2026 · dep $2.50 · now $10,500.00" — drawn straight
+  across the search input. Controlled experiment, same DOM, one property
+  changed: setting the header's z-index to 1 from the console made all points
+  pass at every offset; removing it brought the failure back. That is why the
+  earlier passes missed it — every previous probe used a SHORT list that never
+  scrolled internally, so nothing ever scrolled under the header.
+  WHY IT IS INTERMITTENT: a `position: sticky` element with `z-index: auto`
+  does not reliably win against later-in-DOM in-flow siblings whose boxes
+  overlap it, so whether an option paints over the header depends on which
+  option happens to straddle it — i.e. on the exact scroll offset. The opaque
+  background is NOT sufficient on its own; it only hides what paints below it.
+  Chain/section headers (chain name, Open/Closed Positions) were checked as part
+  of this and are `position: static` — they scroll normally and cannot overlap
+  anything.
+  Verified after the fix: header z-index computes to 10, and 0 failures across
+  25 scroll offsets x 36 hit-test points (900 probes) on the same 2652px list
+  that failed before, plus a clean screenshot at the previously-failing
+  scrollTop=1600. tsc/lint/build clean.
+  TESTING NOTE for anything sticky inside a scroll container: probe with a list
+  long enough to scroll WITHIN the container, at many offsets. A short list
+  proves nothing.
+
 ## Known Issues
 
 - None currently tracked.

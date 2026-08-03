@@ -165,9 +165,17 @@ export function PositionCombobox({
              `shadow-xl` computed to "rgba(0,0,0,0) 0px 0px 0px 0px") and a
              light edge ring. z-40 stays below the z-50 modal layer. */
           <div className="scrollbar-dark absolute z-40 mt-1 max-h-80 w-full overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface-raised)] shadow-[0_18px_45px_-8px_rgba(0,0,0,0.85)] ring-1 ring-white/10">
-            {/* Matches the panel, not the card — a --surface header on a
+            {/* z-10 IS THE FIX, not decoration — measured. A sticky header with
+                z-index:auto does not reliably paint above later-in-DOM siblings
+                that scroll under it: at scrollTop 1600 of a 2652px list, 3 of 5
+                hit-test points inside this header returned an option BUTTON
+                instead, and a screenshot showed an option's text drawn straight
+                across the search input. Setting z-index alone (nothing else
+                changed) made all points pass at every scroll offset. The
+                background must stay opaque for the same reason.
+                Matches the panel, not the card — a --surface header on a
                 --surface-raised panel would band across the top. */}
-            <div className="sticky top-0 border-b border-[var(--border-strong)] bg-[var(--surface-raised)] p-2">
+            <div className="sticky top-0 z-10 border-b border-[var(--border-strong)] bg-[var(--surface-raised)] p-2">
               <input
                 autoFocus
                 value={query}
