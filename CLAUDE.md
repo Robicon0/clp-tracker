@@ -2072,7 +2072,7 @@ at the plan gate.
   "— Select position —" in muted. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: REAL layout overlap in the position dropdown — a different
+- 6a2f0d1: REAL layout overlap in the position dropdown — a different
   bug from 91950ab's contrast fix, and this one was a genuine paint-order
   failure. The sticky search header carried NO explicit z-index, so options
   scrolling under it could paint OVER it. One-line fix: `z-10` on the header.
