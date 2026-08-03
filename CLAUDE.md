@@ -2139,7 +2139,7 @@ at the plan gate.
   fees-expensed and a deploy target shows both notes side by side.
   tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Two Transfers changes. (1) Row expansion is GONE — a
+- b112301: Two Transfers changes. (1) Row expansion is GONE — a
   transfer's actions moved into the toolbar, shown when exactly one row is
   selected. (2) Settled-state indicators now describe mixed states, not just
   uniform ones. Display only; no calculation changed.
