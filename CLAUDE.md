@@ -2190,7 +2190,7 @@ at the plan gate.
   as before; "already has $500.00 deployed" still shows alongside. Zero console
   errors; seeds removed. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: CORRECTION to b112301. Mark as deployed, Send to Platform,
+- a367bdf: CORRECTION to b112301. Mark as deployed, Send to Platform,
   Revert to auto-created and Delete now work on the WHOLE selection (1..N), not
   only on a single selected row. Edit stays single-only — it opens one record's
   form and cannot meaningfully point at several. Display/action plumbing only;
