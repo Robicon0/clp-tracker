@@ -2102,7 +2102,7 @@ at the plan gate.
   long enough to scroll WITHIN the container, at many offsets. A short list
   proves nothing.
 
-- PLACEHOLDER_HASH: "Fully expensed" is now judged PER TRANSFER TYPE, not across
+- 61b2e1a: "Fully expensed" is now judged PER TRANSFER TYPE, not across
   a position as a whole (user decision after the 6a2f0d1 investigation). Display
   only — no calculation changed.
   WHY: the combined rule hid the answer people actually want. The reported
