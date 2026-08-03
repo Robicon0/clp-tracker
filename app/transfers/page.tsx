@@ -312,27 +312,19 @@ function buildWithdrawal(id: string, form: WithdrawalFormState): Withdrawal {
   };
 }
 
-// Compact, tap-to-expand transfer row (Part 5) with a bulk-select checkbox
-// (Part 4). No table, so it reflows to any width without horizontal scroll.
-// Collapsed: select box, Date, Pair, Amount, Type, Money Status. Expanded adds
-// Platform, Destination, Notes and the Edit/Delete actions.
+// Compact transfer row: a select box and the facts that identify the record —
+// Pair, Amount, Date(s), Type, Money Status and any settled badge. It does NOT
+// expand any more. Everything you can DO to a transfer moved into the toolbar,
+// which shows that transfer's actions when it is the only one selected; the
+// fields this row used to reveal (Platform, Destination, Token, Notes) live in
+// Edit. One selection gesture now does what selecting and expanding used to.
 function TransferListRow({
   transfer: t,
   pairLabel,
   deployedLabel,
+  datesLabel,
   selected,
   onToggleSelect,
-  pendingDelete,
-  onDeleteRequest,
-  onDeleteConfirm,
-  onDeleteCancel,
-  onEdit,
-  onMarkDeployed,
-  onUnlinkDeployed,
-  onSendToPlatform,
-  onRemovePlatform,
-  onRevertToAuto,
-  datesLabel,
 }: {
   transfer: Transfer;
   pairLabel: string;
@@ -343,257 +335,200 @@ function TransferListRow({
   datesLabel: string | null;
   selected: boolean;
   onToggleSelect: (id: string) => void;
+}) {
+  // Settled money is visually locked (dimmed). THREE states count as settled
+  // and read identically — "this money has been put to use": a deploy-link
+  // (inside a position), a platform (sent out for yield) and an Expense
+  // status (left the business). None of them is idle any more.
+  const isTransferred = isTransferredToPlatform(t);
+  const isSettled =
+    isDeployedTransfer(t) || isExpensedTransfer(t) || isTransferred;
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-2 px-3 py-2.5 ${
+        selected ? "bg-[var(--accent)]/[0.06]" : ""
+      } ${isSettled ? "opacity-60" : ""}`}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={() => onToggleSelect(t.id)}
+        aria-label="Select transfer"
+        className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-medium text-[var(--foreground)]">
+            {pairLabel}
+          </span>
+          <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--foreground)]">
+            {formatUsd(t.amount)}
+          </span>
+        </span>
+        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--muted)]">
+          <span className="tabular-nums">
+            {datesLabel ?? formatDateDDMMYYYY(t.date)}
+          </span>
+          <TypePill type={t.transferType} />
+          <MoneyStatusPill status={t.moneyStatus} />
+          {deployedLabel && (
+            <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300">
+              Used → {deployedLabel}
+            </span>
+          )}
+          {/* The Transferred badge supersedes the Money Status pill for an
+              idle Undeployed row, which would otherwise still read "Idle"
+              after its money was sent to a platform. */}
+          {isTransferred && (
+            <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-300">
+              Sent → {t.platform}
+            </span>
+          )}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+// The actions that apply to ONE transfer, shown in the toolbar while exactly
+// one row is selected. Every gate here is carried over unchanged from the row
+// that used to host these buttons — including the variants (Change position /
+// Remove deploy link, Change platform / Remove platform) that only appear once
+// the money is already somewhere, and the note explaining why an expensed
+// transfer offers neither. Dropping those variants would have lost real
+// functionality, so they moved with the buttons rather than being simplified.
+function SingleTransferActions({
+  transfer: t,
+  pendingDelete,
+  onEdit,
+  onMarkDeployed,
+  onUnlinkDeployed,
+  onSendToPlatform,
+  onRemovePlatform,
+  onRevertToAuto,
+  onDeleteRequest,
+  onDeleteConfirm,
+  onDeleteCancel,
+}: {
+  transfer: Transfer;
   pendingDelete: string | null;
-  onDeleteRequest: (id: string) => void;
-  onDeleteConfirm: (id: string) => void;
-  onDeleteCancel: () => void;
   onEdit: (t: Transfer) => void;
   onMarkDeployed: (t: Transfer) => void;
   onUnlinkDeployed: (t: Transfer) => void;
   onSendToPlatform: (t: Transfer) => void;
   onRemovePlatform: (t: Transfer) => void;
   onRevertToAuto: (t: Transfer) => void;
+  onDeleteRequest: (id: string) => void;
+  onDeleteConfirm: (id: string) => void;
+  onDeleteCancel: () => void;
 }) {
-  // Every row starts collapsed, in every view. Expansion is only ever driven by
-  // this row's own two controls — its checkbox and its header toggle. Nothing
-  // about the filter state opens rows any more: auto-expanding a whole filtered
-  // list (170b669) turned out to be too much at once in real use.
-  const [open, setOpen] = useState(false);
-  // Settled money is visually locked (dimmed). THREE states count as settled
-  // and read identically — "this money has been put to use": a deploy-link
-  // (inside a position), a platform (sent out for yield) and an Expense
-  // status (left the business). None of them is idle any more. Changing any
-  // of them still requires an explicit click in the expanded row.
   const isExpensed = isExpensedTransfer(t);
-  const isDeployed = isDeployedTransfer(t);
   const isTransferred = isTransferredToPlatform(t);
-  const isSettled = isDeployed || isExpensed || isTransferred;
   // Deploy-linking is available on ANY transfer whose money is still available
   // — Fees, Out of Range Upside and idle Undeployed Tokens alike. It is NOT
   // gated by transferType (measured live 2026-07-30: all three types offer it).
   // The one state that hides it is Expense — that money has left the business,
-  // so there is nothing left to deploy.
+  // so there is nothing left to deploy. Sending to a platform is gated the same.
   const canDeploy =
     t.transferType !== "expense" &&
     (t.moneyStatus === "redeployed" || t.moneyStatus === undefined);
-  // Sending to a platform is gated exactly like deploy-linking: available on
-  // Fees, Out of Range Upside and Undeployed Tokens alike (never by type), and
-  // hidden only once the money has been expensed.
-  const canSendToPlatform = canDeploy;
-  return (
-    <div
-      className={`${selected ? "bg-[var(--accent)]/[0.06]" : ""} ${
-        isSettled ? "opacity-60" : ""
-      }`}
-    >
-      <div className="flex items-start gap-2 px-3 py-2.5">
-        {/* The checkbox carries the expansion with it: checking a row opens it
-            (if you are singling a row out you want to see what it is) and
-            unchecking closes it again, so selecting and de-selecting leaves the
-            list exactly as it found it. The header toggle still works for a
-            look without selecting. Deliberately NOT wired to "select all
-            visible" — that would re-create the bulk expansion just removed. */}
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={() => {
-            setOpen(!selected);
-            onToggleSelect(t.id);
-          }}
-          aria-label="Select transfer"
-          className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
-        />
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 items-start gap-2 text-left"
-        >
-          <span className="mt-0.5 text-[10px] text-[var(--muted)]">
-            {open ? "▴" : "▾"}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center justify-between gap-2">
-              <span className="truncate text-sm font-medium text-[var(--foreground)]">
-                {pairLabel}
-              </span>
-              <span className="shrink-0 text-sm font-medium tabular-nums text-[var(--foreground)]">
-                {formatUsd(t.amount)}
-              </span>
-            </span>
-            <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--muted)]">
-              <span className="tabular-nums">
-                {datesLabel ?? formatDateDDMMYYYY(t.date)}
-              </span>
-              <TypePill type={t.transferType} />
-              <MoneyStatusPill status={t.moneyStatus} />
-              {deployedLabel && (
-                <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300">
-                  Used → {deployedLabel}
-                </span>
-              )}
-              {/* The Transferred badge supersedes the Money Status pill for an
-                  idle Undeployed row, which would otherwise still read "Idle"
-                  after its money was sent to a platform. */}
-              {isTransferred && (
-                <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-300">
-                  Sent → {t.platform}
-                </span>
-              )}
-            </span>
-          </span>
+  const btn =
+    "rounded-md border px-2.5 py-1 text-[12px] font-medium transition-colors";
+  const neutral = `${btn} border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--foreground)] hover:border-[var(--accent)]`;
+  const green = `${btn} border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`;
+  const amber = `${btn} border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20`;
+  const sky = `${btn} border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20`;
+  const rose = `${btn} border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`;
+
+  if (pendingDelete === t.id) {
+    return (
+      <div className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--border)] pt-2">
+        <span className="text-[12px] text-[var(--muted)]">
+          Delete this transfer? You can restore it from Recently Deleted.
+        </span>
+        <button type="button" onClick={() => onDeleteConfirm(t.id)} className={rose}>
+          Yes
+        </button>
+        <button type="button" onClick={onDeleteCancel} className={neutral}>
+          Cancel
         </button>
       </div>
+    );
+  }
 
-      {open && (
-        <div className="border-t border-[var(--border)] bg-[var(--surface-2)]/20 px-3 py-3 pl-9">
-          <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div>
-              <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                Platform
-              </dt>
-              <dd className="text-[13px] text-[var(--foreground)]">
-                {t.platform || "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                Destination
-              </dt>
-              <dd className="text-[13px] text-[var(--foreground)]">
-                {t.destination || "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                Token
-              </dt>
-              <dd className="text-[13px] text-[var(--foreground)]">
-                {t.token || "—"}
-              </dd>
-            </div>
-          </dl>
-          {t.notes && (
-            <p className="mt-2 text-[12px] text-[var(--muted)]">{t.notes}</p>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {pendingDelete === t.id ? (
-              <>
-                <span className="text-xs text-[var(--muted)]">
-                  Delete this transfer? You can restore it from Recently
-                  Deleted.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onDeleteConfirm(t.id)}
-                  className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={onDeleteCancel}
-                  className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                >
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={() => onEdit(t)}
-                  className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                >
-                  Edit
-                </button>
-                {/* Deploy-linking applies to every still-available transfer
-                    (Fees, Out of Range Upside, idle Undeployed Tokens) — never
-                    to money already marked as an Expense. */}
-                {canDeploy &&
-                  (t.deployedToPositionId ? (
-                    <>
-                      {/* A deploy-link is changeable, not just removable —
-                          that is what makes "Unknown position" safe to pick:
-                          you can name the position later without unlinking
-                          and re-linking. */}
-                      <button
-                        type="button"
-                        onClick={() => onMarkDeployed(t)}
-                        className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
-                      >
-                        Change position
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onUnlinkDeployed(t)}
-                        className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                      >
-                        Remove deploy link
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => onMarkDeployed(t)}
-                      className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
-                    >
-                      Mark as deployed
-                    </button>
-                  ))}
-                {/* Send to Platform — the same availability rule as deploying,
-                    so Fees, Out of Range Upside and Undeployed Tokens all get
-                    it. Removing the platform returns the money to Available. */}
-                {canSendToPlatform && (
-                  <button
-                    type="button"
-                    onClick={() => onSendToPlatform(t)}
-                    className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
-                  >
-                    {isTransferred ? "Change platform" : "Send to Platform"}
-                  </button>
-                )}
-                {/* Only automation-created rows have an auto state to go back
-                    to; a hand-logged transfer has none, so it never offers
-                    this. */}
-                {isAutoCreated(t) && (
-                  <button
-                    type="button"
-                    onClick={() => onRevertToAuto(t)}
-                    className="rounded-md border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-300 hover:bg-sky-500/20"
-                  >
-                    Revert to auto-created
-                  </button>
-                )}
-                {canSendToPlatform && isTransferred && (
-                  <button
-                    type="button"
-                    onClick={() => onRemovePlatform(t)}
-                    className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
-                  >
-                    Remove platform
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onDeleteRequest(t.id)}
-                  className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
-                >
-                  Delete
-                </button>
-              </>
-            )}
-          </div>
-          {/* Why "Mark as deployed" is absent here, said out loud — the action
-              vanishing silently is what made this look like a per-type bug. */}
-          {isExpensed && t.transferType !== "expense" && (
-            <p className="mt-2 text-[11px] text-[var(--muted)]">
-              Marked as an Expense, so this money has left the business and
-              can&apos;t be deployed. Undo the Expense — in Edit, or with the
-              bulk action above — to make it available again.
-            </p>
-          )}
-        </div>
+  return (
+    <div className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--border)] pt-2">
+      <span className="text-[11px] uppercase tracking-wider text-[var(--muted)]">
+        This transfer
+      </span>
+      <button type="button" onClick={() => onEdit(t)} className={neutral}>
+        Edit
+      </button>
+      {canDeploy &&
+        (t.deployedToPositionId ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onMarkDeployed(t)}
+              className={green}
+            >
+              Change position
+            </button>
+            <button
+              type="button"
+              onClick={() => onUnlinkDeployed(t)}
+              className={neutral}
+            >
+              Remove deploy link
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onMarkDeployed(t)}
+            className={green}
+          >
+            Mark as deployed
+          </button>
+        ))}
+      {canDeploy && (
+        <button
+          type="button"
+          onClick={() => onSendToPlatform(t)}
+          className={amber}
+        >
+          {isTransferred ? "Change platform" : "Send to Platform"}
+        </button>
+      )}
+      {canDeploy && isTransferred && (
+        <button
+          type="button"
+          onClick={() => onRemovePlatform(t)}
+          className={neutral}
+        >
+          Remove platform
+        </button>
+      )}
+      {/* Only automation-created rows have an auto state to go back to. */}
+      {isAutoCreated(t) && (
+        <button type="button" onClick={() => onRevertToAuto(t)} className={sky}>
+          Revert to auto-created
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => onDeleteRequest(t.id)}
+        className={rose}
+      >
+        Delete
+      </button>
+      {/* Why the deploy/platform actions are absent, said out loud — the action
+          vanishing silently is what made this look like a per-type bug. */}
+      {isExpensed && t.transferType !== "expense" && (
+        <span className="text-[11px] text-[var(--muted)]">
+          Marked as an Expense, so this money has left the business and
+          can&apos;t be deployed. Undo the Expense to make it available again.
+        </span>
       )}
     </div>
   );
@@ -952,21 +887,37 @@ export default function TransfersPage() {
     return map;
   }, [transfers]);
 
-  // "Fully expensed" is judged PER TRANSFER TYPE, not across the position as a
-  // whole (user decision, 2026-08-04). The combined rule hid the answer people
-  // actually want: a position can have every fee it ever paid out spent while
-  // the profit from its close is still working, and vice versa — the two are
-  // separate pots of money and reading them together made both invisible.
-  // A category qualifies when the position has at least one transfer of that
-  // type AND every one of them is Expense-status. A type with no transfers is
-  // never reported (nothing to be "fully" anything), which falls out of the
-  // tally only recording types it has actually seen.
-  // Undeployed Tokens is included for completeness even though it is the rare
-  // one: those rows are hand-logged idle capital and carry an UNSET money
-  // status by design (d20f3e3), so they only reach Expense if the user
-  // deliberately edits them. Leaving it out would have been a silent gap in a
-  // rule the user asked to apply per type; including it costs one line and an
-  // idle row correctly blocks its own category.
+  // Settled-state indicators, judged PER TRANSFER TYPE (Fees / Out-of-Range
+  // Upside / Undeployed Tokens), never across a position as a whole. The
+  // combined rule hid the answer people actually want: a position can have
+  // every fee it paid out spent while the profit from its close is still
+  // working. They are separate pots of money.
+  //
+  // Per category the question is asked in two steps:
+  //   1. Is any money still IDLE (redeployed, no platform, not deployed)? If
+  //      so the category says nothing — there is still something to do with it.
+  //   2. Otherwise everything is settled, and the note describes HOW: one
+  //      uniform state gets its own label ("Fees fully expensed"), a mix gets a
+  //      dollar breakdown ("Fees: $100.00 expensed, $60.00 transferred") so a
+  //      part-spent, part-parked category is neither invisible nor mislabelled
+  //      as one thing.
+  // A type with no transfers is never reported — nothing to be "fully"
+  // anything — which falls out of the tally only recording types it has seen.
+  //
+  // Undeployed Tokens is the rare one: those rows are hand-logged idle capital
+  // carrying an UNSET money status by design (d20f3e3), so they only settle if
+  // the user deliberately acts on them. Included anyway, because leaving a
+  // category out of a per-category rule would be a silent gap.
+  const SETTLED_STATES = useMemo(
+    () =>
+      [
+        { key: "expense", verb: "expensed" },
+        { key: "transferred", verb: "transferred" },
+        { key: "deployed", verb: "deployed" },
+      ] as const,
+    [],
+  );
+
   const EXPENSED_CATEGORIES: { key: TransferType; label: string }[] = useMemo(
     () => [
       { key: "fees", label: "Fees" },
@@ -976,11 +927,24 @@ export default function TransfersPage() {
     [],
   );
 
-  const fullyExpensedByPosition = useMemo(() => {
-    const tally = new Map<
-      string,
-      Map<TransferType, { total: number; expensed: number }>
-    >();
+  type SettledKey = "expense" | "transferred" | "deployed";
+  type Bucket = {
+    idle: number;
+    counts: Record<SettledKey, number>;
+    amounts: Record<SettledKey, number>;
+  };
+
+  // Every transfer lands in exactly one bucket, using the SAME precedence as
+  // the balance cards (isExpensedTransfer > isDeployedTransfer >
+  // isTransferredToPlatform > idle), so an indicator can never disagree with
+  // the money it describes.
+  const settledByPosition = useMemo(() => {
+    const empty = (): Bucket => ({
+      idle: 0,
+      counts: { expense: 0, transferred: 0, deployed: 0 },
+      amounts: { expense: 0, transferred: 0, deployed: 0 },
+    });
+    const tally = new Map<string, Map<TransferType, Bucket>>();
     for (const t of transfers) {
       if (!t.positionId) continue;
       let byType = tally.get(t.positionId);
@@ -988,44 +952,71 @@ export default function TransfersPage() {
         byType = new Map();
         tally.set(t.positionId, byType);
       }
-      const entry = byType.get(t.transferType) ?? { total: 0, expensed: 0 };
-      entry.total += 1;
-      if (isExpensedTransfer(t)) entry.expensed += 1;
-      byType.set(t.transferType, entry);
+      const bucket = byType.get(t.transferType) ?? empty();
+      const key: SettledKey | null = isExpensedTransfer(t)
+        ? "expense"
+        : isDeployedTransfer(t)
+          ? "deployed"
+          : isTransferredToPlatform(t)
+            ? "transferred"
+            : null;
+      if (key === null) bucket.idle += 1;
+      else {
+        bucket.counts[key] += 1;
+        bucket.amounts[key] += t.amount;
+      }
+      byType.set(t.transferType, bucket);
     }
-    const out = new Map<string, string[]>();
-    for (const [id, byType] of tally) {
-      const labels = EXPENSED_CATEGORIES.filter(({ key }) => {
-        const e = byType.get(key);
-        return e !== undefined && e.total > 0 && e.total === e.expensed;
-      }).map((c) => c.label);
-      if (labels.length > 0) out.set(id, labels);
-    }
-    return out;
-  }, [transfers, EXPENSED_CATEGORIES]);
+    return tally;
+  }, [transfers]);
 
-  // "Fees & Upside fully expensed" rather than one note per category: the
-  // qualifying categories share the same predicate and the same warning, so
-  // repeating "fully expensed" per type would trade a compact row for noise.
+  // "Fees & Upside fully expensed" rather than one note per category: uniform
+  // categories in the SAME state share a sentence. Categories in different
+  // states, and mixed ones, get their own note — merging those would produce a
+  // sentence that is wrong for at least one of them.
   const joinCategories = (labels: string[]): string =>
     labels.length <= 1
       ? labels.join("")
       : `${labels.slice(0, -1).join(", ")} & ${labels[labels.length - 1]}`;
 
-  // Both notes can now apply at once and both are shown. They describe
-  // unrelated things: fully-expensed looks at the transfers BELONGING to the
+  // Both kinds of note can apply at once and both are shown. They describe
+  // unrelated things: the settled notes look at the transfers BELONGING to the
   // position, while "already has $X deployed" looks at transfers POINTING AT it
   // as a deploy target — which usually come from other positions entirely.
   const positionNotes = (
     p: Position,
   ): { text: string; tone: "muted" | "danger" }[] => {
     const notes: { text: string; tone: "muted" | "danger" }[] = [];
-    const labels = fullyExpensedByPosition.get(p.id);
-    if (labels) {
-      notes.push({
-        text: `${joinCategories(labels)} fully expensed`,
-        tone: "danger",
-      });
+    const byType = settledByPosition.get(p.id);
+    if (byType) {
+      const uniform = new Map<SettledKey, string[]>();
+      for (const { key, label } of EXPENSED_CATEGORIES) {
+        const b = byType.get(key);
+        if (!b || b.idle > 0) continue;
+        const present = SETTLED_STATES.filter((s) => b.counts[s.key] > 0);
+        if (present.length === 0) continue;
+        if (present.length === 1) {
+          const state = present[0].key;
+          uniform.set(state, [...(uniform.get(state) ?? []), label]);
+          continue;
+        }
+        notes.push({
+          text: `${label}: ${present
+            .map((s) => `${formatUsd(b.amounts[s.key])} ${s.verb}`)
+            .join(", ")}`,
+          // Red whenever real money was spent, muted when it is merely parked
+          // somewhere — the colour keeps meaning "gone", not "settled".
+          tone: b.counts.expense > 0 ? "danger" : "muted",
+        });
+      }
+      for (const { key, verb } of SETTLED_STATES) {
+        const labels = uniform.get(key);
+        if (!labels) continue;
+        notes.push({
+          text: `${joinCategories(labels)} fully ${verb}`,
+          tone: key === "expense" ? "danger" : "muted",
+        });
+      }
     }
     const already = deployedByPosition.get(p.id);
     if (already) {
@@ -1174,6 +1165,14 @@ export default function TransfersPage() {
   );
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+
+  // The one transfer whose individual actions the toolbar offers. Deliberately
+  // derived from the VISIBLE selection: a stale id left selected behind a
+  // filter change must not put another transfer's actions on screen.
+  const singleSelected = useMemo(() => {
+    const chosen = searchedFiltered.filter((t) => selectedIds.has(t.id));
+    return chosen.length === 1 ? chosen[0] : null;
+  }, [searchedFiltered, selectedIds]);
 
   // Only idle rows are eligible for the bulk send — money already deployed,
   // expensed or sitting at a platform is not "currently idle" and is left
@@ -1936,6 +1935,42 @@ export default function TransfersPage() {
                       )}
                     </div>
                   )}
+                  {/* Exactly one row selected → that transfer's own actions,
+                      inline. These are per-record operations (open THIS one,
+                      link THIS one, delete THIS one), so they deliberately do
+                      not appear once a second row is checked — there is no
+                      sensible way to apply them to several transfers at once.
+                      The bulk actions above stay visible either way. */}
+                  {singleSelected && (
+                    <SingleTransferActions
+                      transfer={singleSelected}
+                      pendingDelete={pendingDelete}
+                      onEdit={(tr) =>
+                        setModal(
+                          tr.transferType === "expense"
+                            ? { kind: "editExpense", transfer: tr }
+                            : { kind: "edit", transfer: tr },
+                        )
+                      }
+                      onMarkDeployed={(tr) =>
+                        setModal({ kind: "deploy", transfer: tr })
+                      }
+                      onUnlinkDeployed={handleUnlinkDeployed}
+                      onSendToPlatform={(tr) =>
+                        setModal({ kind: "platform", transfer: tr })
+                      }
+                      onRemovePlatform={handleRemovePlatform}
+                      onRevertToAuto={(tr) =>
+                        setModal({ kind: "revert", transfer: tr })
+                      }
+                      onDeleteRequest={setPendingDelete}
+                      onDeleteConfirm={(id) => {
+                        handleDelete(id);
+                        clearSelection();
+                      }}
+                      onDeleteCancel={() => setPendingDelete(null)}
+                    />
+                  )}
                 </div>
 
                 <div className="divide-y divide-[var(--border)]">
@@ -1967,26 +2002,6 @@ export default function TransfersPage() {
                             deployedLabel={deployedLabelOf(t)}
                             selected={selectedIds.has(t.id)}
                             onToggleSelect={toggleSelect}
-                            pendingDelete={pendingDelete}
-                            onDeleteRequest={setPendingDelete}
-                            onDeleteConfirm={handleDelete}
-                            onDeleteCancel={() => setPendingDelete(null)}
-                            onEdit={(tr) =>
-                              tr.transferType === "expense"
-                                ? setModal({ kind: "editExpense", transfer: tr })
-                                : setModal({ kind: "edit", transfer: tr })
-                            }
-                            onMarkDeployed={(tr) =>
-                              setModal({ kind: "deploy", transfer: tr })
-                            }
-                            onUnlinkDeployed={handleUnlinkDeployed}
-                            onSendToPlatform={(tr) =>
-                              setModal({ kind: "platform", transfer: tr })
-                            }
-                            onRemovePlatform={handleRemovePlatform}
-                            onRevertToAuto={(tr) =>
-                              setModal({ kind: "revert", transfer: tr })
-                            }
                           />
                         ))}
                       </div>

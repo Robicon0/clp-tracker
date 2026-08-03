@@ -2139,6 +2139,57 @@ at the plan gate.
   fees-expensed and a deploy target shows both notes side by side.
   tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Two Transfers changes. (1) Row expansion is GONE — a
+  transfer's actions moved into the toolbar, shown when exactly one row is
+  selected. (2) Settled-state indicators now describe mixed states, not just
+  uniform ones. Display only; no calculation changed.
+  PART 1 — TransferListRow is now a plain <label>: checkbox, Pair, Amount,
+  Date(s), Type pill, Money Status pill, settled badge. No caret, no open state,
+  no detail grid, no per-row buttons (verified: 0 buttons and 0 <dl> grids
+  inside rows). Platform / Destination / Token / Notes are no longer in this
+  view at all — they live in Edit, the user's explicit call. The whole
+  check-expands-the-row mechanism from 36e3595/91950ab is removed.
+  SingleTransferActions renders in the toolbar when exactly ONE visible row is
+  selected: Edit, Mark as deployed (or Change position + Remove deploy link),
+  Send to Platform (or Change platform + Remove platform), Revert to
+  auto-created (only when isAutoCreated), Delete. EVERY gate is carried over
+  unchanged from the row, including the conditional variants and the note
+  explaining why an expensed transfer offers neither deploy nor platform —
+  dropping those would have lost real functionality, so they moved rather than
+  being simplified. At 0 or 2+ selected the toolbar shows only the bulk actions:
+  per-record operations have no sensible multi-target meaning.
+  singleSelected is derived from the VISIBLE selection (searchedFiltered ∩
+  selectedIds), so a stale id left behind a filter change can never put another
+  transfer's actions on screen. Delete from the toolbar clears the selection
+  after confirming, since the row it belonged to is gone.
+  PART 2 — settledByPosition replaces the expense-only tally: per position, per
+  transfer type, every transfer lands in exactly one bucket using the SAME
+  precedence as the balance cards (expense > deployed > transferred > idle), so
+  an indicator can never disagree with the money it describes. Per category:
+  any idle money → say nothing (unchanged); all settled in ONE state → the
+  specific label ("Fees fully expensed" / "fully transferred" / "fully
+  deployed"); a MIX → a dollar breakdown listing only non-zero states,
+  prefixed with the category ("Fees: $100.00 expensed, $60.00 transferred").
+  The prefix is the judgment call — the user's example had none, but without it
+  a position with two mixed categories cannot say which is which.
+  Uniform categories sharing a state still merge into one sentence ("Fees &
+  Upside fully expensed"); categories in DIFFERENT states get their own note,
+  because one sentence would be wrong for at least one of them. Tone: red only
+  when real money was spent (any expense component), muted when it is merely
+  parked — the colour keeps meaning "gone", not "settled".
+  Verified live, 5 positions / 9 transfers, in BOTH pickers: (A) selecting one
+  auto-created transfer showed Edit / Mark as deployed / Change platform /
+  Remove platform / Revert to auto-created / Delete beside Undo Expense and
+  Mark as Expense, with rows containing 0 buttons; (B) a manually-created
+  transfer showed the same minus Revert to auto-created; (C) two selected →
+  only Undo Expense / Mark as Expense / Clear; (D) the CBBTC/USDC mixed case
+  ($100 expensed + $60 on a platform, nothing idle) → "Fees: $100.00 expensed,
+  $60.00 transferred" in red; (E) uniform categories → "Upside fully expensed"
+  (red) and "Fees fully transferred" / "Fees fully deployed" (muted), no
+  redundant one-item breakdown; (F) a category with one idle fee left → nothing,
+  as before; "already has $500.00 deployed" still shows alongside. Zero console
+  errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
