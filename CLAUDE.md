@@ -2276,7 +2276,7 @@ at the plan gate.
   Expenses $290, Deployed $160, Transferred $160, Available $30 — all
   reconciling). tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Four Transfers display refinements; no calculation touched.
+- c9e2249: Four Transfers display refinements; no calculation touched.
   (1) A MIXED settled breakdown is now coloured PER SEGMENT on one line —
   "$423.85 expensed" red beside "$41.02 transferred" green — because one colour
   across the whole line has to lie about half of it. PositionNote became an
