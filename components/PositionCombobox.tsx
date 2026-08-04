@@ -12,6 +12,14 @@ import type { Position } from "../lib/types";
 //   muted   — neutral context, not a state of that position's own money
 export type NoteTone = "muted" | "danger" | "success";
 
+// A note is a run of independently-coloured segments on ONE line, so a mixed
+// breakdown can say "$100.00 expensed" in red and "$60.00 transferred" in green
+// without splitting into two notes. Separators and punctuation live inside the
+// segment text, which keeps the renderer dumb and the caller in full control of
+// spacing (and sidesteps the JSX literal-space trimming that has bitten this
+// file's copy twice).
+export type PositionNote = { text: string; tone: NoteTone }[];
+
 // Searchable, two-level-grouped position picker shared by the Fee Claims filter
 // and the Add Transfer form. Type any of pair/chain/platform to filter live;
 // positions are grouped by (normalized) chain, then split within each chain into
@@ -44,7 +52,7 @@ export function PositionCombobox({
   // Returns every annotation that applies, so unrelated hints (money spent vs
   // money already deployed here) can appear together rather than one hiding the
   // other. Empty array = no annotation.
-  noteFor?: (p: Position) => { text: string; tone: NoteTone }[];
+  noteFor?: (p: Position) => PositionNote[];
   // Optional ordering INSIDE each chain's Open/Closed section. Default is
   // most-recent-first, which every existing caller keeps. Mark as Deployed
   // passes a date-proximity comparator so the nudge added in 9dd89d3 survives
@@ -236,18 +244,23 @@ export function PositionCombobox({
                             } ${section.key === "closed" ? "opacity-75" : ""}`}
                           >
                             {positionOptionLabel(p)}
-                            {notes.map((note) => (
-                              <span
-                                key={note.text}
-                                className={`ml-1 ${
-                                  note.tone === "danger"
-                                    ? "font-medium text-rose-400"
-                                    : note.tone === "success"
-                                      ? "font-medium text-emerald-400"
-                                      : "text-[var(--muted)]"
-                                }`}
-                              >
-                                · {note.text}
+                            {notes.map((note, ni) => (
+                              <span key={ni} className="ml-1">
+                                <span className="text-[var(--muted)]">· </span>
+                                {note.map((seg, si) => (
+                                  <span
+                                    key={si}
+                                    className={
+                                      seg.tone === "danger"
+                                        ? "font-medium text-rose-400"
+                                        : seg.tone === "success"
+                                          ? "font-medium text-emerald-400"
+                                          : "text-[var(--muted)]"
+                                    }
+                                  >
+                                    {seg.text}
+                                  </span>
+                                ))}
                               </span>
                             ))}
                           </button>

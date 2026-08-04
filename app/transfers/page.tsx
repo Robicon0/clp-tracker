@@ -37,6 +37,7 @@ import { OutlierBanner } from "../../components/OutlierBanner";
 import {
   PositionCombobox,
   type NoteTone,
+  type PositionNote,
 } from "../../components/PositionCombobox";
 import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import {
@@ -350,8 +351,13 @@ function TransferListRow({
   // (inside a position), a platform (sent out for yield) and an Expense
   // status (left the business). None of them is idle any more.
   const isTransferred = isTransferredToPlatform(t);
-  const isSettled =
-    isDeployedTransfer(t) || isExpensedTransfer(t) || isTransferred;
+  const isDeployed = isDeployedTransfer(t);
+  const isSettled = isDeployed || isExpensedTransfer(t) || isTransferred;
+  // The money-status pill only earns its place when nothing else on the row
+  // already says where the money went. Transferred and Deployed are SUB-STATES
+  // of Redeployed, so their own badges ("Sent → AAVE", "Used → PAIR") already
+  // carry that information and a second "REDEPLOYED" beside them is noise.
+  // Expense and idle keep the pill — it is the only thing that states them.
   return (
     <label
       className={`flex cursor-pointer items-start gap-2 px-3 py-2.5 ${
@@ -379,7 +385,9 @@ function TransferListRow({
             {datesLabel ?? formatDateDDMMYYYY(t.date)}
           </span>
           <TypePill type={t.transferType} />
-          <MoneyStatusPill status={t.moneyStatus} />
+          {!isTransferred && !isDeployed && (
+            <MoneyStatusPill status={t.moneyStatus} />
+          )}
           {deployedLabel && (
             <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300">
               Used → {deployedLabel}
@@ -987,17 +995,17 @@ export default function TransfersPage() {
   // unrelated things: the settled notes look at the transfers BELONGING to the
   // position, while "already has $X deployed" looks at transfers POINTING AT it
   // as a deploy target — which usually come from other positions entirely.
-  // COLOUR RULE (user, 2026-08-05): red means the money is simply GONE, so it
-  // is reserved for a category whose settled money is 100% Expense. Every other
-  // fully-settled outcome is green — fully transferred, fully deployed, or a
-  // mix that still has some money working somewhere. A mix always contains at
-  // least one non-expense state (a single state would be the uniform case), so
-  // mixes are green by construction, including expense+deployed with nothing
-  // transferred. Muted stays for the unrelated "already has $X deployed" hint.
-  const positionNotes = (
-    p: Position,
-  ): { text: string; tone: NoteTone }[] => {
-    const notes: { text: string; tone: NoteTone }[] = [];
+  // COLOUR RULE: red means the money is simply GONE, green means it is settled
+  // but still working somewhere. A single-state label takes one colour —
+  // "fully expensed" red, "fully transferred"/"fully deployed" green. A MIXED
+  // breakdown is coloured PER SEGMENT on one line, so "$100.00 expensed" reads
+  // red right beside "$60.00 transferred" in green: colouring the whole line
+  // one way would have to lie about half of it. Muted stays for the unrelated
+  // "already has $X deployed" hint.
+  const toneOf = (state: SettledKey): NoteTone =>
+    state === "expense" ? "danger" : "success";
+  const positionNotes = (p: Position): PositionNote[] => {
+    const notes: PositionNote[] = [];
     const byType = settledByPosition.get(p.id);
     if (byType) {
       const uniform = new Map<SettledKey, string[]>();
@@ -1011,29 +1019,34 @@ export default function TransfersPage() {
           uniform.set(state, [...(uniform.get(state) ?? []), label]);
           continue;
         }
-        notes.push({
-          text: `${label}: ${present
-            .map((s) => `${formatUsd(b.amounts[s.key])} ${s.verb}`)
-            .join(", ")}`,
-          // Green: a mix always has money still working somewhere.
-          tone: "success",
+        // Separators carry the muted tone so only the figures themselves are
+        // coloured; spacing lives in the strings, never in JSX.
+        const segments: PositionNote = [{ text: `${label}: `, tone: "muted" }];
+        present.forEach((s, i) => {
+          if (i > 0) segments.push({ text: ", ", tone: "muted" });
+          segments.push({
+            text: `${formatUsd(b.amounts[s.key])} ${s.verb}`,
+            tone: toneOf(s.key),
+          });
         });
+        notes.push(segments);
       }
       for (const { key, verb } of SETTLED_STATES) {
         const labels = uniform.get(key);
         if (!labels) continue;
-        notes.push({
-          text: `${joinCategories(labels)} fully ${verb}`,
-          tone: key === "expense" ? "danger" : "success",
-        });
+        notes.push([
+          { text: `${joinCategories(labels)} fully ${verb}`, tone: toneOf(key) },
+        ]);
       }
     }
     const already = deployedByPosition.get(p.id);
     if (already) {
-      notes.push({
-        text: `already has ${formatUsd(already.amount)} deployed`,
-        tone: "muted",
-      });
+      notes.push([
+        {
+          text: `already has ${formatUsd(already.amount)} deployed`,
+          tone: "muted",
+        },
+      ]);
     }
     return notes;
   };
@@ -1435,10 +1448,20 @@ export default function TransfersPage() {
     // expense and deploy states, so the three subtractions below can never
     // overlap: a transfer that is deployed AND platformed counts once, as
     // Deployed; one later marked Expense counts once, as an Expense.
-    const transferredToPlatform = transfers.reduce(
-      (sum, t) => (isTransferredToPlatform(t) ? sum + t.amount : sum),
-      0,
-    );
+    // Split by transfer type as well as totalled, so the card can say WHERE
+    // the platform money came from. Same predicate for both, so the parts
+    // always add up to the total by construction.
+    const transferredByType: Record<TransferType, number> = {
+      fees: 0,
+      undeployed: 0,
+      outOfRangeUpside: 0,
+      expense: 0,
+    };
+    const transferredToPlatform = transfers.reduce((sum, t) => {
+      if (!isTransferredToPlatform(t)) return sum;
+      transferredByType[t.transferType] += t.amount;
+      return sum + t.amount;
+    }, 0);
     const withdrawn = withdrawalTotal + expensed;
     return {
       lifetimeEarned,
@@ -1447,6 +1470,7 @@ export default function TransfersPage() {
       withdrawn,
       deployed,
       transferredToPlatform,
+      transferredByType,
       available:
         lifetimeEarned - withdrawn - deployed - transferredToPlatform,
     };
@@ -1454,7 +1478,7 @@ export default function TransfersPage() {
 
   // "Expenses & Withdrawals" is the ledger of money out of the business, so it
   // lists BOTH logged withdrawals and any transfer marked as an Expense — the
-  // two things the Expenses / Withdrawn card now adds together. Transfer-backed
+  // two things the Expenses card now adds together. Transfer-backed
   // rows are shown for visibility and edited/deleted from the transfer list
   // above (single source of truth for a transfer), so they carry no Delete here.
   const expenseLedger = useMemo(() => {
@@ -1624,9 +1648,9 @@ export default function TransfersPage() {
               hint="Everything ever moved to a destination — never decreases."
             />
             <SummaryStat
-              label="Expenses / Withdrawn (USD)"
+              label="Expenses (USD)"
               value={formatUsd(balance.withdrawn)}
-              hint="Money out of the business: logged expenses/withdrawals plus any transfer marked as an Expense. Reduces Available Balance."
+              hint="Money out of the business: logged expenses plus any transfer marked as an Expense. Reduces Available Balance."
             />
             <SummaryStat
               label="Deployed into Positions (USD)"
@@ -1637,11 +1661,24 @@ export default function TransfersPage() {
               label="Transferred to Platforms (USD)"
               value={formatUsd(balance.transferredToPlatform)}
               hint="Money sent somewhere for yield (a transfer with a Platform assigned, e.g. AAVE) — working elsewhere, so no longer idle."
+              // Where that money came from. Built by the same predicate as the
+              // total above, so the parts always add up to it.
+              parts={[
+                { label: "Fees", value: balance.transferredByType.fees },
+                {
+                  label: "Upside",
+                  value: balance.transferredByType.outOfRangeUpside,
+                },
+                {
+                  label: "Undeployed",
+                  value: balance.transferredByType.undeployed,
+                },
+              ]}
             />
             <SummaryStat
               label="Available Balance (USD)"
               value={formatUsd(balance.available)}
-              hint="Lifetime Earned − Expenses/Withdrawn − Deployed − Transferred = what's still idle."
+              hint="Lifetime Earned − Expenses − Deployed − Transferred = what's still idle."
             />
           </div>
 
@@ -2256,9 +2293,14 @@ interface SummaryStatProps {
   label: string;
   value: string;
   hint?: string;
+  // Optional "where this total came from" split, rendered directly under the
+  // figure. Zero-value parts are dropped so a card never lists an empty
+  // category; if every part is zero the whole line disappears.
+  parts?: { label: string; value: number }[];
 }
 
-function SummaryStat({ label, value, hint }: SummaryStatProps) {
+function SummaryStat({ label, value, hint, parts }: SummaryStatProps) {
+  const shown = (parts ?? []).filter((p) => p.value !== 0);
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
@@ -2267,6 +2309,16 @@ function SummaryStat({ label, value, hint }: SummaryStatProps) {
       <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
         {value}
       </div>
+      {shown.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
+          {shown.map((p, i) => (
+            <span key={p.label}>
+              {i > 0 && <span className="mr-2 opacity-50">·</span>}
+              {p.label}: {formatUsd(p.value)}
+            </span>
+          ))}
+        </div>
+      )}
       {hint && <div className="mt-1 text-xs text-[var(--muted)]">{hint}</div>}
     </div>
   );
@@ -2768,7 +2820,7 @@ function DeployLinkModal({
   // shared with the page's position filter so the two can never word it
   // differently. Informational only — it never blocks picking a position,
   // since topping one up is legitimate.
-  noteFor: (p: Position) => { text: string; tone: NoteTone }[];
+  noteFor: (p: Position) => PositionNote[];
   onCancel: () => void;
   onSubmit: (positionId: string) => void;
 }) {

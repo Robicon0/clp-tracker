@@ -2276,6 +2276,36 @@ at the plan gate.
   Expenses $290, Deployed $160, Transferred $160, Available $30 — all
   reconciling). tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Four Transfers display refinements; no calculation touched.
+  (1) A MIXED settled breakdown is now coloured PER SEGMENT on one line —
+  "$423.85 expensed" red beside "$41.02 transferred" green — because one colour
+  across the whole line has to lie about half of it. PositionNote became an
+  ARRAY of {text, tone} segments (exported from PositionCombobox); a
+  single-state label is just a one-segment note, so "fully expensed" (red) and
+  "fully transferred"/"fully deployed" (green) are unchanged. Separators and
+  spacing live INSIDE the segment strings, which keeps the renderer dumb and
+  dodges the JSX literal-space trimming that has bitten this file's copy twice.
+  (2) "Expenses / Withdrawn" card → "Expenses" (hint trimmed to match); the
+  figure and everything feeding it are untouched.
+  (3) "Transferred to Platforms" gained a per-type split under the figure —
+  Fees / Upside / Undeployed. Built inside the SAME reduce that computes the
+  total, using the same predicate, so the parts add up to it by construction
+  (verified $291.02 + $60.00 + $25.00 = $376.02). SummaryStat gained an optional
+  `parts` prop; zero-value parts are dropped, and an all-zero split renders
+  nothing.
+  (4) The REDEPLOYED pill is now hidden on rows that already carry a "Sent →
+  PLATFORM" or "Used → PAIR" badge. Transferred and Deployed are SUB-STATES of
+  Redeployed, so their badges already say it and the second pill was noise.
+  Expense and idle rows keep the pill — it is the only thing that states them.
+  NOTE this also drops the pill from Deployed rows, following the rule as
+  written ("only when genuinely idle … not deployed"); the "Used → PAIR" badge
+  itself is unaffected.
+  Verified live: mixed line split red/green in BOTH pickers (screenshot);
+  "EXPENSES (USD) $523.85" with the old label gone; transferred split summing
+  exactly to the card total; a Sent→ row showing no REDEPLOYED, an idle row
+  still showing it, a Deployed row showing only "Used → TGT/USDC", and Expense
+  rows unchanged. Balances identical throughout. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
