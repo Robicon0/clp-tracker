@@ -2306,6 +2306,38 @@ at the plan gate.
   still showing it, a Deployed row showing only "Used → TGT/USDC", and Expense
   rows unchanged. Balances identical throughout. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Close modal — Deposited shown as its own box, and an
+  explicit Gain/Loss word beside Scalp. Display only; no calculation touched
+  (deposited, tokensScalp and scalp are computed exactly as before, and the diff
+  is one file, app/positions/page.tsx).
+  DEPOSITED BOX: getEffectiveDeposited was already in scope but only appeared as
+  a parenthetical inside hint text. It now gets a full-width dashed box — the
+  same styling the other DERIVED boxes use, since it is computed, not typed —
+  placed directly above Final Current Balance / Scalp in BOTH modes, so the
+  number Scalp is measured against reads before the number itself. The old hint
+  under Scalp keeps its "(… Deposited $X)" so the two can be compared at a
+  glance; verified they print the identical string.
+  GAIN/LOSS WORD: new pnlLabel(value) sits immediately beside pnlColor with the
+  SAME sign checks in the same order, so the colour and the word cannot
+  disagree — a green "Loss" would be worse than no word. Exactly zero gets no
+  word rather than being called a gain. Tokens mode appends "· Gain"/"· Loss"
+  inside the existing live Scalp box; manual mode gains a live read-out under
+  the Scalp input reflecting whatever the field currently holds, auto-filled or
+  hand-edited, which is the same verdict the tokens mode already had.
+  Verified live on a profit position (deposited $1,000) and a loss position
+  (deposited $2,000): tokens mode → $250.00 · Gain green, -$300.00 · Loss red,
+  $0.00 neutral with no word; manual mode → the same three for typed Scalp
+  values of 250 / -300 / 0, plus empty → nothing. Deposited box read $1,000.00
+  and matched the hint text exactly, and $2,000.00 on the second position, so it
+  is per-position and not the fallback. Label order in both modes is DEPOSITED →
+  FINAL CURRENT BALANCE → SCALP. tsc/lint/build clean.
+  NOTED, NOT FIXED (pre-existing, out of scope): the manual-mode Scalp
+  auto-fill from c372b30 did not populate when Final Current Balance was typed
+  in this environment. Confirmed pre-existing by stashing the diff and
+  reproducing on the unmodified build — identical behaviour before and after, so
+  this change neither caused nor masks it. The new read-out reflects whatever
+  the field holds either way. Worth its own investigation.
+
 ## Known Issues
 
 - None currently tracked.

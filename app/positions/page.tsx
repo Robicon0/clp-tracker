@@ -152,6 +152,16 @@ function pnlColor(value: number): string {
   return "text-[var(--foreground)]";
 }
 
+// The word that goes with pnlColor. Deliberately the same sign checks in the
+// same order, right beside it, so the colour and the word can never disagree —
+// a green "Loss" would be worse than no word at all. Exactly zero is neither,
+// and gets no word rather than being called a gain.
+function pnlLabel(value: number): string {
+  if (value > 0) return "Gain";
+  if (value < 0) return "Loss";
+  return "";
+}
+
 function num(value: string): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -4142,6 +4152,21 @@ function ClosePositionModal({
                     onSwitchToManual={() => setCloseMode("manual")}
                   />
                 </div>
+                {/* Deposited is the number Scalp is measured against, so it
+                    reads first rather than only as a parenthetical in the hint
+                    below. Same dashed styling as the other computed boxes —
+                    it is derived (getEffectiveDeposited), not typed. */}
+                <div className="space-y-1.5 sm:col-span-2">
+                  <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                    Deposited (USD)
+                  </span>
+                  <div className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]">
+                    {formatUsd(deposited)}
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    What went in — Scalp is measured against this.
+                  </p>
+                </div>
                 <div className="space-y-1.5">
                   <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
                     Final Current Balance (USD)
@@ -4164,7 +4189,11 @@ function ClosePositionModal({
                     className={`rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums ${pnlColor(tokensScalp)}`}
                     aria-live="polite"
                   >
-                    {formatUsd(tokensScalp)}
+                    {/* Word and colour both come from the sign of the same
+                        value, so they cannot drift apart. */}
+                    {`${formatUsd(tokensScalp)}${
+                      pnlLabel(tokensScalp) ? ` · ${pnlLabel(tokensScalp)}` : ""
+                    }`}
                   </div>
                   <p className="text-[11px] text-[var(--muted)]">
                     Auto: Final Balance − Deposited ({formatUsd(deposited)})
@@ -4173,10 +4202,24 @@ function ClosePositionModal({
               </>
             ) : (
               <>
+                {/* Same box as the tokens mode gets, for the same reason: the
+                    figure Scalp is measured against should be visible, not
+                    buried in hint prose. */}
+                <div className="space-y-1.5 sm:col-span-2">
+                  <span className="block text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                    Deposited (USD)
+                  </span>
+                  <div className="rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-sm tabular-nums text-[var(--foreground)]">
+                    {formatUsd(deposited)}
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    What went in — Scalp is measured against this.
+                  </p>
+                </div>
                 <Field
                   label="Final Current Balance (USD)"
                   htmlFor="c_balance"
-                  hint={`What the position was worth when you closed it. Deposited was ${formatUsd(deposited)}.`}
+                  hint="What the position was worth when you closed it."
                 >
                   <input
                     id="c_balance"
@@ -4202,6 +4245,20 @@ function ClosePositionModal({
                     value={scalp}
                     onChange={(e) => setScalp(e.target.value)}
                   />
+                  {/* Live read-out of whatever the field currently holds —
+                      auto-filled or hand-edited — so the manual mode gets the
+                      same at-a-glance verdict the tokens mode already had.
+                      Reads the input, changes nothing. */}
+                  {pnlLabel(num(scalp)) !== "" && (
+                    <p
+                      className={`mt-1.5 text-[12px] font-medium tabular-nums ${pnlColor(
+                        num(scalp),
+                      )}`}
+                      aria-live="polite"
+                    >
+                      {`${formatUsd(num(scalp))} · ${pnlLabel(num(scalp))}`}
+                    </p>
+                  )}
                 </Field>
               </>
             )}
