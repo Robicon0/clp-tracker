@@ -2306,7 +2306,7 @@ at the plan gate.
   still showing it, a Deployed row showing only "Used → TGT/USDC", and Expense
   rows unchanged. Balances identical throughout. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Close modal — Deposited shown as its own box, and an
+- e9b8a1a: Close modal — Deposited shown as its own box, and an
   explicit Gain/Loss word beside Scalp. Display only; no calculation touched
   (deposited, tokensScalp and scalp are computed exactly as before, and the diff
   is one file, app/positions/page.tsx).
