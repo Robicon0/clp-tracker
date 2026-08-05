@@ -11,6 +11,7 @@
 import type { FeeClaim, OutlierDismissal, Position, Transfer } from "./types";
 import { normalizeChain } from "./nameNormalization";
 import { isUnvaluedConvertedClaim } from "./calculations";
+import { isIdleTransfer } from "./transferState";
 
 // ---------------------------------------------------------------------------
 // Shared pair parsing
@@ -556,6 +557,50 @@ export function findIncompleteClaims(
     .sort((a, b) => (b.claim.date ?? "").localeCompare(a.claim.date ?? ""));
 }
 
+
+// ---------------------------------------------------------------------------
+// Idle out-of-range upside
+// ---------------------------------------------------------------------------
+
+// Profit taken out of a closed position that has then sat untouched. Uses the
+// SAME idle test Available Balance is built from (lib/transferState) rather
+// than a second definition, so a row flagged here is exactly a row still
+// counted as available — the two can never disagree (Invariant #6).
+export const IDLE_UPSIDE_DAYS = 14;
+
+export interface IdleUpsideRow {
+  transfer: Transfer;
+  position: Position | null;
+  daysIdle: number;
+}
+
+export function findIdleUpsideTransfers(
+  transfers: Transfer[],
+  positions: Position[],
+  now: Date = new Date(),
+): IdleUpsideRow[] {
+  const byId = new Map(positions.map((p) => [p.id, p]));
+  const rows: IdleUpsideRow[] = [];
+  for (const t of transfers) {
+    if (t.transferType !== "outOfRangeUpside") continue;
+    if (!isIdleTransfer(t)) continue;
+    const at = new Date(t.date).getTime();
+    // An unparseable date says nothing either way, so it is skipped rather
+    // than reported as infinitely idle.
+    if (!Number.isFinite(at)) continue;
+    const daysIdle = (now.getTime() - at) / 86_400_000;
+    // Give it time before nagging — money that landed this week is not a
+    // problem, it is just recent.
+    if (daysIdle <= IDLE_UPSIDE_DAYS) continue;
+    rows.push({
+      transfer: t,
+      position: byId.get(t.positionId) ?? null,
+      daysIdle,
+    });
+  }
+  return rows.sort((a, b) => b.daysIdle - a.daysIdle);
+}
+
 // ---------------------------------------------------------------------------
 // Consolidated report (Part 4)
 // ---------------------------------------------------------------------------
@@ -569,6 +614,7 @@ export interface DataHealthCounts {
   transferOutliers: number;
   stalePositions: number;
   incompleteClaims: number;
+  idleUpside: number;
   total: number;
 }
 
@@ -581,6 +627,7 @@ export interface DataHealthReport {
   transferOutliers: OutlierRow[];
   stalePositions: StalePositionRow[];
   incompleteClaims: IncompleteClaimRow[];
+  idleUpside: IdleUpsideRow[];
   counts: DataHealthCounts;
 }
 
@@ -602,6 +649,7 @@ export function computeDataHealth(
   );
   const stalePositions = findStalePositions(positions, claims);
   const incompleteClaims = findIncompleteClaims(claims, positions);
+  const idleUpside = findIdleUpsideTransfers(transfers, positions);
   const counts: DataHealthCounts = {
     positionSymbol: positionSymbol.length,
     claimSymbol: claimSymbol.length,
@@ -611,6 +659,7 @@ export function computeDataHealth(
     transferOutliers: transferOutliers.length,
     stalePositions: stalePositions.length,
     incompleteClaims: incompleteClaims.length,
+    idleUpside: idleUpside.length,
     total:
       positionSymbol.length +
       claimSymbol.length +
@@ -619,7 +668,8 @@ export function computeDataHealth(
       claimOutliers.length +
       transferOutliers.length +
       stalePositions.length +
-      incompleteClaims.length,
+      incompleteClaims.length +
+      idleUpside.length,
   };
   return {
     positionSymbol,
@@ -630,6 +680,7 @@ export function computeDataHealth(
     transferOutliers,
     stalePositions,
     incompleteClaims,
+    idleUpside,
     counts,
   };
 }

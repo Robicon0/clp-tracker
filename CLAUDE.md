@@ -2497,6 +2497,50 @@ at the plan gate.
   /claims#incomplete-claims deep link resolved to the existing banner reading
   "1 claim needs a USD value". tsc/lint/build clean.
 
+- Data Health: idle Out-of-Range-Upside check + shared transfer-state module
+  (2026-08-05). Flags upside profit that was taken out of a closed position and
+  then never moved — not deployed, not sent to a platform, not spent — for more
+  than IDLE_UPSIDE_DAYS (14). The delay is deliberate: money sitting for a few
+  days is normal, so the check waits before nagging.
+  NO SECOND DEFINITION OF "IDLE" (the point of the task): the four money-state
+  predicates lived LOCAL to app/transfers/page.tsx, and Data Health cannot import
+  a client page. Rather than restate the test, isExpensedTransfer /
+  isDeployedTransfer / isTransferredToPlatform moved VERBATIM into the new
+  lib/transferState.ts (plus isIdleTransfer, which states the fourth state once
+  so callers don't spell out "!a && !b && !c" and drift). The transfers page now
+  imports them, so Available Balance and this check read the same classification
+  by construction — a second copy would eventually disagree with the balance
+  itself (Invariant #6). Precedence Expense > Deployed > Transferred > Idle is
+  preserved exactly, including the documented reason it is written out: each
+  predicate re-tests the states above it, which is what makes double-subtraction
+  from Available Balance impossible.
+  SHIPPED: findIdleUpsideTransfers(transfers, positions, now?) in lib/dataHealth
+  .ts (transferType === "outOfRangeUpside" AND isIdleTransfer AND daysIdle >
+  IDLE_UPSIDE_DAYS; unparseable dates skipped per Invariant #8; sorted
+  longest-idle first, each row carrying the linked position or null). Wired into
+  DataHealthCounts / DataHealthReport / computeDataHealth's total exactly like
+  the other checks, a new amber "Upside profit sitting idle" category on
+  components/DataHealthCard.tsx → /transfers#idle-upside, and an amber
+  IdleUpsideBanner on the Transfers page. Amber not red on purpose: leaving
+  profit idle is a legitimate choice, the banner only makes it a deliberate one.
+  "Select" clears the type/position/search filters and selects the row so the
+  existing toolbar (Mark as deployed / Send to Platform) is guaranteed to reach
+  it — no new UI pattern, no new action.
+  NO CALCULATION CHANGED: the module move is byte-identical code, and the check
+  only READS the classification. Available Balance, transferredByType, Overall
+  P&L and Deployed are untouched.
+  REMINDER: EMPTY_DATA_HEALTH in app/page.tsx is a hand-written literal — every
+  new check must add BOTH its rows field and its count there or tsc fails (it did
+  again this time).
+  Verified live on localhost:3001 with a seeded 6-transfer set covering every
+  branch: idle upside 20 days old FLAGGED ($200.00, "20 days since 16/07/2026");
+  identical upside transfers that were sent to a platform, deployed, or marked
+  Expense all correctly NOT flagged; an idle upside only 5 days old NOT flagged;
+  an idle 20-day-old FEES transfer NOT flagged (wrong type). Banner showed
+  exactly 1 row; Dashboard read "1 issue to review" with the category deep-linking
+  to /transfers#idle-upside. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

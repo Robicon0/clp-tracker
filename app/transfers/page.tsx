@@ -29,8 +29,11 @@ import {
   correctTransferSymbol,
   dismissalFor,
   findTransferAmountOutliers,
+  findIdleUpsideTransfers,
   findTransferSymbolMismatches,
   type OutlierRow,
+  type IdleUpsideRow,
+  IDLE_UPSIDE_DAYS,
   type TransferSymbolMismatchRow,
 } from "../../lib/dataHealth";
 import { OutlierBanner } from "../../components/OutlierBanner";
@@ -52,6 +55,11 @@ import {
   type AutoRevertPlan,
 } from "../../lib/transferAutomation";
 import { useHydrated } from "../../lib/useHydrated";
+import {
+  isDeployedTransfer,
+  isExpensedTransfer,
+  isTransferredToPlatform,
+} from "../../lib/transferState";
 import type {
   AppSettings,
   FeeClaim,
@@ -217,27 +225,10 @@ function buildExpense(id: string, form: ExpenseFormState): Transfer {
   };
 }
 
-// ── Where a transfer's money currently sits ─────────────────────────────
-// Every transfer is in exactly ONE of four states, and the four predicates
-// below are mutually exclusive BY CONSTRUCTION (each one re-tests the states
-// above it in the precedence order). That is what makes it impossible for a
-// single amount to be subtracted from Available Balance twice — the reason
-// the order is written out rather than left implicit:
+// The four money-state predicates (expensed / deployed / transferred / idle)
+// now live in lib/transferState.ts — imported above — so Data Health can ask
+// the same question without importing this client page or re-deriving it.
 //
-//   1. Expense     — moneyStatus "expense": the money has left the business.
-//   2. Deployed    — deployedToPositionId set: it now lives inside a position.
-//   3. Transferred — a non-blank Platform: sent somewhere for yield (AAVE …).
-//   4. Idle        — none of the above: still sitting in Available Balance.
-//
-// "Transferred" is DERIVED from platform rather than stored as a new flag:
-// the Platform field already means "this money is sitting at X", the Edit
-// form has always written it, and a derived state needs no schema change and
-// no migration — an existing record with a platform is Transferred the moment
-// this ships (the deliberate balance change, see CLAUDE.md).
-//
-// Note the states are keyed off platform/deploy-link, NOT off moneyStatus
-// "redeployed" specifically: an idle Undeployed Tokens transfer carries an
-// UNSET moneyStatus (d20f3e3) and must be able to reach Transferred too.
 // Sentinel deployedToPositionId for "I know this money went into a position,
 // I just can't remember which". It deliberately reuses the SAME field rather
 // than adding a flag, so every presence-based reader — the Deployed bucket in
@@ -246,10 +237,6 @@ function buildExpense(id: string, form: ExpenseFormState): Transfer {
 // about it. The double-underscore form cannot collide with a stored position id
 // (those are crypto.randomUUID values).
 const UNKNOWN_POSITION_ID = "__unknown_position__";
-
-function isExpensedTransfer(t: Transfer): boolean {
-  return t.moneyStatus === "expense";
-}
 
 // Whether a transfer's money can still be sent somewhere — deploy-linked or
 // pushed to a platform. NOT gated by transferType: Fees, Out of Range Upside
@@ -261,16 +248,6 @@ function canPlaceTransfer(t: Transfer): boolean {
   return (
     t.transferType !== "expense" &&
     (t.moneyStatus === "redeployed" || t.moneyStatus === undefined)
-  );
-}
-function isDeployedTransfer(t: Transfer): boolean {
-  return !isExpensedTransfer(t) && t.deployedToPositionId !== undefined;
-}
-function isTransferredToPlatform(t: Transfer): boolean {
-  return (
-    !isExpensedTransfer(t) &&
-    !isDeployedTransfer(t) &&
-    (t.platform ?? "").trim() !== ""
   );
 }
 
@@ -734,6 +711,67 @@ function RecentlyDeletedSection({
   );
 }
 
+// Out-of-Range-Upside money that has sat idle past IDLE_UPSIDE_DAYS. Amber, not
+// red: leaving profit idle is a choice, not an error — the banner just makes
+// sure the choice is a deliberate one. Selecting a row hands it to the existing
+// toolbar (clearing the filters first, so the row is guaranteed visible), which
+// is where Mark as deployed / Send to Platform already live. Reports only.
+function IdleUpsideBanner({
+  rows,
+  pairLabelFor,
+  onSelect,
+}: {
+  rows: IdleUpsideRow[];
+  pairLabelFor: (t: Transfer) => string;
+  onSelect: (t: Transfer) => void;
+}) {
+  const total = rows.reduce((sum, r) => sum + r.transfer.amount, 0);
+  return (
+    <div
+      id="idle-upside"
+      className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-amber-300">
+        {rows.length}{" "}
+        {rows.length === 1 ? "upside transfer has" : "upside transfers have"}{" "}
+        been sitting idle for over {IDLE_UPSIDE_DAYS} days ({formatUsd(total)})
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        Profit taken out of a closed position that hasn&apos;t been deployed,
+        sent to a platform, or spent — it is still counted in Available Balance.
+        Leaving it idle is fine; this is only here so it doesn&apos;t get
+        forgotten.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.transfer.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {pairLabelFor(r.transfer)}
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              {formatUsd(r.transfer.amount)} ·{" "}
+              <span className="font-medium text-amber-300">
+                {Math.floor(r.daysIdle)} days
+              </span>{" "}
+              since {formatDateDDMMYYYY(r.transfer.date)}
+            </span>
+            <button
+              type="button"
+              onClick={() => onSelect(r.transfer)}
+              className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+            >
+              Select
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // A transfer's token must belong to its linked position's pair (same substring
 // test as the Position/Claim detectors). Offers a confirmed one-click fix that
 // rewrites to the pair-derived symbol, plus per-row Edit. Detection-only until
@@ -1098,6 +1136,13 @@ export default function TransfersPage() {
         ? findTransferAmountOutliers(transfers, positions, dismissals)
         : [],
     [hydrated, transfers, positions, dismissals],
+  );
+
+  // Upside profit that has sat untouched. Reads the same idle test the balance
+  // cards use; changes nothing.
+  const idleUpside = useMemo(
+    () => (hydrated ? findIdleUpsideTransfers(transfers, positions) : []),
+    [hydrated, transfers, positions],
   );
 
   const sortedFiltered = useMemo(() => {
@@ -1661,6 +1706,18 @@ export default function TransfersPage() {
             }
             onConfirm={handleConfirmOutlier}
           />
+          {idleUpside.length > 0 && (
+            <IdleUpsideBanner
+              rows={idleUpside}
+              pairLabelFor={(t) => positionPairById.get(t.positionId) ?? "—"}
+              onSelect={(t) => {
+                setSelectedIds(new Set([t.id]));
+                setPositionFilter("");
+                setTypeFilter("all");
+                setSearch("");
+              }}
+            />
+          )}
 
           <div className="flex justify-end gap-2">
             {/* Expense and Withdrawal were the same concept to the user, so
