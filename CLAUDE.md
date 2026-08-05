@@ -2462,7 +2462,7 @@ at the plan gate.
   pair" and singular "1 transfer has a token that doesn't match its position's
   pair", both read straight from the DOM. tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Two new Data Health checks — stale positions and incomplete
+- 8ad6313: Two new Data Health checks — stale positions and incomplete
   claims — added to lib/dataHealth.ts in the same shape as the existing find*
   functions and folded into DataHealthCounts / DataHealthReport /
   computeDataHealth. Detection only; nothing they reference was recalculated.
