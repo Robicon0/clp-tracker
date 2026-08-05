@@ -2497,7 +2497,7 @@ at the plan gate.
   /claims#incomplete-claims deep link resolved to the existing banner reading
   "1 claim needs a USD value". tsc/lint/build clean.
 
-- Data Health: idle Out-of-Range-Upside check + shared transfer-state module
+- ef42a08: Data Health: idle Out-of-Range-Upside check + shared transfer-state module
   (2026-08-05). Flags upside profit that was taken out of a closed position and
   then never moved — not deployed, not sent to a platform, not spent — for more
   than IDLE_UPSIDE_DAYS (14). The delay is deliberate: money sitting for a few
@@ -2541,7 +2541,7 @@ at the plan gate.
   to /transfers#idle-upside. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
-- Stale-position dismissals + "OOR Upside" label/wrap fix (2026-08-05). Task A
+- 65138a5: Stale-position dismissals + "OOR Upside" label/wrap fix (2026-08-05). Task A
   adds a "Mark reviewed" escape hatch to the stale-position check; Task B is
   cosmetic. NO calculation changed in either — a dismissal only hides a banner
   row, and no total anywhere reads the dismissal store.
