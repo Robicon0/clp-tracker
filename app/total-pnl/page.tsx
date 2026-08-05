@@ -523,6 +523,25 @@ function PortfolioSummarySection({
   initialCapital,
   onSaveInitialCapital,
 }: PortfolioSummarySectionProps) {
+  // Prices are fetched ONCE here and handed to both cards that need them.
+  // They used to live inside FeesEarnedCard; Overall P&L now wants the same
+  // figure, and two useTokenPrices hooks on one page would mean two fetches of
+  // the same token set. Lifting keeps it to one request AND makes it
+  // structurally impossible for the two cards to show different numbers.
+  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
+  useHydrated(() => setManualPrices(getBusinessPnLSettings().prices));
+  const { fetchedPrices } = useTokenPrices(claims);
+  const prices = useMemo(
+    () => mergePrices(fetchedPrices, manualPrices),
+    [fetchedPrices, manualPrices],
+  );
+  // The "still held at today's value" figure, shared by Fees Earned and
+  // Overall P&L.
+  const heldFeesValue = useMemo(
+    () => calcUnconvertedHoldings(claims, prices).totalCurrentValue,
+    [claims, prices],
+  );
+
   return (
     <div className="space-y-3">
       <SectionHeading title="Portfolio Summary" />
@@ -553,7 +572,7 @@ function PortfolioSummarySection({
         <FeesEarnedCard
           totalFees={totals.totalFees}
           convertedFees={overall.convertedFees}
-          claims={claims}
+          heldFeesValue={heldFeesValue}
         />
         <BigStat
           label="Total Short P&L"
@@ -607,6 +626,7 @@ function PortfolioSummarySection({
         />
         <OverallPnLCard
           result={overall}
+          heldFeesValue={heldFeesValue}
           breakdown={
             <Breakdown
               rows={[
@@ -666,24 +686,14 @@ function BigStat({ label, value, valueClass, hint, breakdown }: BigStatProps) {
 function FeesEarnedCard({
   totalFees,
   convertedFees,
-  claims,
+  heldFeesValue,
 }: {
   totalFees: number;
   convertedFees: number;
-  claims: FeeClaim[];
+  // Computed once by the parent section and shared with Overall P&L, so both
+  // cards quote the identical figure by construction.
+  heldFeesValue: number;
 }) {
-  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
-  useHydrated(() => setManualPrices(getBusinessPnLSettings().prices));
-  const { fetchedPrices } = useTokenPrices(claims);
-  const prices = useMemo(
-    () => mergePrices(fetchedPrices, manualPrices),
-    [fetchedPrices, manualPrices],
-  );
-  const holdings = useMemo(
-    () => calcUnconvertedHoldings(claims, prices),
-    [claims, prices],
-  );
-
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
@@ -698,7 +708,7 @@ function FeesEarnedCard({
         Your whole LP business, active and closed positions combined.
       </p>
       <p className="mt-1 text-[11px] tabular-nums text-[var(--muted)]">
-        {formatUsd(convertedFees)} converted · {formatUsd(holdings.totalCurrentValue)}{" "}
+        {formatUsd(convertedFees)} converted · {formatUsd(heldFeesValue)}{" "}
         still held at today&apos;s value (
         <Link href="/business-pnl" className="text-[var(--accent)] hover:underline">
           see Business P&amp;L

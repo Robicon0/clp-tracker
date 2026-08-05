@@ -103,12 +103,21 @@ export function InitialCapitalCard({
 export function OverallPnLCard({
   result,
   breakdown,
+  heldFeesValue,
 }: {
   result: OverallPnL;
   // Optional live formula breakdown, rendered only where it's passed. The
   // Dashboard omits it (keeps the compact card); the Total P&L page supplies
   // one so the number is auditable there.
   breakdown?: ReactNode;
+  // What the excluded still-held tokens are worth today. The hint always said
+  // they were excluded; naming the figure says HOW MUCH is excluded, which is
+  // the part that actually tells you whether the exclusion matters.
+  // MUST be calcUnconvertedHoldings(claims, mergedPrices).totalCurrentValue —
+  // the same helper and the same fetched+manual price merge Total P&L's
+  // Fees Earned card shows as "still held", so the two can never disagree.
+  // Undefined (or zero, when there is nothing held) renders the old sentence.
+  heldFeesValue?: number;
 }) {
   return (
     <div className={cardClass}>
@@ -120,7 +129,11 @@ export function OverallPnLCard({
         Current active positions + realized converted profit − Initial Capital.
         Pure LP business performance — personal spending / withdrawals are
         tracked separately as Available Balance on the Transfers page. Excludes
-        tokens you&apos;re still holding (see Business P&amp;L for that).
+        tokens you&apos;re still holding
+        {heldFeesValue !== undefined && heldFeesValue !== 0
+          ? ` — ${formatUsd(heldFeesValue)} at today's value`
+          : ""}{" "}
+        (see Business P&amp;L for that).
       </p>
       {breakdown}
       {result.unvaluedConvertedClaims > 0 && (

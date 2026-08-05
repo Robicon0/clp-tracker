@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   dismissMixedStableNotice,
+  getBusinessPnLSettings,
   getClaims,
   getOutlierDismissals,
   getPositions,
@@ -21,11 +22,13 @@ import { DataHealthCard } from "../components/DataHealthCard";
 import { MixedStableRecoveryCard } from "../components/MixedStableRecoveryCard";
 import { computeDataHealth, type DataHealthReport } from "../lib/dataHealth";
 import { useHydrated } from "../lib/useHydrated";
+import { mergePrices, useTokenPrices } from "../lib/useTokenPrices";
 import {
   calcDaysActive,
   calcFeeAPR,
   calcOverallPnL,
   calcPortfolioSummary,
+  calcUnconvertedHoldings,
   type OverallPnL,
   calcPositionProfit,
   calcPriceDiff,
@@ -300,6 +303,9 @@ export default function DashboardPage() {
   const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
   // One-time diagnostic for the per-leg conversion fix; hidden once seen.
   const [mixedNoticeHidden, setMixedNoticeHidden] = useState(true);
+  // Manual price overrides from the Business P&L page. Same source, same merge
+  // order as Total P&L, so the held-fees figure matches there exactly.
+  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
 
   const hydrated = useHydrated(() => {
     setPositions(getPositions());
@@ -307,6 +313,7 @@ export default function DashboardPage() {
     setTransfers(getTransfers());
     setDismissals(getOutlierDismissals());
     setMixedNoticeHidden(isMixedStableNoticeDismissed());
+    setManualPrices(getBusinessPnLSettings().prices);
     const settings = getSettings();
     setInitialCapital(settings.initialCapital);
     setTargetMonthlyPercent(settings.targetMonthlyPercent);
@@ -328,6 +335,19 @@ export default function DashboardPage() {
         ? calcOverallPnL(positions, claims, transfers, initialCapital)
         : EMPTY_OVERALL,
     [hydrated, positions, claims, transfers, initialCapital],
+  );
+
+  // What the still-held (unconverted) fee tokens are worth today — the figure
+  // Overall P&L excludes. Same helper and same fetched-over-manual merge as
+  // Total P&L's Fees Earned card; this page had no price fetching before.
+  const { fetchedPrices } = useTokenPrices(claims);
+  const prices = useMemo(
+    () => mergePrices(fetchedPrices, manualPrices),
+    [fetchedPrices, manualPrices],
+  );
+  const heldFeesValue = useMemo(
+    () => (hydrated ? calcUnconvertedHoldings(claims, prices).totalCurrentValue : 0),
+    [hydrated, claims, prices],
   );
 
   const dataHealth = useMemo(
@@ -429,12 +449,13 @@ export default function DashboardPage() {
             <SummaryCard
               label="Active Positions"
               value={String(activeSummary.activePositions)}
+              hint="Positions currently open."
             />
             <InitialCapitalCard
               value={initialCapital}
               onSave={handleSaveInitialCapital}
             />
-            <OverallPnLCard result={overall} />
+            <OverallPnLCard result={overall} heldFeesValue={heldFeesValue} />
           </div>
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">

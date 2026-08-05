@@ -2338,6 +2338,36 @@ at the plan gate.
   this change neither caused nor masks it. The new read-out reflects whatever
   the field holds either way. Worth its own investigation.
 
+- PLACEHOLDER_HASH: Active Positions card gained the `hint` every sibling card
+  already had ("Positions currently open."), and Overall P&L now NAMES the
+  still-held fee value it excludes instead of only mentioning that it excludes
+  something. Display only; no calculation changed.
+  ONE SOURCE FOR THE NUMBER: OverallPnLCard takes an optional heldFeesValue,
+  which must be calcUnconvertedHoldings(claims, mergedPrices).totalCurrentValue
+  — the same helper and the same fetched-over-manual merge Total P&L's Fees
+  Earned card shows as "still held". On Total P&L the price fetching was LIFTED
+  out of FeesEarnedCard into PortfolioSummarySection and the figure passed to
+  both cards, so that page still makes exactly the same number of price calls
+  as before AND the two cards cannot drift apart — FeesEarnedCard no longer
+  fetches or computes anything, it just renders what it is handed. The
+  Dashboard had no price fetching at all and gains the same
+  useHydrated + getBusinessPnLSettings + useTokenPrices + mergePrices pattern
+  at page level.
+  A zero (or absent) heldFeesValue renders the original sentence untouched, so
+  a user with nothing held sees no dangling "$0.00".
+  Verified live with deterministic manual prices (SUI $2, ETH $1000) over
+  1 converted claim and 2 unconverted (40 SUI + 0.5 ETH = $580.00): Total P&L's
+  Fees Earned read "$250.00 converted · $580.00 still held", Total P&L's
+  Overall P&L read "…still holding — $580.00 at today's value", and the
+  Dashboard's Overall P&L read the identical $580.00 — string-compared equal.
+  Removing the unconverted claims dropped the clause entirely. Active Positions
+  hint renders. tsc/lint/build clean.
+  PRE-EXISTING, NOT INTRODUCED: GrowthTarget runs its own useTokenPrices, so
+  both pages issue two /api/prices calls for the same symbol set (measured).
+  Total P&L was already at two before this change; the Dashboard went 1 → 2.
+  Collapsing that last duplicate means lifting the hook out of the shared
+  GrowthTarget component, which is a wider refactor than this task.
+
 ## Known Issues
 
 - None currently tracked.
