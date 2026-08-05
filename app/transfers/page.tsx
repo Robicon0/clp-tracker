@@ -1794,7 +1794,7 @@ export default function TransfersPage() {
               parts={[
                 { label: "Fees", value: balance.transferredByType.fees },
                 {
-                  label: "Upside",
+                  label: "OOR Upside",
                   value: balance.transferredByType.outOfRangeUpside,
                 },
                 {
@@ -2482,11 +2482,19 @@ function SummaryStat({ label, value, hint, parts }: SummaryStatProps) {
       <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
         {value}
       </div>
-      <div className="mt-1.5 min-h-[16px] flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
+      {/* The separator belongs to the part BEFORE it, not the one after. As a
+          leading "·" it was a separate inline box that could wrap with the next
+          part, dropping a dangling dot onto the start of the second line;
+          trailing, it can only ever end a line, which reads as "continues
+          below". Same reason the card reserves this slot with min-h: the row
+          must look identical whether it wraps or not. */}
+      <div className="mt-1.5 flex min-h-[16px] flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
         {shown.map((p, i) => (
-          <span key={p.label}>
-            {i > 0 && <span className="mr-2 opacity-50">·</span>}
+          <span key={p.label} className="whitespace-nowrap">
             {p.label}: {formatUsd(p.value)}
+            {i < shown.length - 1 && (
+              <span className="ml-2 opacity-50">·</span>
+            )}
           </span>
         ))}
       </div>

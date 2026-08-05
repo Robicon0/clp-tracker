@@ -2541,6 +2541,60 @@ at the plan gate.
   to /transfers#idle-upside. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- Stale-position dismissals + "OOR Upside" label/wrap fix (2026-08-05). Task A
+  adds a "Mark reviewed" escape hatch to the stale-position check; Task B is
+  cosmetic. NO calculation changed in either — a dismissal only hides a banner
+  row, and no total anywhere reads the dismissal store.
+  TASK A — the re-trigger rule is the whole design, and it is deliberately the
+  same one OutlierDismissal uses: StalePositionDismissal {positionId,
+  lastActivity} stores the position's lastActivity AT THE MOMENT OF DISMISSAL,
+  and findStalePositions skips a position only while its CURRENT lastActivity
+  still equals that key. So "reviewed" means "reviewed this specific quiet
+  stretch", not "never tell me about this position again": logging a new claim
+  moves lastActivity, the key stops matching, and the position is watched afresh
+  from that claim — it can and will go stale a second time. staleDismissalFor
+  (lib/dataHealth.ts) is the single place the key is built, so the banner that
+  WRITES a dismissal and the test that READS it cannot key it differently.
+  findStalePositions gained the dismissals param in third position, BEFORE the
+  existing `now` — matching the outlier finders' shape. Storage:
+  getStalePositionDismissals / saveStalePositionDismissals over a new
+  clp_stale_position_dismissals key, added to the Settings backup keys (the
+  outlier dismissals already are; losing a review on restore would be a
+  regression in the same way).
+  computeDataHealth takes staleDismissals as a fifth optional param and passes
+  it through, so the DASHBOARD COUNT honours dismissals too — the count and the
+  banner are driven by the same call and cannot disagree (Invariant #6).
+  Positions page loads them in useHydrated beside the other stores and
+  re-reads after writing, so the row leaves the banner immediately with no
+  reload — the same optimistic shape as confirming an outlier.
+  Hint text replaced with actual guidance ("Log a new claim, mark the position
+  closed if it's done, or mark this reviewed if it's genuinely fine as-is") plus
+  a sentence stating that marking reviewed changes no figure and that the row
+  returns if the position goes quiet again — the re-trigger is only reassuring
+  if the user knows about it.
+  TASK B — label "Upside" → "OOR Upside" on the Transferred to Platforms card,
+  matching the badge lookup used elsewhere for this transfer type. The parts-row
+  wrap bug was the SEPARATOR'S OWNER: the "·" was rendered as a leading element
+  of the part AFTER it, so on wrap it travelled to the next line and started it
+  with a dangling dot. It now trails the part BEFORE it, inside that part's own
+  span (whitespace-nowrap), so it can only ever END a line — which reads as
+  "continues below" — and the last part never carries one. Same reasoning as the
+  min-h slot on this component: the row must look identical wrapped or not.
+  Verified against the compiled module (6 cases): undismissed flags; dismissing
+  hides; a NEW claim 1 day old keeps it hidden (not stale yet) while the stale
+  dismissal is still stored; 20 days after that new claim it RE-FLAGS with
+  lastActivity moved 2026-06-26 → 2026-07-16 despite the old dismissal;
+  re-dismissing with the new key silences it again; a dismissal for another
+  position does not leak. Verified live on localhost:3001: banner showed both
+  stale positions (one never-claimed, one last-claimed 40 days ago) and excluded
+  a 3-day-old position; "Mark reviewed" on STALEA removed the row instantly,
+  stored {"positionId":"SA","lastActivity":"2026-06-26"}, and the Dashboard read
+  "Positions with no recent activity 1"; adding the 20-day-old claim re-flagged
+  it to 2 rows with the dismissal still on disk. Task B: "OOR Upside" renders,
+  and at card widths 420/260/190px every wrapped line begins with a label —
+  zero dangling leading dots. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

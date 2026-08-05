@@ -8,7 +8,13 @@
 // confirmed action in the UI. A genuinely large claim or an intentional token
 // can be real, so every result is a "please double-check", never a rewrite.
 
-import type { FeeClaim, OutlierDismissal, Position, Transfer } from "./types";
+import type {
+  FeeClaim,
+  OutlierDismissal,
+  Position,
+  StalePositionDismissal,
+  Transfer,
+} from "./types";
 import { normalizeChain } from "./nameNormalization";
 import { isUnvaluedConvertedClaim } from "./calculations";
 import { isIdleTransfer } from "./transferState";
@@ -499,8 +505,16 @@ export interface StalePositionRow {
 export function findStalePositions(
   positions: Position[],
   claims: FeeClaim[],
+  dismissals: StalePositionDismissal[] = [],
   now: Date = new Date(),
 ): StalePositionRow[] {
+  // "I've looked at this, it's fine" — keyed by the lastActivity value at the
+  // time it was dismissed, so the dismissal only silences the exact situation
+  // the user reviewed. Log a claim and lastActivity moves, the key stops
+  // matching, and the position is watched again from there.
+  const dismissedAt = new Map(
+    dismissals.map((d) => [d.positionId, d.lastActivity]),
+  );
   const latestClaim = new Map<string, string>();
   const claimCounts = new Map<string, number>();
   for (const c of claims) {
@@ -521,6 +535,7 @@ export function findStalePositions(
     if (!Number.isFinite(at)) continue;
     const daysSince = (now.getTime() - at) / 86_400_000;
     if (daysSince <= STALE_POSITION_DAYS) continue;
+    if (dismissedAt.get(p.id) === lastActivity) continue;
     rows.push({
       position: p,
       lastActivity,
@@ -530,6 +545,15 @@ export function findStalePositions(
   }
   // Oldest first — the ones most worth looking at lead.
   return rows.sort((a, b) => b.daysSince - a.daysSince);
+}
+
+// What to store when a stale row is marked reviewed: the position and the
+// exact lastActivity being dismissed. One helper, so the banner that writes a
+// dismissal and the test above that reads it can never key it differently.
+export function staleDismissalFor(
+  row: StalePositionRow,
+): StalePositionDismissal {
+  return { positionId: row.position.id, lastActivity: row.lastActivity };
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +660,7 @@ export function computeDataHealth(
   claims: FeeClaim[],
   transfers: Transfer[],
   dismissals: OutlierDismissal[] = [],
+  staleDismissals: StalePositionDismissal[] = [],
 ): DataHealthReport {
   const positionSymbol = findSymbolPairMismatches(positions);
   const claimSymbol = findClaimSymbolMismatches(claims);
@@ -647,7 +672,7 @@ export function computeDataHealth(
     positions,
     dismissals,
   );
-  const stalePositions = findStalePositions(positions, claims);
+  const stalePositions = findStalePositions(positions, claims, staleDismissals);
   const incompleteClaims = findIncompleteClaims(claims, positions);
   const idleUpside = findIdleUpsideTransfers(transfers, positions);
   const counts: DataHealthCounts = {

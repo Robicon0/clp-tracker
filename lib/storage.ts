@@ -3,6 +3,7 @@ import type {
   FeeClaim,
   LPRange,
   OutlierDismissal,
+  StalePositionDismissal,
   PoolPnLEntry,
   Position,
   Transfer,
@@ -21,6 +22,7 @@ const KEYS = {
   withdrawals: "clp_withdrawals",
   positionPrices: "clp_position_prices",
   outlierDismissals: "clp_outlier_dismissals",
+  stalePositionDismissals: "clp_stale_position_dismissals",
   mixedStableNotice: "clp_mixed_stable_notice",
 } as const;
 
@@ -179,6 +181,16 @@ export function getOutlierDismissals(): OutlierDismissal[] {
 
 export function saveOutlierDismissals(dismissals: OutlierDismissal[]): void {
   writeValue(KEYS.outlierDismissals, dismissals);
+}
+
+export function getStalePositionDismissals(): StalePositionDismissal[] {
+  return readArray<StalePositionDismissal>(KEYS.stalePositionDismissals);
+}
+
+export function saveStalePositionDismissals(
+  dismissals: StalePositionDismissal[],
+): void {
+  writeValue(KEYS.stalePositionDismissals, dismissals);
 }
 
 // One-time diagnostic notice: the mixed-claim (stable-leg) recovery report.

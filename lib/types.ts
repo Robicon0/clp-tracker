@@ -129,6 +129,16 @@ export interface OutlierDismissal {
   amount: number;
 }
 
+// A user's "I've looked at this, it's fine as-is" dismissal of a stale-position
+// flag. Keyed by position AND the exact lastActivity at dismissal time, the
+// same re-trigger rule as OutlierDismissal: logging a new claim moves
+// lastActivity, so the dismissal stops matching and the position is watched
+// again from that point (and can go stale a second time later).
+export interface StalePositionDismissal {
+  positionId: string;
+  lastActivity: string;
+}
+
 export interface LPRange {
   id: string;
   positionId: string;

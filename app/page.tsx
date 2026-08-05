@@ -7,6 +7,7 @@ import {
   getBusinessPnLSettings,
   getClaims,
   getOutlierDismissals,
+  getStalePositionDismissals,
   getPositions,
   getSettings,
   getTransfers,
@@ -39,6 +40,7 @@ import {
 import type {
   FeeClaim,
   OutlierDismissal,
+  StalePositionDismissal,
   PortfolioSummary,
   Position,
   Transfer,
@@ -307,6 +309,9 @@ export default function DashboardPage() {
   const [initialCapital, setInitialCapital] = useState(0);
   const [targetMonthlyPercent, setTargetMonthlyPercent] = useState(0);
   const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
+  const [staleDismissals, setStaleDismissals] = useState<
+    StalePositionDismissal[]
+  >([]);
   // One-time diagnostic for the per-leg conversion fix; hidden once seen.
   const [mixedNoticeHidden, setMixedNoticeHidden] = useState(true);
   // Manual price overrides from the Business P&L page. Same source, same merge
@@ -318,6 +323,7 @@ export default function DashboardPage() {
     setClaims(getClaims());
     setTransfers(getTransfers());
     setDismissals(getOutlierDismissals());
+    setStaleDismissals(getStalePositionDismissals());
     setMixedNoticeHidden(isMixedStableNoticeDismissed());
     setManualPrices(getBusinessPnLSettings().prices);
     const settings = getSettings();
@@ -359,9 +365,15 @@ export default function DashboardPage() {
   const dataHealth = useMemo(
     () =>
       hydrated
-        ? computeDataHealth(positions, claims, transfers, dismissals)
+        ? computeDataHealth(
+            positions,
+            claims,
+            transfers,
+            dismissals,
+            staleDismissals,
+          )
         : EMPTY_DATA_HEALTH,
-    [hydrated, positions, claims, transfers, dismissals],
+    [hydrated, positions, claims, transfers, dismissals, staleDismissals],
   );
 
   // Two scopes, deliberately kept apart. The Dashboard answers "where do I

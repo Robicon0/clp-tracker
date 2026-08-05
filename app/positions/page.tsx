@@ -13,6 +13,8 @@ import {
   getPoolPnL,
   getPositions,
   getPositionPrices,
+  getStalePositionDismissals,
+  saveStalePositionDismissals,
   getRanges,
   getTransfers,
   saveClaims,
@@ -26,6 +28,7 @@ import { createUpsideTransfer } from "../../lib/transferAutomation";
 import {
   findChainMismatches,
   findStalePositions,
+  staleDismissalFor,
   type ChainMismatchRow,
   type StalePositionRow,
   STALE_POSITION_DAYS,
@@ -74,6 +77,7 @@ import type {
   LPRange,
   PoolPnLEntry,
   Position,
+  StalePositionDismissal,
   Transfer,
 } from "../../lib/types";
 
@@ -907,6 +911,9 @@ export default function PositionsPage() {
   const [positionPrices, setPositionPrices] = useState<Record<string, number>>(
     {},
   );
+  const [staleDismissals, setStaleDismissals] = useState<
+    StalePositionDismissal[]
+  >([]);
   const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
 
@@ -954,6 +961,7 @@ export default function PositionsPage() {
     setPositions(loaded);
     setClaims(getClaims());
     setPositionPrices(getPositionPrices());
+    setStaleDismissals(getStalePositionDismissals());
     void refreshPrices(loaded);
   });
 
@@ -1055,7 +1063,19 @@ export default function PositionsPage() {
   const suspectScalp = hydrated ? findSuspectScalpPositions(positions) : [];
   const symbolMismatches = hydrated ? findSymbolPairMismatches(positions) : [];
   const chainMismatches = hydrated ? findChainMismatches(positions) : [];
-  const stalePositions = hydrated ? findStalePositions(positions, claims) : [];
+  const stalePositions = hydrated
+    ? findStalePositions(positions, claims, staleDismissals)
+    : [];
+
+  // Same shape as confirming an outlier: write the dismissal, then re-read it
+  // into state so the row leaves the banner immediately, without a reload.
+  const handleMarkStaleReviewed = (row: StalePositionRow) => {
+    saveStalePositionDismissals([
+      ...getStalePositionDismissals(),
+      staleDismissalFor(row),
+    ]);
+    setStaleDismissals(getStalePositionDismissals());
+  };
 
   const persistFull = (records: BuiltRecords, mode: "add" | "edit") => {
     if (mode === "add") {
@@ -1272,6 +1292,7 @@ export default function PositionsPage() {
         <StalePositionsBanner
           rows={stalePositions}
           onEdit={(p) => setModal({ kind: "edit", position: p })}
+          onMarkReviewed={handleMarkStaleReviewed}
         />
       )}
 
@@ -1667,9 +1688,11 @@ function ChainMismatchBanner({
 function StalePositionsBanner({
   rows,
   onEdit,
+  onMarkReviewed,
 }: {
   rows: StalePositionRow[];
   onEdit: (p: Position) => void;
+  onMarkReviewed: (row: StalePositionRow) => void;
 }) {
   return (
     <div
@@ -1683,9 +1706,10 @@ function StalePositionsBanner({
       </h2>
       <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
         Counted from the most recent fee claim, or the opening date when nothing
-        has ever been claimed. A quiet pool is fine — but so is a position that
-        was closed without being marked closed, or one whose claims never got
-        logged. Nothing changes unless you edit it.
+        has ever been claimed. Log a new claim, mark the position closed if
+        it&apos;s done, or mark this reviewed if it&apos;s genuinely fine as-is.
+        Marking it reviewed only hides this row — no figure changes, and it
+        comes back if the position goes quiet again after its next claim.
       </p>
       <ul className="mt-3 space-y-2">
         {rows.map((r) => (
@@ -1705,13 +1729,22 @@ function StalePositionsBanner({
               </span>{" "}
               · {Math.floor(r.daysSince)} days ago
             </span>
-            <button
-              type="button"
-              onClick={() => onEdit(r.position)}
-              className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
-            >
-              Review
-            </button>
+            <span className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => onEdit(r.position)}
+                className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+              >
+                Review
+              </button>
+              <button
+                type="button"
+                onClick={() => onMarkReviewed(r)}
+                className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] transition-colors hover:bg-white/5"
+              >
+                Mark reviewed
+              </button>
+            </span>
           </li>
         ))}
       </ul>
