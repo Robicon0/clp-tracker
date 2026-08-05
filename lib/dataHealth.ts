@@ -583,14 +583,22 @@ export function findIncompleteClaims(
 
 
 // ---------------------------------------------------------------------------
-// Idle out-of-range upside
+// Idle earnings (out-of-range upside + fee claims)
 // ---------------------------------------------------------------------------
 
-// Profit taken out of a closed position that has then sat untouched. Uses the
-// SAME idle test Available Balance is built from (lib/transferState) rather
-// than a second definition, so a row flagged here is exactly a row still
-// counted as available — the two can never disagree (Invariant #6).
+// Money the business EARNED — close profit and claimed fees — that has then sat
+// untouched. Uses the SAME idle test Available Balance is built from
+// (lib/transferState) rather than a second definition, so a row flagged here is
+// exactly a row still counted as available — the two can never disagree
+// (Invariant #6). Undeployed Tokens is deliberately NOT included: that money is
+// idle capital by definition (it carries an unset money status on purpose,
+// d20f3e3), so flagging it would be flagging it for being what it is.
 export const IDLE_UPSIDE_DAYS = 14;
+
+const IDLE_EARNING_TYPES: ReadonlySet<string> = new Set([
+  "outOfRangeUpside",
+  "fees",
+]);
 
 export interface IdleUpsideRow {
   transfer: Transfer;
@@ -606,7 +614,7 @@ export function findIdleUpsideTransfers(
   const byId = new Map(positions.map((p) => [p.id, p]));
   const rows: IdleUpsideRow[] = [];
   for (const t of transfers) {
-    if (t.transferType !== "outOfRangeUpside") continue;
+    if (!IDLE_EARNING_TYPES.has(t.transferType)) continue;
     if (!isIdleTransfer(t)) continue;
     const at = new Date(t.date).getTime();
     // An unparseable date says nothing either way, so it is skipped rather

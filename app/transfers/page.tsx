@@ -711,11 +711,13 @@ function RecentlyDeletedSection({
   );
 }
 
-// Out-of-Range-Upside money that has sat idle past IDLE_UPSIDE_DAYS. Amber, not
-// red: leaving profit idle is a choice, not an error — the banner just makes
-// sure the choice is a deliberate one. Selecting a row hands it to the existing
-// toolbar (clearing the filters first, so the row is guaranteed visible), which
-// is where Mark as deployed / Send to Platform already live. Reports only.
+// Earned money — close profit AND claimed fees — that has sat idle past
+// IDLE_UPSIDE_DAYS. Amber, not red: leaving earnings idle is a choice, not an
+// error — the banner just makes sure the choice is a deliberate one. Each row
+// names its own type, so a Fees row is never described as upside. Selecting a
+// row hands it to the existing toolbar (clearing the filters first, so the row
+// is guaranteed visible), which is where Mark as deployed / Send to Platform
+// already live. Reports only.
 function IdleUpsideBanner({
   rows,
   pairLabelFor,
@@ -728,19 +730,19 @@ function IdleUpsideBanner({
   const total = rows.reduce((sum, r) => sum + r.transfer.amount, 0);
   return (
     <div
-      id="idle-upside"
+      id="idle-earnings"
       className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4"
     >
       <h2 className="text-sm font-semibold text-amber-300">
         {rows.length}{" "}
-        {rows.length === 1 ? "upside transfer has" : "upside transfers have"}{" "}
+        {rows.length === 1 ? "transfer has" : "transfers have"}{" "}
         been sitting idle for over {IDLE_UPSIDE_DAYS} days ({formatUsd(total)})
       </h2>
       <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
-        Profit taken out of a closed position that hasn&apos;t been deployed,
-        sent to a platform, or spent — it is still counted in Available Balance.
-        Leaving it idle is fine; this is only here so it doesn&apos;t get
-        forgotten.
+        Claimed fees and profit taken out of a closed position that haven&apos;t
+        been deployed, sent to a platform, or spent — still counted in Available
+        Balance. Leaving it idle is fine; this is only here so it doesn&apos;t
+        get forgotten.
       </p>
       <ul className="mt-3 space-y-2">
         {rows.map((r) => (
@@ -750,6 +752,9 @@ function IdleUpsideBanner({
           >
             <span className="font-medium text-[var(--foreground)]">
               {pairLabelFor(r.transfer)}
+              <span className="ml-2 font-normal text-[var(--muted)]">
+                {SHORT_TYPE_LABELS[r.transfer.transferType]}
+              </span>
             </span>
             <span className="tabular-nums text-[var(--muted)]">
               {formatUsd(r.transfer.amount)} ·{" "}

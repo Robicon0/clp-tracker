@@ -27,6 +27,7 @@ import {
   findClaimAmountOutliers,
   type OutlierRow,
 } from "../../lib/dataHealth";
+import { cleanupClaimTransfers } from "../../lib/transferAutomation";
 import { OutlierBanner } from "../../components/OutlierBanner";
 import { PositionCombobox } from "../../components/PositionCombobox";
 import { normalizeChain, normalizePlatform } from "../../lib/nameNormalization";
@@ -386,6 +387,11 @@ export default function ClaimsPage() {
   };
 
   const handleDelete = (id: string) => {
+    // The transfer this claim created must not outlive it as an orphan: an
+    // untouched auto row is soft-deleted with the claim (restorable from
+    // Recently Deleted), a row the user has since placed keeps its money
+    // history and only loses the dead link.
+    cleanupClaimTransfers(id);
     saveClaims(getClaims().filter((c) => c.id !== id));
     refresh();
     setPendingDelete(null);

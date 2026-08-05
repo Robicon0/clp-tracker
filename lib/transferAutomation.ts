@@ -1,5 +1,5 @@
 import { isStableSymbol } from "./calculations";
-import { getTransfers, saveTransfers } from "./storage";
+import { getTransfers, saveTransfers, softDeleteTransfer } from "./storage";
 import type { FeeClaim, Position, Transfer } from "./types";
 
 // Notes stamped on auto-created transfers. Also a tell-tale: an auto transfer
@@ -378,6 +378,48 @@ export function applyRevertToAuto(plan: AutoRevertPlan): void {
     ...getTransfers().filter((t) => !replaced.has(t.id)),
     ...plan.next,
   ]);
+}
+
+// ── Claim deletion cleanup ──────────────────────────────────────────────────
+
+export interface ClaimTransferCleanup {
+  // Auto rows the user never touched — removed with the claim that made them.
+  softDeleted: string[];
+  // Rows the user has since sent/deployed/expensed — kept, but no longer
+  // claiming a link to a record that no longer exists.
+  detached: string[];
+}
+
+// Called when a fee claim is deleted. An auto transfer only exists because of
+// its claim, so an UNTOUCHED one goes with it — soft-deleted, so it lands in
+// Recently Deleted and restores exactly like any other transfer, never hard
+// erased. A TOUCHED row is real money-movement history the user has since
+// placed somewhere; deleting it would erase a record of where money actually
+// went, so it stays and only loses its sourceClaimId. Dropping that id also
+// stops planRevertToAuto offering a revert that can never resolve, and lets the
+// day+position heuristic treat the row as the manual record it has become.
+export function cleanupClaimTransfers(claimId: string): ClaimTransferCleanup {
+  const own = getTransfers().filter((t) => t.sourceClaimId === claimId);
+  const softDeleted: string[] = [];
+  const detached: Transfer[] = [];
+  for (const t of own) {
+    if (isUntouchedAuto(t)) softDeleted.push(t.id);
+    else detached.push(t);
+  }
+  if (detached.length > 0) {
+    const byId = new Map(detached.map((t) => [t.id, t]));
+    saveTransfers(
+      getTransfers().map((t) => {
+        if (!byId.has(t.id)) return t;
+        const { sourceClaimId: _s, ...rest } = t;
+        void _s;
+        return rest;
+      }),
+    );
+  }
+  // After the detach write, so the map above cannot resurrect a deleted row.
+  for (const id of softDeleted) softDeleteTransfer(id);
+  return { softDeleted, detached: detached.map((t) => t.id) };
 }
 
 // ── Backfill eligibility (pure) ─────────────────────────────────────────────
