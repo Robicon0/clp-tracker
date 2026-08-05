@@ -298,7 +298,15 @@ export default function TotalPnlPage() {
   const [initialCapital, setInitialCapital] = useState(0);
   const [targetMonthlyPercent, setTargetMonthlyPercent] = useState(0);
 
+  // ONE price fetch for the whole page (state declared here so the hydrate
+  // callback below can seed it). Both consumers — the portfolio cards'
+  // held-fees figure and Growth Target's Business P&L total — read the merged
+  // result, so the page issues a single /api/prices call and everything on it
+  // is priced identically.
+  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
+
   const hydrated = useHydrated(() => {
+    setManualPrices(getBusinessPnLSettings().prices);
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
@@ -378,6 +386,14 @@ export default function TotalPnlPage() {
     saveSettings({ ...getSettings(), targetMonthlyPercent: next });
     setTargetMonthlyPercent(next);
   };
+
+  // Manual overrides from Business P&L settings sit on top of the fetched
+  // values — the same merge order used everywhere else.
+  const { fetchedPrices } = useTokenPrices(claims);
+  const prices = useMemo(
+    () => mergePrices(fetchedPrices, manualPrices),
+    [fetchedPrices, manualPrices],
+  );
 
   const overall = useMemo(
     () =>
@@ -464,6 +480,7 @@ export default function TotalPnlPage() {
             lifetimeDeposited={lifetimeDeposited}
             overall={overall}
             claims={claims}
+            prices={prices}
             initialCapital={initialCapital}
             onSaveInitialCapital={handleSaveInitialCapital}
           />
@@ -476,6 +493,7 @@ export default function TotalPnlPage() {
           <GrowthTargetSection
             positions={positions}
             claims={claims}
+            prices={prices}
             initialCapital={initialCapital}
             targetMonthlyPercent={targetMonthlyPercent}
             onSaveTarget={handleSaveTarget}
@@ -509,6 +527,7 @@ interface PortfolioSummarySectionProps {
   lifetimeDeposited: number;
   overall: OverallPnL;
   claims: FeeClaim[];
+  prices: Record<string, number>;
   initialCapital: number;
   onSaveInitialCapital: (next: number) => void;
 }
@@ -520,23 +539,12 @@ function PortfolioSummarySection({
   lifetimeDeposited,
   overall,
   claims,
+  prices,
   initialCapital,
   onSaveInitialCapital,
 }: PortfolioSummarySectionProps) {
-  // Prices are fetched ONCE here and handed to both cards that need them.
-  // They used to live inside FeesEarnedCard; Overall P&L now wants the same
-  // figure, and two useTokenPrices hooks on one page would mean two fetches of
-  // the same token set. Lifting keeps it to one request AND makes it
-  // structurally impossible for the two cards to show different numbers.
-  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
-  useHydrated(() => setManualPrices(getBusinessPnLSettings().prices));
-  const { fetchedPrices } = useTokenPrices(claims);
-  const prices = useMemo(
-    () => mergePrices(fetchedPrices, manualPrices),
-    [fetchedPrices, manualPrices],
-  );
-  // The "still held at today's value" figure, shared by Fees Earned and
-  // Overall P&L.
+  // Prices arrive from the page, which fetches them once for every consumer
+  // (this section AND Growth Target). Only the derived figure lives here.
   const heldFeesValue = useMemo(
     () => calcUnconvertedHoldings(claims, prices).totalCurrentValue,
     [claims, prices],

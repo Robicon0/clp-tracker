@@ -652,6 +652,7 @@ export default function DashboardPage() {
           <GrowthTargetSection
             positions={positions}
             claims={claims}
+            prices={prices}
             initialCapital={initialCapital}
             targetMonthlyPercent={targetMonthlyPercent}
             onSaveTarget={handleSaveTarget}

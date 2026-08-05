@@ -3,9 +3,6 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { calcBusinessPnL, calcGrowthTarget } from "../lib/calculations";
-import { getBusinessPnLSettings } from "../lib/storage";
-import { useHydrated } from "../lib/useHydrated";
-import { mergePrices, useTokenPrices } from "../lib/useTokenPrices";
 import { Breakdown } from "./Breakdown";
 import type { FeeClaim, Position } from "../lib/types";
 
@@ -49,6 +46,13 @@ const tileClass =
 interface GrowthTargetSectionProps {
   positions: Position[];
   claims: FeeClaim[];
+  // Merged token prices (fetched, with Business P&L manual overrides on top),
+  // supplied by the page. This component used to fetch its own, which meant
+  // every page showing it issued a SECOND identical /api/prices call — once
+  // here and once for the page's own held-fees figure. Taking prices as a prop
+  // keeps one fetch per page and guarantees both figures are priced from the
+  // same numbers.
+  prices: Record<string, number>;
   initialCapital: number;
   targetMonthlyPercent: number;
   onSaveTarget: (next: number) => void;
@@ -59,24 +63,16 @@ interface GrowthTargetSectionProps {
 export function GrowthTargetSection({
   positions,
   claims,
+  prices,
   initialCapital,
   targetMonthlyPercent,
   onSaveTarget,
 }: GrowthTargetSectionProps) {
-  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
-  useHydrated(() => setManualPrices(getBusinessPnLSettings().prices));
-
-  const { fetchedPrices } = useTokenPrices(claims);
-  const effectivePrices = useMemo(
-    () => mergePrices(fetchedPrices, manualPrices),
-    [fetchedPrices, manualPrices],
-  );
-
   // The fee half of Combined Earnings is Business P&L's "All Total", read from
   // that exact calculation rather than re-summed here.
   const business = useMemo(
-    () => calcBusinessPnL(claims, effectivePrices),
-    [claims, effectivePrices],
+    () => calcBusinessPnL(claims, prices),
+    [claims, prices],
   );
 
   const growth = useMemo(

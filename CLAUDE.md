@@ -2368,6 +2368,39 @@ at the plan gate.
   Collapsing that last duplicate means lifting the hook out of the shared
   GrowthTarget component, which is a wider refactor than this task.
 
+- PLACEHOLDER_HASH: Collapsed the duplicate /api/prices call on the Dashboard
+  and Total P&L — measured 2 → 1 per full page load on both. Wiring only; every
+  price consumer still shows live prices, and no calculation changed (same
+  mergePrices order, same calcBusinessPnL / calcUnconvertedHoldings calls).
+  CAUSE: GrowthTargetSection fetched its own prices (useHydrated +
+  getBusinessPnLSettings + useTokenPrices + mergePrices) while each page
+  independently merged the same prices for its held-fees figure. Two hooks over
+  the same token set = two identical requests. GrowthTargetSection now takes a
+  required `prices` prop and does no fetching; the three imports it needed are
+  gone (nothing else in that file used them — useState stays, the inline target
+  editor uses it).
+  WHERE THE FETCH LIVES NOW: exactly one per page, at page level.
+  app/page.tsx already merged prices for heldFeesValue and simply passes the
+  same object down. app/total-pnl/page.tsx had the fetch one level too low —
+  inside PortfolioSummarySection, invisible to its sibling GrowthTargetSection —
+  so it moved up to TotalPnlPage and is passed to BOTH. PortfolioSummarySection
+  keeps deriving heldFeesValue from the prices it is handed.
+  LINT TRAP worth remembering: the manualPrices useState must be declared ABOVE
+  the useHydrated call that seeds it, or react-hooks/immutability errors with
+  "accessed before it is declared" — the fetch/merge can still sit lower, after
+  claims exist.
+  Verified against numbers captured on the pre-change build with identical
+  seeded data (1 position, 3 claims, manual overrides SUI $2 / ETH $1000):
+  Combined Earnings $12,777.50, Avg Monthly Rate 92.58%, Fees Earned
+  "$250.00 converted · $580.00 still held", Overall P&L held $580.00 — all
+  byte-identical afterwards on both pages. Cumulative Target read $414.03 →
+  $414.04 → $414.05 across the runs, which is the documented wall-clock drift
+  of that figure alone (5,000 × 3.00% × 2.760285 months), not a regression.
+  Manual overrides still reach both consumers off the single fetch: changing
+  the SUI override 2 → 10 moved held value $580.00 → $900.00 (= 40×10 +
+  0.5×1000) and Combined Earnings $12,777.50 → $13,897.50 (= 140 SUI × $8).
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
