@@ -2338,7 +2338,7 @@ at the plan gate.
   this change neither caused nor masks it. The new read-out reflects whatever
   the field holds either way. Worth its own investigation.
 
-- PLACEHOLDER_HASH: Active Positions card gained the `hint` every sibling card
+- df5f4a8: Active Positions card gained the `hint` every sibling card
   already had ("Positions currently open."), and Overall P&L now NAMES the
   still-held fee value it excludes instead of only mentioning that it excludes
   something. Display only; no calculation changed.
