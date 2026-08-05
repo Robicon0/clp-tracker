@@ -2440,7 +2440,7 @@ at the plan gate.
   "RENT · amount edited from $75.00 to $90.00 on 05/08/2026".
   tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Fixed the transfer-symbol-mismatch banner heading, which
+- e00daa7: Fixed the transfer-symbol-mismatch banner heading, which
   rendered "2 transfers havea token that doesn't match its position's pair".
   The space before "a" now lives in an explicit {" "}. One file, one heading.
   MECHANISM, finally pinned down by reading the rendered text nodes rather than
