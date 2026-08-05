@@ -2595,6 +2595,64 @@ at the plan gate.
   zero dangling leading dots. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- 93719c5: Claim delete cleans up its transfer + idle check extended to Fees
+  (2026-08-06):
+  Two fixes, no calculation changed in either — one removes an orphan, the other
+  widens a detection filter.
+  TASK A — deleting a fee claim left the transfer the automation created for it
+  (sourceClaimId) on the Transfers page forever, still counted in Lifetime Earned
+  and Available Balance with nothing behind it. handleDelete (app/claims/page.tsx)
+  now calls the new cleanupClaimTransfers(claimId) in lib/transferAutomation.ts
+  BEFORE saveClaims. The split is deliberate and keys off the EXISTING
+  isUntouchedAuto predicate — no second definition of "the user has taken
+  ownership":
+    • UNTOUCHED auto row (blank platform/destination, moneyStatus unset or
+      redeployed, no deploy-link, auto note intact) → softDeleteTransfer. It only
+      existed because of the claim, so it goes with it — but soft, so it lands in
+      Recently Deleted and restores with every field (including sourceClaimId)
+      exactly as it was. Never hard-deleted; that would be the one delete path in
+      the app with no undo.
+    • TOUCHED row (sent to a platform, deployed, expensed, edited) → kept, and
+      only sourceClaimId is dropped. That money really moved; erasing the record
+      because the source claim was deleted would erase where it went. Dropping
+      the id also stops planRevertToAuto offering a revert that can never resolve,
+      and lets the day+position backfill heuristic treat the row as the manual
+      record it has become.
+  ORDER MATTERS: the detach write runs FIRST, then the soft-deletes. saveTransfers
+  merges deleted rows back (037abcc), and a map over getTransfers() written after
+  a soft-delete would resurrect the row it just removed.
+  SCOPE: the /claims delete only. The position-delete cascade in
+  app/positions/page.tsx already handles its linked transfers (b25281e) and is
+  untouched.
+  TASK B — findIdleUpsideTransfers (lib/dataHealth.ts) now covers transferType
+  "fees" as well as "outOfRangeUpside" via IDLE_EARNING_TYPES; same isIdleTransfer
+  test, same 14-day threshold, same row shape, same sort. Claimed fees sitting
+  untouched are exactly the same situation as untouched close profit.
+  UNDEPLOYED TOKENS STAYS OUT, deliberately: those rows are hand-logged idle
+  capital carrying an unset money status BY DESIGN (d20f3e3), so flagging them
+  would be flagging them for being what they are.
+  WORDING went type-neutral rather than saying "upside" over a Fees row: banner
+  heading "N transfers have been sitting idle…", body names claimed fees and close
+  profit, and each row now prints its own SHORT_TYPE_LABELS tag ("Fees" /
+  "OOR Upside"). Dashboard category "Upside profit sitting idle" → "Earnings
+  sitting idle", anchor #idle-upside → #idle-earnings (both sides updated
+  together). The function/type/constant names (findIdleUpsideTransfers,
+  IdleUpsideRow, IDLE_UPSIDE_DAYS, counts.idleUpside) are UNCHANGED — renaming
+  them would have touched every call site for no user-visible gain.
+  Verified against the compiled modules and live on localhost:3001 with a seeded
+  1-position / 2-claim / 4-transfer set: deleting the claim behind the untouched
+  auto transfer soft-deleted it (Recently Deleted (1), Restore returned it with
+  platform/notes/sourceClaimId/moneyStatus byte-identical and deletedAt absent);
+  deleting the claim behind the KRAKEN-platformed transfer left that row live with
+  amount/platform/notes/moneyStatus intact and sourceClaimId gone; the manual
+  undeployed and upside rows were untouched throughout. Idle banner flagged the
+  20-day-idle Fees ($100) and the 20-day-idle Upside ($300) — "2 transfers have
+  been sitting idle for over 14 days ($400.00)", each tagged with its own type —
+  and did NOT flag the idle Undeployed row, a 5-day-old Fees row, or fees rows
+  that were platformed / deployed / expensed. Dashboard read "Earnings sitting
+  idle 2" linking to /transfers#idle-earnings. Seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
