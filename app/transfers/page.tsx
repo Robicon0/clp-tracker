@@ -274,6 +274,25 @@ function isTransferredToPlatform(t: Transfer): boolean {
   );
 }
 
+// Amount is the one field on these records that silently rewrites history: the
+// form overwrites `notes` with whatever was typed, so changing a figure without
+// touching the note leaves nothing saying it ever changed. When (and only when)
+// the amount actually moves, the change is appended to whatever note the user
+// kept, never replacing it — so the original wording survives and repeated
+// edits read as a trail rather than one value clobbering the last.
+// Scoped to amount on purpose; stamping every field would bury the note.
+function withAmountEditNote(
+  notes: string,
+  previous: number,
+  next: number,
+): string {
+  if (previous === next) return notes;
+  const stamp = `· amount edited from ${formatUsd(previous)} to ${formatUsd(
+    next,
+  )} on ${formatDateDDMMYYYY(todayDateInput())}`;
+  return notes.trim() === "" ? stamp : `${notes.trim()} ${stamp}`;
+}
+
 type ModalState =
   | { kind: "none" }
   | { kind: "add" }
@@ -829,6 +848,8 @@ export default function TransfersPage() {
   // own confirm step, kept separate from pendingBulk so the two bulk actions
   // can never fire each other's confirm.
   const [pendingDelete, setPendingDelete] = useState(false);
+  // Chain tab for the Expenses & Withdrawals table ("" = all chains).
+  const [expenseChainFilter, setExpenseChainFilter] = useState("");
   const [pendingWithdrawalDelete, setPendingWithdrawalDelete] = useState<
     string | null
   >(null);
@@ -1302,6 +1323,11 @@ export default function TransfersPage() {
           }
         : {}),
     };
+    updated.notes = withAmountEditNote(
+      updated.notes,
+      target.amount,
+      updated.amount,
+    );
     saveTransfers(
       getTransfers().map((t) => (t.id === target.id ? updated : t)),
     );
@@ -1488,6 +1514,11 @@ export default function TransfersPage() {
       amount: number;
       method: string;
       notes: string;
+      // Same chain vocabulary as the main list: transfers resolve through
+      // positionChainById (already normalizeChain'd), and anything without a
+      // position — every logged withdrawal, by definition — is UNLINKED, the
+      // label the list above already uses for chain-less rows.
+      chain: string;
       withdrawal?: Withdrawal;
       transfer?: Transfer;
     }[] = withdrawals.map((w) => ({
@@ -1496,6 +1527,7 @@ export default function TransfersPage() {
       amount: w.amount,
       method: w.method || "—",
       notes: w.notes,
+      chain: "UNLINKED",
       withdrawal: w,
     }));
     for (const t of transfers) {
@@ -1509,6 +1541,7 @@ export default function TransfersPage() {
             ? "Expense"
             : positionPairById.get(t.positionId) ?? "Transfer",
         notes: t.notes,
+        chain: positionChainById.get(t.positionId) ?? "UNLINKED",
         transfer: t,
       });
     }
@@ -1517,7 +1550,35 @@ export default function TransfersPage() {
       const tb = new Date(b.date).getTime();
       return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
     });
-  }, [withdrawals, transfers, positionPairById]);
+  }, [withdrawals, transfers, positionPairById, positionChainById]);
+
+  // Only chains actually present get a tab, ordered by amount like the main
+  // list's chain sections, so the two read consistently.
+  const expenseChains = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of expenseLedger) {
+      map.set(r.chain, (map.get(r.chain) ?? 0) + r.amount);
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([chain]) => chain);
+  }, [expenseLedger]);
+
+  const ledgerRows = useMemo(
+    () =>
+      expenseChainFilter === ""
+        ? expenseLedger
+        : expenseLedger.filter((r) => r.chain === expenseChainFilter),
+    [expenseLedger, expenseChainFilter],
+  );
+  // The footer follows what is on screen. Unfiltered it is balance.withdrawn
+  // exactly (same rows, same amounts); filtered it is that chain's share, which
+  // is why the label says so rather than silently showing a different total
+  // under the same words.
+  const ledgerTotal = useMemo(
+    () => ledgerRows.reduce((sum, r) => sum + r.amount, 0),
+    [ledgerRows],
+  );
 
   const handleAddWithdrawal = (form: WithdrawalFormState) => {
     saveWithdrawals([...getWithdrawals(), buildWithdrawal(newId(), form)]);
@@ -1530,6 +1591,11 @@ export default function TransfersPage() {
     form: WithdrawalFormState,
   ) => {
     const updated = buildWithdrawal(target.id, form);
+    updated.notes = withAmountEditNote(
+      updated.notes,
+      target.amount,
+      updated.amount,
+    );
     saveWithdrawals(
       getWithdrawals().map((w) => (w.id === target.id ? updated : w)),
     );
@@ -2012,6 +2078,29 @@ export default function TransfersPage() {
                   withdrawals, and any transfer marked as an Expense. Each
                   reduces Available Balance.
                 </p>
+                {/* Tabs rather than the grouped sections the main list uses:
+                    this is one flat table, and slicing it into per-chain
+                    tables would repeat the header five times. Only chains
+                    present in the data appear, and the tab row is hidden
+                    entirely when everything sits on one chain. */}
+                {expenseChains.length > 1 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {["", ...expenseChains].map((chain) => (
+                      <button
+                        key={chain || "all"}
+                        type="button"
+                        onClick={() => setExpenseChainFilter(chain)}
+                        className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                          expenseChainFilter === chain
+                            ? "bg-[var(--accent)] text-white"
+                            : "border border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--foreground)] hover:border-[var(--accent)]"
+                        }`}
+                      >
+                        {chain === "" ? "All" : chain}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-[var(--border)] text-sm">
@@ -2021,6 +2110,7 @@ export default function TransfersPage() {
                       <th className="px-4 py-3 text-right font-medium">
                         Amount
                       </th>
+                      <th className="px-4 py-3 text-left font-medium">Chain</th>
                       <th className="px-4 py-3 text-left font-medium">Method</th>
                       <th className="px-4 py-3 text-left font-medium">Notes</th>
                       <th className="px-4 py-3 text-right font-medium">
@@ -2029,7 +2119,7 @@ export default function TransfersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
-                    {expenseLedger.map((row) => {
+                    {ledgerRows.map((row) => {
                       const w = row.withdrawal;
                       return (
                       <tr
@@ -2041,6 +2131,9 @@ export default function TransfersPage() {
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">
                           {formatUsd(row.amount)}
+                        </td>
+                        <td className="px-4 py-3 text-[11px] uppercase tracking-wider text-[var(--muted)]">
+                          {row.chain}
                         </td>
                         <td className="px-4 py-3 text-[var(--foreground)]">
                           {row.method}
@@ -2124,11 +2217,22 @@ export default function TransfersPage() {
                   </tbody>
                   <tfoot className="border-t border-[var(--border-strong)] bg-[var(--surface-2)]/60">
                     <tr className="font-semibold">
-                      <td className="px-4 py-3">Total Out of Business</td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        {formatUsd(balance.withdrawn)}
+                      <td className="px-4 py-3">
+                        Total Out of Business
+                        {expenseChainFilter !== "" && (
+                          <span className="ml-2 font-normal text-[var(--muted)]">
+                            ({expenseChainFilter} only)
+                          </span>
+                        )}
                       </td>
-                      <td className="px-4 py-3" colSpan={3} />
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {formatUsd(
+                          expenseChainFilter === ""
+                            ? balance.withdrawn
+                            : ledgerTotal,
+                        )}
+                      </td>
+                      <td className="px-4 py-3" colSpan={4} />
                     </tr>
                   </tfoot>
                 </table>
@@ -2301,25 +2405,30 @@ interface SummaryStatProps {
 
 function SummaryStat({ label, value, hint, parts }: SummaryStatProps) {
   const shown = (parts ?? []).filter((p) => p.value !== 0);
+  // All five cards keep the same shape whatever they contain. Three things do
+  // that: h-full + flex-col so every card fills its grid row rather than
+  // hugging its own content; a reserved (min-h) slot for the optional split
+  // line, so a card without one is not shorter than the card with one; and
+  // mt-auto on the hint, which pins hints to the same baseline instead of
+  // letting them float wherever the text above happens to end. No wording or
+  // figure changes — only where the existing content sits.
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+    <div className="flex h-full min-h-[168px] flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
         {label}
       </div>
       <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
         {value}
       </div>
-      {shown.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
-          {shown.map((p, i) => (
-            <span key={p.label}>
-              {i > 0 && <span className="mr-2 opacity-50">·</span>}
-              {p.label}: {formatUsd(p.value)}
-            </span>
-          ))}
-        </div>
-      )}
-      {hint && <div className="mt-1 text-xs text-[var(--muted)]">{hint}</div>}
+      <div className="mt-1.5 min-h-[16px] flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
+        {shown.map((p, i) => (
+          <span key={p.label}>
+            {i > 0 && <span className="mr-2 opacity-50">·</span>}
+            {p.label}: {formatUsd(p.value)}
+          </span>
+        ))}
+      </div>
+      {hint && <div className="mt-auto pt-2 text-xs text-[var(--muted)]">{hint}</div>}
     </div>
   );
 }

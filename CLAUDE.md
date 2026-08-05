@@ -2401,6 +2401,45 @@ at the plan gate.
   0.5×1000) and Combined Earnings $12,777.50 → $13,897.50 (= 140 SUI × $8).
   tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Three Transfers-page changes, one file. Only the last one
+  writes data, and it only ever APPENDS.
+  (1) EVEN SUMMARY CARDS: all five balance cards now render identically
+  regardless of content. Three things do it — h-full + flex-col so each card
+  fills its grid row instead of hugging its own content, a reserved min-height
+  slot for the optional per-type split line (so the card without one is not
+  shorter than the card with one), and mt-auto on the hint so every hint sits on
+  the same baseline. Wording and figures untouched; measured all five at exactly
+  210px with identical tops.
+  (2) CHAIN FILTER on Expenses & Withdrawals. That table draws from TWO sources
+  — expense-tagged Transfers, which resolve a chain through the SAME
+  positionChainById map (already normalizeChain'd) the main list uses, and
+  logged Withdrawals, which have no position and are therefore UNLINKED, the
+  label the main list already gives chain-less rows. No second chain-detection
+  was written. TABS rather than the main list's grouped sections: this is one
+  flat table and per-chain sections would repeat its header; the tab row hides
+  itself entirely when everything is on one chain, and only chains present in
+  the data get a tab. A Chain column was added so the filter is legible when
+  "All" is selected. The footer follows the visible rows and SAYS SO when
+  filtered ("Total Out of Business (SUI only)"), rather than showing a different
+  number under the same words; unfiltered it is still balance.withdrawn exactly.
+  (3) AMOUNT-EDIT AUDIT NOTE: the edit forms overwrite `notes` wholesale, so
+  changing a figure without touching the note left nothing recording it. When
+  the amount actually moves, withAmountEditNote APPENDS
+  "· amount edited from $X to $Y on DD/MM/YYYY" to whatever note the user kept,
+  never replacing it — so the original wording survives and repeated edits read
+  as a trail. Applied to handleEdit (transfers) and handleEditWithdrawal.
+  Scoped to amount deliberately; stamping every field would bury the note.
+  Verified live (3 positions across SUI/BASE/SOLANA, 5 transfers, 1 withdrawal):
+  cards 210px x5; ledger tabs came back ["All","SUI","UNLINKED","BASE","SOLANA"]
+  — the same chain set, from the same helper, as the main list's byChain
+  sections; each tab filtered to its own rows with footers $100.00 / $75.00 /
+  $60.00 and "All" back to $265.00 = balance.withdrawn. Editing a transfer's
+  amount 250 → 300 gave notes "ORIGINAL NOTE · amount edited from $250.00 to
+  $300.00 on 05/08/2026"; a following notes-ONLY edit saved exactly
+  "REWRITTEN BY HAND" with no second fragment; a withdrawal 75 → 90 gave
+  "RENT · amount edited from $75.00 to $90.00 on 05/08/2026".
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
