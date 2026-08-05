@@ -10,6 +10,7 @@
 
 import type { FeeClaim, OutlierDismissal, Position, Transfer } from "./types";
 import { normalizeChain } from "./nameNormalization";
+import { isUnvaluedConvertedClaim } from "./calculations";
 
 // ---------------------------------------------------------------------------
 // Shared pair parsing
@@ -472,6 +473,89 @@ export function findChainMismatches(positions: Position[]): ChainMismatchRow[] {
   return rows.sort((a, b) => a.position.pair.localeCompare(b.position.pair));
 }
 
+
+// ---------------------------------------------------------------------------
+// Stale positions
+// ---------------------------------------------------------------------------
+
+// An open position that has not produced a fee claim in a while. Not
+// necessarily wrong — a quiet pool is still a real position — but it is the
+// shape of a position the user forgot to close, or forgot to log claims for,
+// so it is worth a look.
+export const STALE_POSITION_DAYS = 14;
+
+export interface StalePositionRow {
+  position: Position;
+  // Latest claim date, or the position's own entry date when it has never
+  // been claimed — the honest "last time anything happened here".
+  lastActivity: string;
+  daysSince: number;
+  claimCount: number;
+}
+
+// Only ACTIVE positions can be stale: a closed one is finished by definition
+// and nothing more is expected of it.
+export function findStalePositions(
+  positions: Position[],
+  claims: FeeClaim[],
+  now: Date = new Date(),
+): StalePositionRow[] {
+  const latestClaim = new Map<string, string>();
+  const claimCounts = new Map<string, number>();
+  for (const c of claims) {
+    if (!c.positionId) continue;
+    claimCounts.set(c.positionId, (claimCounts.get(c.positionId) ?? 0) + 1);
+    const seen = latestClaim.get(c.positionId);
+    if (seen === undefined || new Date(c.date) > new Date(seen)) {
+      latestClaim.set(c.positionId, c.date);
+    }
+  }
+  const rows: StalePositionRow[] = [];
+  for (const p of positions) {
+    if (p.status !== "active") continue;
+    const lastActivity = latestClaim.get(p.id) ?? p.entryDatetime;
+    const at = new Date(lastActivity).getTime();
+    // An unparseable date says nothing either way, so it is not flagged
+    // rather than being reported as infinitely stale.
+    if (!Number.isFinite(at)) continue;
+    const daysSince = (now.getTime() - at) / 86_400_000;
+    if (daysSince <= STALE_POSITION_DAYS) continue;
+    rows.push({
+      position: p,
+      lastActivity,
+      daysSince,
+      claimCount: claimCounts.get(p.id) ?? 0,
+    });
+  }
+  // Oldest first — the ones most worth looking at lead.
+  return rows.sort((a, b) => b.daysSince - a.daysSince);
+}
+
+// ---------------------------------------------------------------------------
+// Incomplete claims
+// ---------------------------------------------------------------------------
+
+export interface IncompleteClaimRow {
+  claim: FeeClaim;
+  position: Position | null;
+}
+
+// Claims marked converted to stablecoin but saved without a USD value. They
+// contribute $0 to Overall P&L, silently. The predicate is NOT redefined here:
+// isUnvaluedConvertedClaim in calculations.ts is the canonical definition and
+// is what calcOverallPnL counts, so the Data Health total and the P&L figure
+// can never disagree about which claims are affected.
+export function findIncompleteClaims(
+  claims: FeeClaim[],
+  positions: Position[],
+): IncompleteClaimRow[] {
+  const byId = new Map(positions.map((p) => [p.id, p]));
+  return claims
+    .filter(isUnvaluedConvertedClaim)
+    .map((claim) => ({ claim, position: byId.get(claim.positionId) ?? null }))
+    .sort((a, b) => (b.claim.date ?? "").localeCompare(a.claim.date ?? ""));
+}
+
 // ---------------------------------------------------------------------------
 // Consolidated report (Part 4)
 // ---------------------------------------------------------------------------
@@ -483,6 +567,8 @@ export interface DataHealthCounts {
   chainMismatch: number;
   claimOutliers: number;
   transferOutliers: number;
+  stalePositions: number;
+  incompleteClaims: number;
   total: number;
 }
 
@@ -493,6 +579,8 @@ export interface DataHealthReport {
   chainMismatch: ChainMismatchRow[];
   claimOutliers: OutlierRow[];
   transferOutliers: OutlierRow[];
+  stalePositions: StalePositionRow[];
+  incompleteClaims: IncompleteClaimRow[];
   counts: DataHealthCounts;
 }
 
@@ -512,6 +600,8 @@ export function computeDataHealth(
     positions,
     dismissals,
   );
+  const stalePositions = findStalePositions(positions, claims);
+  const incompleteClaims = findIncompleteClaims(claims, positions);
   const counts: DataHealthCounts = {
     positionSymbol: positionSymbol.length,
     claimSymbol: claimSymbol.length,
@@ -519,13 +609,17 @@ export function computeDataHealth(
     chainMismatch: chainMismatch.length,
     claimOutliers: claimOutliers.length,
     transferOutliers: transferOutliers.length,
+    stalePositions: stalePositions.length,
+    incompleteClaims: incompleteClaims.length,
     total:
       positionSymbol.length +
       claimSymbol.length +
       transferSymbol.length +
       chainMismatch.length +
       claimOutliers.length +
-      transferOutliers.length,
+      transferOutliers.length +
+      stalePositions.length +
+      incompleteClaims.length,
   };
   return {
     positionSymbol,
@@ -534,6 +628,8 @@ export function computeDataHealth(
     chainMismatch,
     claimOutliers,
     transferOutliers,
+    stalePositions,
+    incompleteClaims,
     counts,
   };
 }

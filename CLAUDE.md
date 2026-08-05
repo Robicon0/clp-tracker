@@ -2462,6 +2462,41 @@ at the plan gate.
   pair" and singular "1 transfer has a token that doesn't match its position's
   pair", both read straight from the DOM. tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Two new Data Health checks — stale positions and incomplete
+  claims — added to lib/dataHealth.ts in the same shape as the existing find*
+  functions and folded into DataHealthCounts / DataHealthReport /
+  computeDataHealth. Detection only; nothing they reference was recalculated.
+  STALE POSITIONS (findStalePositions, STALE_POSITION_DAYS = 14): for each
+  ACTIVE position, the latest linked claim date, falling back to entryDatetime
+  when it has never been claimed — the honest "last time anything happened
+  here". Flagged past 14 days, sorted oldest-first. Closed positions are
+  excluded by definition (they are finished, nothing more is expected), and an
+  unparseable date is skipped rather than reported as infinitely stale.
+  INCOMPLETE CLAIMS (findIncompleteClaims): wraps isUnvaluedConvertedClaim from
+  calculations.ts UNCHANGED — the canonical predicate calcOverallPnL already
+  counts — so the Data Health total and the P&L figure can never disagree about
+  which claims are affected. dataHealth.ts now imports from calculations.ts for
+  the first time; the dependency runs one way only.
+  UI: two more entries in the existing Dashboard card, both AMBER not red — a
+  quiet pool and a claim awaiting its value are "worth a look", not "definitely
+  wrong" like a token typo. Positions gained a StalePositionsBanner mirroring
+  ChainMismatchBanner (Review opens Edit; reports, never repairs). Claims got NO
+  new banner: its "N claims need a USD value" banner from 78ff8a8 already IS
+  this check, same predicate and same count, so it only needed the
+  #incomplete-claims anchor the card deep-links to — a second banner would have
+  shown the user the same claims twice.
+  Verified live with a seed built to sit either side of every boundary
+  (5 positions, 4 claims): Dashboard read "Data Health — 3 issues to review",
+  "Positions with no recent activity 2", "Claims missing a USD value 1".
+  Flagged: a position last claimed 40 days ago and one never claimed, opened 30
+  days ago. NOT flagged: claimed yesterday, opened 3 days ago with no claims,
+  and a closed position 200 days old. Claim flagged: converted with a null
+  value; not flagged: unconverted with a null value. The positions banner
+  rendered both rows oldest-first, distinguishing "last claim 26/06/2026 · 40
+  days ago" from "never claimed · opened 06/07/2026 · 30 days ago"; the
+  /claims#incomplete-claims deep link resolved to the existing banner reading
+  "1 claim needs a USD value". tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

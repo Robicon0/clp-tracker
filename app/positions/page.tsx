@@ -25,7 +25,10 @@ import {
 import { createUpsideTransfer } from "../../lib/transferAutomation";
 import {
   findChainMismatches,
+  findStalePositions,
   type ChainMismatchRow,
+  type StalePositionRow,
+  STALE_POSITION_DAYS,
 } from "../../lib/dataHealth";
 import { normalizeChain } from "../../lib/nameNormalization";
 import {
@@ -1052,6 +1055,7 @@ export default function PositionsPage() {
   const suspectScalp = hydrated ? findSuspectScalpPositions(positions) : [];
   const symbolMismatches = hydrated ? findSymbolPairMismatches(positions) : [];
   const chainMismatches = hydrated ? findChainMismatches(positions) : [];
+  const stalePositions = hydrated ? findStalePositions(positions, claims) : [];
 
   const persistFull = (records: BuiltRecords, mode: "add" | "edit") => {
     if (mode === "add") {
@@ -1260,6 +1264,13 @@ export default function PositionsPage() {
       {chainMismatches.length > 0 && (
         <ChainMismatchBanner
           rows={chainMismatches}
+          onEdit={(p) => setModal({ kind: "edit", position: p })}
+        />
+      )}
+
+      {stalePositions.length > 0 && (
+        <StalePositionsBanner
+          rows={stalePositions}
           onEdit={(p) => setModal({ kind: "edit", position: p })}
         />
       )}
@@ -1642,6 +1653,64 @@ function ChainMismatchBanner({
               className="rounded-md border border-red-500/50 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/10"
             >
               Fix
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Active positions with nothing logged against them for a while. Amber, not
+// red: a quiet pool is a perfectly real position, so this asks a question
+// rather than reporting an error. Reports only — no data is touched.
+function StalePositionsBanner({
+  rows,
+  onEdit,
+}: {
+  rows: StalePositionRow[];
+  onEdit: (p: Position) => void;
+}) {
+  return (
+    <div
+      id="stale-positions"
+      className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-amber-300">
+        {rows.length}{" "}
+        {rows.length === 1 ? "open position has" : "open positions have"}{" "}
+        had no activity in over {STALE_POSITION_DAYS} days
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        Counted from the most recent fee claim, or the opening date when nothing
+        has ever been claimed. A quiet pool is fine — but so is a position that
+        was closed without being marked closed, or one whose claims never got
+        logged. Nothing changes unless you edit it.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.position.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {r.position.pair}
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              {r.claimCount === 0
+                ? "never claimed · opened"
+                : "last claim"}{" "}
+              <span className="font-medium text-amber-300">
+                {formatDateTime24(r.lastActivity).split(" ")[0]}
+              </span>{" "}
+              · {Math.floor(r.daysSince)} days ago
+            </span>
+            <button
+              type="button"
+              onClick={() => onEdit(r.position)}
+              className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+            >
+              Review
             </button>
           </li>
         ))}

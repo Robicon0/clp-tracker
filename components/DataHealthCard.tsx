@@ -53,6 +53,20 @@ export function DataHealthCard({ report }: { report: DataHealthReport }) {
       href: "/transfers#transfer-outliers",
       tone: "amber" as const,
     },
+    // Amber, not red: a quiet pool and a claim awaiting its USD value are
+    // both "worth a look", not "definitely wrong" like a token typo.
+    {
+      label: "Positions with no recent activity",
+      count: counts.stalePositions,
+      href: "/positions#stale-positions",
+      tone: "amber" as const,
+    },
+    {
+      label: "Claims missing a USD value",
+      count: counts.incompleteClaims,
+      href: "/claims#incomplete-claims",
+      tone: "amber" as const,
+    },
   ].filter((c) => c.count > 0);
 
   if (counts.total === 0) {
@@ -63,8 +77,8 @@ export function DataHealthCard({ report }: { report: DataHealthReport }) {
             Data Health
           </span>
           <span className="text-[12px] text-[var(--muted)]">
-            No issues detected — every symbol matches its pair and no amounts
-            look unusual.
+            No issues detected — every symbol matches its pair, no amounts look
+            unusual, and nothing is sitting incomplete or idle.
           </span>
         </div>
       </div>

@@ -458,8 +458,15 @@ export default function ClaimsPage() {
         />
       </div>
 
+      {/* This banner already IS the Data Health "incomplete claims" surface —
+          same canonical predicate (isUnvaluedConvertedClaim), same count. It
+          only needed the anchor the Dashboard card deep-links to; adding a
+          second banner would have shown the user the same claims twice. */}
       {needsValueCount > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4">
+        <div
+          id="incomplete-claims"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4"
+        >
           <div>
             <p className="text-[13px] font-medium text-amber-300">
               {needsValueCount}{" "}

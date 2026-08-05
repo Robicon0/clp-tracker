@@ -62,6 +62,8 @@ const EMPTY_DATA_HEALTH: DataHealthReport = {
   chainMismatch: [],
   claimOutliers: [],
   transferOutliers: [],
+  stalePositions: [],
+  incompleteClaims: [],
   counts: {
     positionSymbol: 0,
     claimSymbol: 0,
@@ -69,6 +71,8 @@ const EMPTY_DATA_HEALTH: DataHealthReport = {
     chainMismatch: 0,
     claimOutliers: 0,
     transferOutliers: 0,
+    stalePositions: 0,
+    incompleteClaims: 0,
     total: 0,
   },
 };
