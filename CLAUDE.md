@@ -2401,7 +2401,7 @@ at the plan gate.
   0.5×1000) and Combined Earnings $12,777.50 → $13,897.50 (= 140 SUI × $8).
   tsc/lint/build clean.
 
-- PLACEHOLDER_HASH: Three Transfers-page changes, one file. Only the last one
+- 1cbc9ee: Three Transfers-page changes, one file. Only the last one
   writes data, and it only ever APPENDS.
   (1) EVEN SUMMARY CARDS: all five balance cards now render identically
   regardless of content. Three things do it — h-full + flex-col so each card
