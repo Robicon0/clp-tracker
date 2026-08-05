@@ -2368,7 +2368,7 @@ at the plan gate.
   Collapsing that last duplicate means lifting the hook out of the shared
   GrowthTarget component, which is a wider refactor than this task.
 
-- PLACEHOLDER_HASH: Collapsed the duplicate /api/prices call on the Dashboard
+- 7d1ae7b: Collapsed the duplicate /api/prices call on the Dashboard
   and Total P&L — measured 2 → 1 per full page load on both. Wiring only; every
   price consumer still shows live prices, and no calculation changed (same
   mergePrices order, same calcBusinessPnL / calcUnconvertedHoldings calls).
