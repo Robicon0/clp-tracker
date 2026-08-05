@@ -2440,6 +2440,28 @@ at the plan gate.
   "RENT · amount edited from $75.00 to $90.00 on 05/08/2026".
   tsc/lint/build clean.
 
+- PLACEHOLDER_HASH: Fixed the transfer-symbol-mismatch banner heading, which
+  rendered "2 transfers havea token that doesn't match its position's pair".
+  The space before "a" now lives in an explicit {" "}. One file, one heading.
+  MECHANISM, finally pinned down by reading the rendered text nodes rather than
+  guessing: the heading produced ["2", " ", "transfers have", "a token…"]. A JSX
+  text chunk that WRAPS ACROSS A NEWLINE loses its leading space, so
+  `{expr} a\n token…` collapses to `{expr}a token…`. A space sitting entirely on
+  one line survives — which is exactly why the space after {rows.length} was
+  fine while the one after the ternary was not, in the same heading.
+  SWEPT THE REST OF THE FILE and, importantly, did NOT fix by pattern-match:
+  the scan surfaced five more JSX text wraps with the IDENTICAL shape — the
+  bulk delete confirm, the deploy and platform skip-previews, and the revert
+  skip-preview — and every one of them was verified live to render correctly
+  ("…1 is marked as an Expense — that money has…", "…restore them from Recently
+  Deleted.", "…2 were created by hand, not by the automation, so they have…").
+  So the shape alone does NOT predict the bug; only this heading was broken and
+  only this heading was touched. Anything similar in future should be checked
+  by reading the rendered string, not by eye.
+  Verified: plural "2 transfers have a token that doesn't match its position's
+  pair" and singular "1 transfer has a token that doesn't match its position's
+  pair", both read straight from the DOM. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.

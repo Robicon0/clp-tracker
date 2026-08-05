@@ -755,8 +755,13 @@ function TransferSymbolBanner({
       className="rounded-lg border border-red-500/50 bg-red-500/[0.07] px-5 py-4"
     >
       <h2 className="text-sm font-semibold text-red-300">
-        {rows.length} {rows.length === 1 ? "transfer has" : "transfers have"} a
-        token that doesn&apos;t match its position&apos;s pair
+        {/* The space before "a" must live in an explicit {" "}: a JSX text
+            chunk that wraps across a newline loses its leading space, which
+            rendered "transfers havea token". A space that sits entirely on one
+            line (the one after {rows.length}) survives — that is why only this
+            one broke. */}
+        {rows.length} {rows.length === 1 ? "transfer has" : "transfers have"}{" "}
+        a token that doesn&apos;t match its position&apos;s pair
       </h2>
       <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
         A transfer&apos;s token should belong to the pair of the position it is
