@@ -2471,39 +2471,62 @@ interface SummaryStatProps {
 }
 
 function SummaryStat({ label, value, hint, parts }: SummaryStatProps) {
+  const [open, setOpen] = useState(false);
   const shown = (parts ?? []).filter((p) => p.value !== 0);
-  // All five cards keep the same shape whatever they contain. Three things do
-  // that: h-full + flex-col so every card fills its grid row rather than
-  // hugging its own content; a reserved (min-h) slot for the optional split
-  // line, so a card without one is not shorter than the card with one; and
-  // mt-auto on the hint, which pins hints to the same baseline instead of
-  // letting them float wherever the text above happens to end. No wording or
-  // figure changes — only where the existing content sits.
+  // Explanatory text is hidden until asked for, so every card reads as label +
+  // figure and the row is even however much a given card has to explain. The
+  // old equalising devices (min-h-[168px], the reserved split-line slot,
+  // mt-auto on the hint) are gone with it: collapsed content is identical
+  // across cards, so the height matches on its own, and forcing the old height
+  // onto a compact card would only add dead space. self-start keeps an
+  // EXPANDED card from stretching its neighbours — expanding one card is a
+  // deliberate act on that card alone. Wording and figures are untouched.
+  const hasDetails = hint !== undefined || shown.length > 0;
   return (
-    <div className="flex h-full min-h-[168px] flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
-      <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+    <div className="flex flex-col self-start rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+      {/* Two lines reserved for the label: at five columns some of these
+          labels wrap and some don't, which would otherwise leave the collapsed
+          row uneven by a line for a reason that has nothing to do with what
+          the card contains. This is the ONLY reserved slot left. */}
+      <div className="min-h-[2rem] text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
         {label}
       </div>
       <div className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
         {value}
       </div>
-      {/* The separator belongs to the part BEFORE it, not the one after. As a
-          leading "·" it was a separate inline box that could wrap with the next
-          part, dropping a dangling dot onto the start of the second line;
-          trailing, it can only ever end a line, which reads as "continues
-          below". Same reason the card reserves this slot with min-h: the row
-          must look identical whether it wraps or not. */}
-      <div className="mt-1.5 flex min-h-[16px] flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
-        {shown.map((p, i) => (
-          <span key={p.label} className="whitespace-nowrap">
-            {p.label}: {formatUsd(p.value)}
-            {i < shown.length - 1 && (
-              <span className="ml-2 opacity-50">·</span>
-            )}
-          </span>
-        ))}
-      </div>
-      {hint && <div className="mt-auto pt-2 text-xs text-[var(--muted)]">{hint}</div>}
+      {/* A card with nothing to explain gets no toggle — there is nothing
+          behind it to open. */}
+      {hasDetails && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="mt-2 flex w-fit items-center gap-1 text-[11px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
+        >
+          Details
+          <span className="text-[9px]">{open ? "▴" : "▾"}</span>
+        </button>
+      )}
+      {open && shown.length > 0 && (
+        /* The separator belongs to the part BEFORE it, not the one after. As a
+           leading "·" it was a separate inline box that could wrap with the
+           next part, dropping a dangling dot onto the start of the second
+           line; trailing, it can only ever end a line, which reads as
+           "continues below". */
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-[var(--muted)]">
+          {shown.map((p, i) => (
+            <span key={p.label} className="whitespace-nowrap">
+              {p.label}: {formatUsd(p.value)}
+              {i < shown.length - 1 && (
+                <span className="ml-2 opacity-50">·</span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      {open && hint && (
+        <div className="pt-2 text-xs text-[var(--muted)]">{hint}</div>
+      )}
     </div>
   );
 }
