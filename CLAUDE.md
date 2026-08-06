@@ -2653,6 +2653,40 @@ at the plan gate.
   idle 2" linking to /transfers#idle-earnings. Seeds removed.
   tsc/lint/build clean.
 
+- d8e4048: Transfers summary cards — hint + breakdown line collapsed behind a
+  per-card "Details" toggle (2026-08-06). Show/hide only: no wording, figure,
+  formula or predicate touched, and the diff is one component (SummaryStat in
+  app/transfers/page.tsx). Collapsed by default, so every card reads as label +
+  number and the row is even regardless of how much a given card has to explain.
+  A card with NO hint and no parts renders NO toggle (Total Transfers, Transfers
+  Net Total) — there is nothing behind it to open. State is local to each card,
+  so opening one leaves the others as they were.
+  THE EQUALISING DEVICES FROM 1cbc9ee ARE GONE, deliberately, because hiding the
+  variable content removes the thing they existed to compensate for:
+  min-h-[168px] on the card, the reserved min-h slot for the split line, and
+  mt-auto on the hint were all there to stop a card with more text being taller
+  than one with less. Collapsed content is now identical across cards, so the
+  heights match on their own, and keeping the old floor would have left ~45px of
+  dead space under every collapsed card — exactly what the task ruled out.
+  ONE RESERVED SLOT REMAINS, and it is a different problem: min-h-[2rem] on the
+  LABEL. At five columns some of these labels wrap to two lines ("Deployed into
+  Positions (USD)") and some don't, which left the collapsed row uneven by a
+  line for a reason that has nothing to do with card content — measured 123px vs
+  140px before the slot, 139/139/140/140/139 after.
+  self-start on the card is what lets an EXPANDED card be taller than its
+  neighbours: grid items stretch by default, so without it, opening one card
+  would have grown all five and put the dead space back in the other four.
+  Expanding one card is a deliberate act on that card alone.
+  Verified live on localhost:3001 with a seeded 5-transfer set spanning all four
+  money states (lifetime $725 / expenses $75 / deployed $50 / transferred $400 /
+  available $200), with the BEFORE text captured by stashing the diff: all five
+  cards collapsed on load at 139-140px; expanding Transferred to Platforms grew
+  only that card (140 → 253px) and re-collapsing returned every height exactly;
+  and with all five opened, each card's text — stripped of the new "Details"
+  line — string-compared EQUAL to its pre-change text, including the Fees
+  $100.00 · OOR Upside $300.00 split and every hint. The two hint-less cards
+  rendered 0 buttons. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
