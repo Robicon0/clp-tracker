@@ -714,6 +714,13 @@ export default function ClaimsPage() {
         <ClaimFormModal
           mode="add"
           positions={positions}
+          // If the page is already filtered to one position, that is almost
+          // certainly the position being claimed — pre-select it rather than
+          // making the user pick it a second time. Still editable; on "All
+          // positions" the form opens blank exactly as before.
+          initialPositionId={
+            filters.positionId === ALL ? undefined : filters.positionId
+          }
           onCancel={() => setModal({ kind: "none" })}
           onSubmit={handleAdd}
         />

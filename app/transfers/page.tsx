@@ -187,7 +187,9 @@ function buildTransfer(id: string, form: TransferFormState): Transfer {
     // decided") until the user marks them deployed or edits to an expense.
     moneyStatus:
       form.transferType === "undeployed" ? undefined : form.moneyStatus,
-    notes: form.notes.trim().toUpperCase(),
+    // Trimmed but NOT upper-cased: notes are prose. Token, platform and
+    // destination above stay uppercase — those are grouped and matched on.
+    notes: form.notes.trim(),
   };
 }
 
@@ -221,7 +223,7 @@ function buildExpense(id: string, form: ExpenseFormState): Transfer {
     destination: "",
     transferType: "expense",
     moneyStatus: "expense",
-    notes: form.notes.trim().toUpperCase(),
+    notes: form.notes.trim(),
   };
 }
 
@@ -314,7 +316,7 @@ function buildWithdrawal(id: string, form: WithdrawalFormState): Withdrawal {
     date: form.date,
     amount: num(form.amount),
     method: form.method.trim().toUpperCase(),
-    notes: form.notes.trim().toUpperCase(),
+    notes: form.notes.trim(),
   };
 }
 
@@ -2902,7 +2904,8 @@ function TransferFormModal({
                 rows={2}
                 className={inputClass}
                 value={form.notes}
-                onChange={upper("notes")}
+                // Saved as typed — see the note in buildTransfer.
+                onChange={(e) => set("notes", e.target.value)}
               />
             </Field>
           </div>
@@ -2993,7 +2996,9 @@ function WithdrawalFormModal({
                 rows={2}
                 className={inputClass}
                 value={form.notes}
-                onChange={(e) => set("notes", e.target.value.toUpperCase())}
+                // Saved as typed. Method above keeps its uppercase — it is a
+                // short label the ledger groups by eye, not prose.
+                onChange={(e) => set("notes", e.target.value)}
               />
             </Field>
           </div>

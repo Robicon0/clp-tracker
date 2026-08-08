@@ -162,7 +162,9 @@ function buildClaim(id: string, form: ClaimFormState): FeeClaim {
     stableAmount: optionalNum(form.stableAmount),
     currentPositionValue: optionalNum(form.currentPositionValue),
     txId: form.txId.trim() === "" ? null : form.txId.trim(),
-    notes: form.notes.trim().toUpperCase(),
+    // Trimmed but NOT upper-cased: the save path has to agree with the input,
+    // or typed case would survive every keystroke and be lost on Save.
+    notes: form.notes.trim(),
   };
 }
 
@@ -311,16 +313,20 @@ function FormActions({ onCancel, submitLabel }: FormActionsProps) {
 
 const PRESET_STABLES = ["USDC", "USDT"] as const;
 
+// seedPositionId pre-fills the position and everything derived from it. It is
+// either a LOCKED position (the /positions claim flow — the field is then
+// read-only) or a merely PRE-SELECTED one (the /claims page passing its current
+// position filter through), which seeds identically but stays editable.
 function initialForm(
   mode: "add" | "edit",
   claim: FeeClaim | undefined,
-  lockedPositionId: string | undefined,
+  seedPositionId: string | undefined,
   positions: Position[],
 ): ClaimFormState {
   if (mode === "edit" && claim) return claimToForm(claim);
   const base = { ...EMPTY_FORM, date: todayDateInput() };
-  if (lockedPositionId) {
-    const p = positions.find((pos) => pos.id === lockedPositionId);
+  if (seedPositionId) {
+    const p = positions.find((pos) => pos.id === seedPositionId);
     if (p) {
       base.positionId = p.id;
       base.pair = p.pair;
@@ -338,6 +344,9 @@ export interface ClaimFormModalProps {
   positions: Position[];
   claim?: FeeClaim;
   lockedPositionId?: string;
+  // Pre-selects a position without locking it — the user can still change it.
+  // Ignored when lockedPositionId is set, which is the stronger statement.
+  initialPositionId?: string;
   onSubmit: (claim: FeeClaim) => void;
   onCancel: () => void;
 }
@@ -347,11 +356,12 @@ export function ClaimFormModal({
   positions,
   claim,
   lockedPositionId,
+  initialPositionId,
   onSubmit,
   onCancel,
 }: ClaimFormModalProps) {
   const [form, setForm] = useState<ClaimFormState>(() =>
-    initialForm(mode, claim, lockedPositionId, positions),
+    initialForm(mode, claim, lockedPositionId ?? initialPositionId, positions),
   );
   const [positionError, setPositionError] = useState<string | null>(null);
   const [valueError, setValueError] = useState<string | null>(null);
@@ -699,13 +709,18 @@ export function ClaimFormModal({
         </Section>
 
         <Section title="Notes">
-          <textarea
-            id="notes"
-            rows={2}
-            className={inputClass}
-            value={form.notes}
-            onChange={upper("notes")}
-          />
+          <Field label="Notes" htmlFor="notes">
+            <textarea
+              id="notes"
+              rows={2}
+              className={inputClass}
+              placeholder="optional"
+              value={form.notes}
+              // Free text, saved as typed — the pair/platform/chain/symbol
+              // fields above keep upper() because the app groups on them.
+              onChange={(e) => set("notes", e.target.value)}
+            />
+          </Field>
         </Section>
 
         <FormActions onCancel={onCancel} submitLabel={submitLabel} />

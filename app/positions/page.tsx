@@ -849,7 +849,7 @@ function buildRecords(
     shortLoss: sLoss,
     shortFundingFees: sFunding,
     shortTotal: sTotal,
-    shortNotes: form.shortNotes.trim() ? form.shortNotes.trim().toUpperCase() : null,
+    shortNotes: form.shortNotes.trim() ? form.shortNotes.trim() : null,
     outOfRangeUpside: ooUp,
     outOfRangeDownside: ooDown,
     scalp: optionalNum(form.scalp),
@@ -857,7 +857,9 @@ function buildRecords(
     closeTxLink: isClosed
       ? (form.closeTxLink.trim() === "" ? null : form.closeTxLink.trim())
       : (base?.closeTxLink ?? null),
-    notes: form.notes.trim().toUpperCase(),
+    // Trimmed but NOT upper-cased: the save path has to agree with the input,
+    // or typed case would survive every keystroke and then be lost on Save.
+    notes: form.notes.trim(),
     status: base?.status ?? "active",
   };
 
@@ -3291,7 +3293,11 @@ function PositionFormModal({
                 rows={2}
                 className={inputClass}
                 value={form.notes}
-                onChange={upper("notes")}
+                // Free text, saved as typed. upper() stays on pair, chain,
+                // protocol and the token symbols — those are identifiers the
+                // app groups and matches on, so their case must be canonical.
+                // A note is prose and nobody writes prose in capitals.
+                onChange={(e) => set("notes", e.target.value)}
               />
             </Field>
           </div>
@@ -3694,7 +3700,8 @@ function PositionFormModal({
                 className={inputClass}
                 placeholder="optional"
                 value={form.shortNotes}
-                onChange={upper("shortNotes")}
+                // Free text, saved as typed (same reasoning as Notes above).
+                onChange={(e) => set("shortNotes", e.target.value)}
               />
             </Field>
           </div>
