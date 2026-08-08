@@ -69,6 +69,41 @@ function positionFeeAPR(position: Position, allClaims: FeeClaim[]): number {
   return calcFeeAPR(totalFees, getEffectiveDeposited(position), days);
 }
 
+// What ONE claim earned, annualised over the stretch it actually covers: from
+// the previous claim on the same position (or the position's entry, for the
+// first one) to this claim's date. Same formula as positionFeeAPR — the only
+// difference is the inputs are claim-scoped instead of cumulative, so the two
+// columns can never disagree about how an APR is computed (Invariant #6).
+//
+// The previous claim is found in the FULL claim list, never the filtered one:
+// a claim's own APR is a property of the record, not of what the page happens
+// to be showing, so filtering must not silently re-baseline it (the same
+// reasoning as the Average Position APR fix in 4ac704f).
+//
+// null means "not computable", rendered as "—": either the claim has no USD
+// value yet, or the window is zero/negative (two claims on one day, or a claim
+// backdated before its position's entry). calcFeeAPR returns 0 for a
+// non-positive window, and a flat 0.00% would read as a real, earned-nothing
+// result rather than an unanswerable question.
+function claimFeeAPR(
+  claim: FeeClaim,
+  position: Position,
+  allClaims: FeeClaim[],
+): number | null {
+  if (claim.stableAmount === null || claim.stableAmount === undefined) {
+    return null;
+  }
+  const samePosition = allClaims
+    .filter((c) => c.positionId === claim.positionId)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const index = samePosition.findIndex((c) => c.id === claim.id);
+  const previous = index > 0 ? samePosition[index - 1] : undefined;
+  const since = previous ? previous.date : position.entryDatetime;
+  const days = calcDaysActive(since, claim.date);
+  if (days <= 0) return null;
+  return calcFeeAPR(claim.stableAmount, getEffectiveDeposited(position), days);
+}
+
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -600,6 +635,9 @@ export default function ClaimsPage() {
                   <th className="px-4 py-3 text-right font-medium">
                     Position Fee APR
                   </th>
+                  <th className="px-4 py-3 text-right font-medium">
+                    This Claim&apos;s APR
+                  </th>
                   <th className="px-4 py-3 text-right font-medium">Token 1</th>
                   <th className="px-4 py-3 text-right font-medium">Token 2</th>
                   <th className="px-4 py-3 text-left font-medium">Converted</th>
@@ -616,6 +654,9 @@ export default function ClaimsPage() {
                   const positionApr = parentPosition
                     ? formatPercent(positionFeeAPR(parentPosition, claims))
                     : "—";
+                  const ownApr = parentPosition
+                    ? claimFeeAPR(claim, parentPosition, claims)
+                    : null;
                   return (
                   <tr
                     key={claim.id}
@@ -635,6 +676,9 @@ export default function ClaimsPage() {
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {positionApr}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {ownApr === null ? "—" : formatPercent(ownApr)}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {formatToken(claim.token1Amount)}{" "}
