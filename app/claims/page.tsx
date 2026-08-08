@@ -16,7 +16,6 @@ import {
   correctClaimSymbols,
   findClaimSymbolMismatches,
   getEffectiveDeposited,
-  getEffectiveTotalFees,
   isUnvaluedConvertedClaim,
   summarizeClaimContamination,
   type ClaimContaminationRow,
@@ -63,17 +62,14 @@ function formatPercent(value: number): string {
   return `${safe.toFixed(2)}%`;
 }
 
-function positionFeeAPR(position: Position, allClaims: FeeClaim[]): number {
-  const days = calcDaysActive(position.entryDatetime, position.exitDatetime);
-  const totalFees = getEffectiveTotalFees(position, allClaims);
-  return calcFeeAPR(totalFees, getEffectiveDeposited(position), days);
-}
-
 // What ONE claim earned, annualised over the stretch it actually covers: from
 // the previous claim on the same position (or the position's entry, for the
-// first one) to this claim's date. Same formula as positionFeeAPR — the only
-// difference is the inputs are claim-scoped instead of cumulative, so the two
-// columns can never disagree about how an APR is computed (Invariant #6).
+// first one) to this claim's date. Runs through the shared calcFeeAPR with
+// claim-scoped inputs rather than cumulative ones, so it can never disagree
+// with any other APR in the app about how the rate is computed (Invariant #6).
+// (The cumulative per-position column that used to sit beside this one was
+// removed with its helper; the summary cards' Average Position APR is a
+// separate figure from calcPortfolioSummary and is unaffected.)
 //
 // The previous claim is found in the FULL claim list, never the filtered one:
 // a claim's own APR is a property of the record, not of what the page happens
@@ -633,9 +629,6 @@ export default function ClaimsPage() {
                   <th className="px-4 py-3 text-left font-medium">Platform</th>
                   <th className="px-4 py-3 text-left font-medium">Chain</th>
                   <th className="px-4 py-3 text-right font-medium">
-                    Position Fee APR
-                  </th>
-                  <th className="px-4 py-3 text-right font-medium">
                     This Claim&apos;s APR
                   </th>
                   <th className="px-4 py-3 text-right font-medium">Token 1</th>
@@ -651,9 +644,6 @@ export default function ClaimsPage() {
               <tbody className="divide-y divide-[var(--border)]">
                 {filteredSorted.map((claim) => {
                   const parentPosition = positionById.get(claim.positionId);
-                  const positionApr = parentPosition
-                    ? formatPercent(positionFeeAPR(parentPosition, claims))
-                    : "—";
                   const ownApr = parentPosition
                     ? claimFeeAPR(claim, parentPosition, claims)
                     : null;
@@ -673,9 +663,6 @@ export default function ClaimsPage() {
                     </td>
                     <td className="px-4 py-3 text-[var(--muted)]">
                       {claim.chain}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums">
-                      {positionApr}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {ownApr === null ? "—" : formatPercent(ownApr)}
