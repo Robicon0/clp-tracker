@@ -2756,6 +2756,43 @@ at the plan gate.
   text-transform none, and typing "Mixed Case still works" was kept verbatim.
   Seeds removed. tsc/lint/build clean.
 
+- d30d258: Fee Claims — per-claim APR column, "This Claim's APR", beside the
+  existing Position Fee APR (2026-08-08). Purely additive: one new read on one
+  page, no existing figure recomputed and no formula written.
+  WHAT IT ANSWERS: Position Fee APR is cumulative — every claim row on a
+  position shows the same number, the position's lifetime rate. The new column
+  is that same rate for ONE claim over the stretch it actually covers, so a
+  strong month and a quiet month stop looking identical.
+  claimFeeAPR(claim, position, allClaims) in app/claims/page.tsx, same shape as
+  positionFeeAPR directly above it: fees = claim.stableAmount, deposited =
+  getEffectiveDeposited(position), days = calcDaysActive(previous claim's date,
+  this claim's date), all fed to the SAME calcFeeAPR. Claim-scoped inputs into
+  the existing formula — no second definition of an APR (Invariant #6).
+  BASELINE COMES FROM THE FULL CLAIM LIST, never the filtered one: the previous
+  claim is found by sorting every claim on that position by date ascending. A
+  claim's own APR is a property of the record, not of what the page happens to
+  be showing, so a filter must not silently re-baseline it — the same reasoning
+  as the Average Position APR fix in 4ac704f. Verified by measurement, not
+  assertion (below). The FIRST claim on a position has no predecessor and
+  measures from position.entryDatetime.
+  "—" RATHER THAN 0.00% in two cases, and the distinction is the point: a claim
+  with no USD value yet (stableAmount null), and a non-positive window — two
+  claims on the same calendar day, or a claim backdated before its position's
+  entry. calcFeeAPR returns 0 for a non-positive window, and a flat 0.00% would
+  read as a real "earned nothing" result rather than an unanswerable question.
+  Same treatment incomplete claims already get elsewhere.
+  Verified live on localhost:3001 against hand calculations, one position
+  (deposited $10,000, entry 01/06/2026) with five claims: first claim
+  11/06 $100 → 36.50% (10 days from ENTRY); middle claim 21/06 $200 → 73.00%
+  (10 days from the PREVIOUS CLAIM — an entry-based window would have given
+  36.50%, so the two cases are distinguishable and correct); 01/07 $300 →
+  109.50%; a null-value claim → "—", not 0.00%; a second claim on the same day
+  as another → "—". Position Fee APR read 34.73% on every row before and after,
+  unchanged. FILTER INDEPENDENCE measured directly: with C1 and C2 hidden by a
+  chain filter, the 01/07 claim still read 109.50% — a filtered baseline would
+  have re-based it to entry and shown 36.50%. Zero console errors; seeds
+  removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
