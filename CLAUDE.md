@@ -2687,6 +2687,58 @@ at the plan gate.
   $100.00 · OOR Upside $300.00 split and every hint. The two hint-less cards
   rendered 0 buttons. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- 11dc7bb: Add Claim pre-fills the filtered position; notes fields keep the case
+  you type (2026-08-08). No calculation changed anywhere — a seeded form field
+  and a dropped .toUpperCase().
+  TASK A — ClaimFormModal gained an optional initialPositionId. The modal ALREADY
+  had lockedPositionId (the /positions claim flow, which also renders the field
+  read-only), so the seeding logic was reused rather than duplicated: initialForm's
+  parameter is now seedPositionId and the component passes lockedPositionId ??
+  initialPositionId. Locked wins when both are set — it is the stronger statement.
+  The /claims page passes filters.positionId unless it is ALL, so a page filtered
+  to one position opens Add Claim with that position (and its pair/platform/chain/
+  symbols) already filled and still EDITABLE; on "All positions" the form opens
+  blank exactly as before.
+  TASK B — the premise was wrong and worth recording: the Fee Claims form ALREADY
+  had a Notes field, wired to form.notes and written by buildClaim (FeeClaim.notes
+  is not unused). What it lacked was the Field wrapper the Position/Transfer forms
+  use, so it rendered as a bare textarea under a section heading with no label. It
+  now uses <Field label="Notes"> + rows={2} + placeholder="optional", matching them.
+  No new state, no type change.
+  TASK C — forced uppercase removed from every user-typed notes field: claim
+  (ClaimFormModal), position notes and short-position notes (app/positions/page
+  .tsx), transfer notes and withdrawal notes (app/transfers/page.tsx).
+  BOTH ENDS HAD TO CHANGE, which the task's line numbers only covered half of:
+  each of these ALSO ran .trim().toUpperCase() in its build* function
+  (buildClaim, buildRecords' notes + shortNotes, buildTransfer, buildExpense,
+  buildWithdrawal). Fixing only the onChange would have let typed case survive
+  every keystroke and then be silently re-capitalised on Save. They are trimmed
+  but no longer upper-cased.
+  DELIBERATELY LEFT UPPERCASE: pair, chain, protocol, token1Symbol/token2Symbol,
+  transfer token/platform/destination, withdrawal method. Those are identifiers
+  the app GROUPS and MATCHES on (normalizeChain/normalizeToken/normalizePlatform,
+  the Data Health substring detectors, the by-token and by-chain sections), so
+  their case must stay canonical. A note is prose. Auto-generated note strings
+  ("AUTO-CREATED FROM FEE CLAIM", the withAmountEditNote stamp) are hardcoded, not
+  user input, and are untouched — verified live that an auto transfer still
+  carries its stamp verbatim.
+  EXISTING RECORDS ARE NOT REWRITTEN: notes saved in capitals before today stay in
+  capitals until their record is edited. Nothing reads notes for logic, so there is
+  no migration to do.
+  Verified live on localhost:3001 with seeded positions/claims: Fee Claims with no
+  filter → Add Claim showed "— Select position —"; filtered to BBB/USDC → the
+  select was pre-set to BBB/USDC (value PB, disabled false) with pair BBB/USDC,
+  chain SUI, platform AERO derived, and the saved claim landed on PB. Typed
+  "Claimed on Monday, kept in SUI wallet" saved and reopened in Edit byte-identical
+  (computed text-transform: none). Position form: notes "Opened after the dip -
+  watch closely" and short notes "Hedged half on Hyperliquid" stored as typed while
+  the SAME form still upper-cased pair ccc/usdc → CCC/USDC, chain base → BASE,
+  protocol aero → AERO and symbols ccc → CCC. Transfer: notes "Sent to Aave for
+  now, revisit next week" stored as typed while platform "aave base" → AAVE BASE,
+  destination "raka tez" → RAKA TEZ, token "eth" → ETH. Withdrawal: "Paid the
+  accountant, invoice #204" stored as typed. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
