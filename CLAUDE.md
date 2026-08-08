@@ -2793,6 +2793,31 @@ at the plan gate.
   have re-based it to entry and shown 36.50%. Zero console errors; seeds
   removed. tsc/lint/build clean.
 
+- f1d6886: Removed the "Position Fee APR" column from the Fee Claims table
+  (2026-08-09), one commit after d30d258 added the per-claim column beside it.
+  The cumulative figure repeated the same number on every row of a position and
+  said nothing about the claim it sat next to; This Claim's APR answers the
+  question the table is actually about, so the older column went.
+  REMOVED: the header, the positionApr cell, the positionFeeAPR helper (nothing
+  else called it) and — found by lint, not by eye — the getEffectiveTotalFees
+  import, which that helper was the sole user of.
+  KEPT EXACTLY: claimFeeAPR and its column, calcFeeAPR, and the summary card
+  "Average Position APR (Claimed)". That card is a DIFFERENT figure from a
+  different source (calcPortfolioSummary's deposit-weighted averageAPR, whose
+  scope is documented in b7755cb) and never went through positionFeeAPR, so
+  deleting the column could not move it — confirmed live, it read 34.42% with
+  the column gone.
+  The claimFeeAPR comment block said "same formula as positionFeeAPR", which
+  would have dangled once that function was gone. It now refers to the shared
+  calcFeeAPR directly and notes where the cumulative figure went. Comment only;
+  the logic it describes is byte-unchanged.
+  Verified live on localhost:3001 with the d30d258 seed (1 position, 5 claims):
+  headers are exactly Date, Pair, Platform, Chain, This Claim's APR, Token 1,
+  Token 2, Converted, USD Value, Tx, Actions (11), every row has 11 cells, and
+  the APR values are identical to before the removal — 36.50% / 73.00% /
+  109.50% / "—" / "—". The string "Position Fee APR" appears nowhere on the
+  page. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
