@@ -2739,6 +2739,23 @@ at the plan gate.
   accountant, invoice #204" stored as typed. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- 9120e22: Removed the duplicate "Notes" heading in the Add/Edit Claim modal —
+  a regression from 11dc7bb, one file, markup only (2026-08-08). Wrapping the
+  claim's Notes textarea in <Field label="Notes"> gave it the label it was
+  missing, but it was left inside <Section title="Notes">, and Section renders
+  its title as a heading — so the word printed twice, stacked. The Section is
+  gone; the field now sits in a plain <div className="mt-4">, which is exactly
+  how the Position and Transfer forms have always rendered theirs. The textarea
+  (id, rows={2}, placeholder "optional", plain no-uppercase onChange) is
+  untouched.
+  RULE THIS MAKES CONCRETE: a Field already labels its own control, so it must
+  not be nested in a Section whose only purpose is to name the same thing. Use
+  Section for a GROUP of fields, a plain div for a single labelled one.
+  Verified live on localhost:3001: exactly one element in the form reads "Notes"
+  (a LABEL), the textarea still has rows=2 / placeholder "optional" / computed
+  text-transform none, and typing "Mixed Case still works" was kept verbatim.
+  Seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
