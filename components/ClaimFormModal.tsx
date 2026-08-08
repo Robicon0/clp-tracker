@@ -708,7 +708,10 @@ export function ClaimFormModal({
           </div>
         </Section>
 
-        <Section title="Notes">
+        {/* Plain div, not a Section: the Field already renders the "Notes"
+            label, and a Section title would print the same word again above
+            it. Same shape the Position and Transfer forms use. */}
+        <div className="mt-4">
           <Field label="Notes" htmlFor="notes">
             <textarea
               id="notes"
@@ -721,7 +724,7 @@ export function ClaimFormModal({
               onChange={(e) => set("notes", e.target.value)}
             />
           </Field>
-        </Section>
+        </div>
 
         <FormActions onCancel={onCancel} submitLabel={submitLabel} />
       </form>
