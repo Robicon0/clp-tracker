@@ -2818,6 +2818,60 @@ at the plan gate.
   109.50% / "—" / "—". The string "Position Fee APR" appears nowhere on the
   page. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- 92d2455: Business P&L — Total Claimed rename, new Converted Fees card, and
+  stablecoins dropped from Unconverted Holdings (2026-08-09).
+  (1) RENAME ONLY: "Usdc Converted (Claim-Time Value)" → "Total Claimed
+  (Claim-Time Value)". calcBusinessPnL.usdcConverted has always summed EVERY
+  claim's claim-time value, converted or not, so the old label named a smaller,
+  different number — the one card (2) now shows. The field name in
+  calcBusinessPnL is unchanged (renaming it would touch the sheet-derived
+  Sprint 7 vocabulary for no gain); only the label moved.
+  (2) ONE FUNCTION, TWO CALLERS: calcOverallPnL's fee loop is lifted verbatim
+  into calcConvertedFeesDetail(claims) (returning convertedFees plus the
+  unvalued / mixed-stable counters), with a thin calcConvertedFees(claims):
+  number for callers that want the figure alone. calcOverallPnL now destructures
+  that call — same arithmetic, relocated — and Business P&L's new "Converted
+  Fees (Realized)" card reads the same function. A second implementation would
+  eventually disagree with the P&L (Invariant #6). Verified equal live: card
+  $340.00 with Overall P&L $840.00 = 1,000 active + 340 − 500 capital.
+  (3) THE CONSTRAINT CONFLICT, AND HOW IT WAS RESOLVED — READ BEFORE CHANGING:
+  calcUnconvertedHoldings has THREE callers, not one. Business P&L's table, and
+  the "still held at today's value" figures on the Dashboard and Total P&L
+  (df5f4a8/7d1ae7b). The task asked to exclude stablecoins "from
+  totalCurrentValue / totalCostBasis / totalPnl too" AND to leave every figure
+  outside Business P&L unchanged — which a bare edit cannot do at once. Resolved
+  with an opt-in third argument, { excludeStables }, DEFAULT OFF: Business P&L
+  passes true, the other two callers are untouched by construction. Verified
+  live — Dashboard and Total P&L still read $340.00 held while Business P&L's
+  table reads $300.00.
+  KNOWN, DELIBERATE DIVERGENCE from that choice: Total P&L's fees note says
+  "$340.00 still held at today's value (see Business P&L)" and the page it
+  points at now totals $300.00, the difference being a $40 USDC leg. The two
+  answer different questions (all unconverted value vs. price-exposed value
+  only), but they are one click apart, so this is worth revisiting — flipping
+  the other two callers is one argument each.
+  MECHANICS: the per-claim loop now normalizes each side itself and registers a
+  quantity only when the side is not an excluded stable; the side is still
+  PUSHED to `sides`, because the cost-basis arithmetic needs the stable face
+  value (residual = stableAmount − stableFace) to attribute the volatile side
+  correctly. addCost is skipped for excluded stables, since a token with no
+  quantity has no row to carry a basis. Because rows and totals are both built
+  by iterating `quantities`, dropping the quantity removes the token from the
+  rows AND all three totals in one move.
+  Verified against the compiled module with a 4-claim set covering every branch
+  (converted, mixed converted/unconverted, pure volatile, converted-but-
+  unvalued): calcConvertedFees 340 === calcOverallPnL.convertedFees; DEFAULT
+  holdings byte-identical to before (ETH 200/160/40, SUI 100/100/0, USDC
+  40/40/0, totals 340/300/40); excludeStables gives ETH + SUI only, totals
+  300/260/40 — and ETH's basis stays 160 (= 200 − 40 stable face), proving the
+  residual math still uses the stable side internally. Live on localhost:3001
+  with manual prices ETH 2000 / SUI 2: four cards read All Total $990.00 /
+  Total Claimed $600.00 / Converted Fees $340.00 / P&L −$390.00; the holdings
+  table showed no USDC row with totals $300.00 / $260.00 / $40.00; Dashboard and
+  Total P&L showed Overall P&L $840.00, Fees Earned $600.00, Total Profit
+  $600.00 and $340.00 still held — all unchanged. Zero console errors; seeds
+  removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
