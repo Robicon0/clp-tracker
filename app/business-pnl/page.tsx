@@ -250,23 +250,40 @@ export default function BusinessPnlPage() {
     [positions, business.allTotal, appSettings],
   );
 
-  // Per token: the price THIS token alone would have to reach to close that
-  // gap, with its quantity and every other number held still. Solving
-  // gap = quantity × (needed − current) gives needed = current + gap/quantity.
-  // Quantities come from the UNCONVERTED holdings rows, never calcBusinessPnL's
-  // lifetime totals — those include reward tokens already converted away, which
-  // you can no longer sell into the gap.
+  // The gap is now SHARED: every eligible token carries an equal slice of it,
+  // and each row's price answers "what does this token need to reach to cover
+  // ITS share" — a scenario where they all move together, which is closer to how
+  // a portfolio actually behaves than one token carrying the whole thing.
+  // Solving share = quantity × (needed − current) gives needed = current +
+  // share/quantity. Quantities come from the UNCONVERTED holdings rows, never
+  // calcBusinessPnL's lifetime totals — those include reward tokens already
+  // converted away, which you can no longer sell into the gap.
   const gapToTarget = growth.cumulativeTarget - growth.combinedEarnings;
+
+  // Eligible = has a price to move from and a quantity to move. A token missing
+  // either cannot be solved for, so it is left out of the split entirely rather
+  // than silently absorbing a share nothing can deliver.
+  const eligibleHoldings = useMemo(
+    () =>
+      holdings.rows.filter((r) => r.price !== null && r.quantity > 0),
+    [holdings.rows],
+  );
+
+  // Zero eligible tokens is treated exactly like being at target: there is no
+  // row to show a price on, and it keeps the division below safe.
+  const gapShare =
+    gapToTarget > 0 && eligibleHoldings.length > 0
+      ? gapToTarget / eligibleHoldings.length
+      : 0;
+
   const neededPrices = useMemo(() => {
     const out = new Map<string, number>();
-    if (!(gapToTarget > 0)) return out; // already at or past target
-    for (const row of holdings.rows) {
-      // Nothing to solve for without a quantity to move or a price to move from.
-      if (row.price === null || !(row.quantity > 0)) continue;
-      out.set(row.token, row.price + gapToTarget / row.quantity);
+    if (!(gapShare > 0)) return out;
+    for (const row of eligibleHoldings) {
+      out.set(row.token, (row.price as number) + gapShare / row.quantity);
     }
     return out;
-  }, [holdings.rows, gapToTarget]);
+  }, [eligibleHoldings, gapShare]);
 
   const checkpointRows = useMemo(
     () =>
@@ -543,11 +560,21 @@ export default function BusinessPnlPage() {
             <span className="font-medium text-[var(--foreground)]">
               Price to Hit Target
             </span>{" "}
-            = what that one token would have to reach to close the{" "}
-            {formatUsd(Math.max(gapToTarget, 0))} Growth Target gap on its own,
-            holding its quantity and every other number still. A planning
-            estimate, not a forecast — each row assumes only that token moves.
+            = what each token would have to reach to cover its EQUAL SHARE of
+            the Growth Target gap, holding quantities and every other number
+            still. A planning estimate, not a forecast — it assumes every token
+            below moves at once, each carrying the same dollar amount.
           </p>
+          {/* The split itself, stated in dollars: without it the per-row prices
+              look arbitrary, since the share they solve for is invisible. */}
+          {gapShare > 0 && (
+            <p className="mt-2 text-xs text-amber-300">
+              {formatUsd(gapToTarget)} behind target, split evenly across{" "}
+              {eligibleHoldings.length}{" "}
+              {eligibleHoldings.length === 1 ? "token" : "tokens"} —{" "}
+              {formatUsd(gapShare)} each.
+            </p>
+          )}
         </div>
         {holdings.rows.length === 0 ? (
           <div className="px-6 py-10 text-center text-sm text-[var(--muted)]">
