@@ -2872,6 +2872,51 @@ at the plan gate.
   $600.00 and $340.00 still held — all unchanged. Zero console errors; seeds
   removed. tsc/lint/build clean.
 
+- 67a951c: Business P&L — "Price to Hit Target" per unconverted holding
+  (2026-08-10). A new derived column: the price THIS token alone would have to
+  reach to close the Growth Target gap, quantity and everything else held still.
+  needed = currentPrice + gap/quantity, where gap = cumulativeTarget −
+  combinedEarnings. calcGrowthTarget and calcUnconvertedHoldings are untouched.
+  WHERE IT LIVES: app/business-pnl/page.tsx, not components/GrowthTarget.tsx.
+  The holdings rows and their prices are already here; GrowthTarget has the
+  growth numbers but no holdings and is shared by two pages that do not show
+  this table. So the page gained getPositions()/getSettings() (read-only, in the
+  existing useHydrated) and one calcGrowthTarget call fed business.allTotal —
+  the SAME fee half the Growth Target card passes, so the gap quoted here and
+  the "$X behind" there are the same figure, not a second derivation.
+  QUANTITIES ARE THE HELD ONES: holdings.rows, never calcBusinessPnL's lifetime
+  totals, because those include reward tokens already converted away that you
+  can no longer sell into the gap.
+  READ THIS BEFORE "FIXING" AN APPARENT OVERSHOOT — measured, not theorised:
+  because Growth Target's fee half (calcBusinessPnL.allTotal) values LIFETIME
+  claimed quantities at today's price, typing the shown price into the price box
+  moves the card by MORE than the gap for any token partly converted away. With
+  0.1 ETH held but 0.4 ETH ever claimed, a gap of $85.55 gave a needed price of
+  $2,855.53, and applying it left the business $256.65 AHEAD (= the 0.3 ETH
+  already converted away revaluing inside allTotal). Both numbers are correct
+  and answer different questions: the column answers "what must the tokens I
+  STILL HOLD produce", which is the question worth planning around, and is the
+  quantity source the task specified. The two coincide exactly when a token has
+  never been partly converted.
+  EDGE CASES: gap ≤ 0 renders "target already met" in green for every row (a
+  price at or below today's is not an answer to "what do I need"); a row with no
+  price or a non-positive quantity renders "—"; the footer cell is deliberately
+  EMPTY because these are alternative single-token scenarios, not parts of a sum.
+  Prices format to 6dp, not the usual 2 — a small holding needs a large number
+  and a large holding needs fractions of a cent. The single-token assumption is
+  one line under the table heading, not a caveat essay, because it is the whole
+  basis for reading the column.
+  Verified live on localhost:3001 (capital $10,000, target 3%/mo, position opened
+  100 days ago at break-even, 0.1 ETH @ $2,000 and 50 SUI @ $2 held): gap
+  $685.55 → ETH $8,855.4536 (= 2000 + 685.45/0.1) and SUI $15.7109 (= 2 +
+  685.45/50), both matching hand calculation. END-TO-END: applying the ETH figure
+  collapsed the gap $685.55 → $0.00 (residual under a cent, from monthsElapsed
+  advancing with the wall clock between the two reads — the same documented drift
+  as the Cumulative Target figure). Raising ETH to $20,000 flipped BOTH rows to
+  "target already met". The partly-converted case above was measured by adding a
+  converted 0.3 ETH claim. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
