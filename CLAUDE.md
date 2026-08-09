@@ -2956,6 +2956,39 @@ at the plan gate.
   than its share, because calcBusinessPnL values lifetime quantities.
   Zero console errors; seeds removed. tsc/lint/build clean.
 
+- 8b8487a: DELIBERATE SIGN FLIP, user-directed: Business P&L's top P&L card was
+  inverted (2026-08-10). calcBusinessPnL now returns allTotal − usdcConverted
+  (was usdcConverted − allTotal), so POSITIVE means the reward tokens are worth
+  more today than when claimed — holding paid off, rendered green — and NEGATIVE
+  means they are worth less, rendered red. The old order paired the right
+  magnitude with the wrong colour: a token that had doubled showed a red loss.
+  Label "P&L (Converted − Current)" → "P&L (Current − Converted)"; hint now reads
+  "Positive = holding has done better than cashing out at claim time; negative =
+  worse".
+  WHY IT WAS SAFE: business.pnl has exactly ONE consumer in the codebase, the
+  card itself (verified by grep before editing, not assumed) — no other page, no
+  export, no aggregate reads it. Overall P&L, Growth Target, Net/LP P&L and
+  Unconverted Holdings' own per-token P&L are untouched; only the returned field
+  changed sign.
+  IT ALSO ENDS A CONTRADICTION ON THIS PAGE: Unconverted Holdings' Unrealized
+  P&L was already current-minus-basis, i.e. correctly signed, so the two figures
+  described the same situation with opposite signs. They now agree — measured
+  with 1 ETH claimed at $2,000 and priced at $3,200 today: the card and the
+  holdings row both read +$1,200.00 (they coincide exactly here because the only
+  claim is unconverted; the two are not the same number in general, since
+  allTotal spans every claim ever).
+  SHEET NOTE: the Sprint 7 Google Sheet computed "P&L = Converted − All Total",
+  which is where the original order came from. This is a deliberate departure —
+  the app's colour convention (green = gain) makes the sheet's order read wrong,
+  so do not "restore" it to match the sheet.
+  Verified live on localhost:3001, 1 ETH claimed at a $2,000 claim-time value:
+  price $1,500 → −$500.00 in rose-400 (lab(64.41 63.03 19.21)); price $3,200 →
+  +$1,200.00 in emerald-400 (lab(75.08 -60.73 19.41)) — both the sign and the
+  colour flip with the direction, which is the whole point. All Total, Total
+  Claimed and Converted Fees unchanged in both cases, and Total P&L's Overall
+  P&L (−$9,000 = 1,000 active − 10,000 capital), Net P&L and "still held" were
+  unaffected. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
