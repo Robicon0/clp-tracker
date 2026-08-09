@@ -508,10 +508,22 @@ export interface UnconvertedHoldings {
   hasUnknownCostBasis: boolean;
 }
 
+export interface UnconvertedHoldingsOptions {
+  // Drop stablecoin sides from the rows AND the totals. Business P&L's
+  // Unconverted Holdings table exists to show PRICE EXPOSURE, and a stablecoin
+  // has none — its value is already counted as realized in Converted Fees, so
+  // listing it here reads as a second, unrealized copy of the same money.
+  // Off by default so every existing caller (the Dashboard and Total P&L
+  // "still held at today's value" notes) keeps the figure it has always shown.
+  excludeStables?: boolean;
+}
+
 export function calcUnconvertedHoldings(
   claims: FeeClaim[],
   prices: Record<string, number>,
+  options: UnconvertedHoldingsOptions = {},
 ): UnconvertedHoldings {
+  const excludeStables = options.excludeStables === true;
   const quantities = new Map<string, number>();
   const costBasis = new Map<string, number>();
   // Tokens where at least one contributing claim lacks a claim-time value.
@@ -537,12 +549,20 @@ export function calcUnconvertedHoldings(
   for (const claim of claims) {
     if (claim.convertedToStable) continue;
 
-    // Collect this claim's held sides (token + amount), skipping empties.
+    // Collect this claim's held sides (token + amount), skipping empties. When
+    // stables are excluded they still take part in the cost-basis arithmetic
+    // below — the residual owed to the volatile side is stableAmount minus the
+    // stable face value — they just never become a quantity, a row or a total.
     const sides: Array<{ token: string; amount: number }> = [];
-    const t1 = addQty(claim.token1Symbol, claim.token1Amount);
-    if (t1) sides.push({ token: t1, amount: claim.token1Amount });
-    const t2 = addQty(claim.token2Symbol, claim.token2Amount);
-    if (t2) sides.push({ token: t2, amount: claim.token2Amount });
+    for (const [symbol, amount] of [
+      [claim.token1Symbol, claim.token1Amount],
+      [claim.token2Symbol, claim.token2Amount],
+    ] as Array<[string, number]>) {
+      const token = normalizeToken(symbol);
+      if (token === "" || !Number.isFinite(amount) || amount === 0) continue;
+      if (!(excludeStables && STABLE_SYMBOLS.has(token))) addQty(symbol, amount);
+      sides.push({ token, amount });
+    }
     if (sides.length === 0) continue;
 
     // Cost basis needs the claim-time USD value; without it, mark every side
@@ -558,7 +578,8 @@ export function calcUnconvertedHoldings(
     const volatileSides = sides.filter((s) => !STABLE_SYMBOLS.has(s.token));
     let stableFace = 0;
     for (const s of stableSides) {
-      addCost(s.token, s.amount);
+      // No basis entry for a token that has no quantity to carry it.
+      if (!excludeStables) addCost(s.token, s.amount);
       stableFace += s.amount;
     }
     const residual = claim.stableAmount - stableFace;
@@ -1064,17 +1085,20 @@ export function isUnvaluedConvertedClaim(claim: FeeClaim): boolean {
   );
 }
 
-export function calcOverallPnL(
-  positions: Position[],
-  claims: FeeClaim[],
-  transfers: Transfer[],
-  initialCapital: number,
-): OverallPnL {
-  let activeCurrentValue = 0;
-  for (const p of positions) {
-    if (p.status === "active") activeCurrentValue += toFinite(p.currentBalance);
-  }
+export interface ConvertedFees {
+  convertedFees: number;
+  unvaluedConvertedClaims: number;
+  mixedStableClaims: number;
+  mixedStableRecovered: number;
+}
 
+// Realized fee income: the claim-time USD value of everything actually cashed
+// out. A converted claim contributes its whole stableAmount; an unconverted one
+// contributes only its stablecoin leg, which was never volatile and so needed no
+// converting (9633297). Lifted out of calcOverallPnL unchanged so Business P&L
+// can show the SAME figure without a second implementation — two ways of
+// counting realized fees would eventually disagree (Invariant #6).
+export function calcConvertedFeesDetail(claims: FeeClaim[]): ConvertedFees {
   let convertedFees = 0;
   let unvaluedConvertedClaims = 0;
   let mixedStableClaims = 0;
@@ -1095,6 +1119,36 @@ export function calcOverallPnL(
     mixedStableClaims += 1;
     mixedStableRecovered += realized;
   }
+  return {
+    convertedFees,
+    unvaluedConvertedClaims,
+    mixedStableClaims,
+    mixedStableRecovered,
+  };
+}
+
+// The dollar figure alone, for callers that only need the number.
+export function calcConvertedFees(claims: FeeClaim[]): number {
+  return calcConvertedFeesDetail(claims).convertedFees;
+}
+
+export function calcOverallPnL(
+  positions: Position[],
+  claims: FeeClaim[],
+  transfers: Transfer[],
+  initialCapital: number,
+): OverallPnL {
+  let activeCurrentValue = 0;
+  for (const p of positions) {
+    if (p.status === "active") activeCurrentValue += toFinite(p.currentBalance);
+  }
+
+  const {
+    convertedFees,
+    unvaluedConvertedClaims,
+    mixedStableClaims,
+    mixedStableRecovered,
+  } = calcConvertedFeesDetail(claims);
 
   // Expenses are no longer part of Overall P&L (user-confirmed formula change):
   // Overall P&L measures pure LP business performance; personal spending /

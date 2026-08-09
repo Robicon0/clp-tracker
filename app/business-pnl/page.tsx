@@ -10,6 +10,7 @@ import {
 } from "../../lib/storage";
 import {
   calcBusinessPnL,
+  calcConvertedFees,
   calcUnconvertedHoldings,
   calcYieldAfter,
 } from "../../lib/calculations";
@@ -195,10 +196,20 @@ export default function BusinessPnlPage() {
     [claims, effectivePrices],
   );
 
+  // Stablecoins are excluded HERE only: this table is about price exposure, and
+  // a stablecoin's value is already reported as realized in Converted Fees. The
+  // Dashboard and Total P&L "still held" notes keep the unfiltered figure.
   const holdings = useMemo(
-    () => calcUnconvertedHoldings(claims, effectivePrices),
+    () =>
+      calcUnconvertedHoldings(claims, effectivePrices, {
+        excludeStables: true,
+      }),
     [claims, effectivePrices],
   );
+
+  // The exact figure Overall P&L shows, from the same function — not a second
+  // count of realized fees (Invariant #6).
+  const convertedFees = useMemo(() => calcConvertedFees(claims), [claims]);
 
   const checkpointRows = useMemo(
     () =>
@@ -265,16 +276,25 @@ export default function BusinessPnlPage() {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryStat
           label="All Total (Current Value)"
           value={formatUsd(business.allTotal)}
           hint="Reward tokens × current price"
         />
+        {/* Renamed from "Usdc Converted": this has always summed EVERY claim's
+            claim-time value, converted or not, so the old name described a
+            different (smaller) number — the one the next card now shows. The
+            figure and its source are unchanged. */}
         <SummaryStat
-          label="Usdc Converted (Claim-Time Value)"
+          label="Total Claimed (Claim-Time Value)"
           value={formatUsd(business.usdcConverted)}
           hint="Σ USD value of all claims when claimed"
+        />
+        <SummaryStat
+          label="Converted Fees (Realized)"
+          value={formatUsd(convertedFees)}
+          hint="Actually cashed out — the same figure Overall P&L uses"
         />
         <SummaryStat
           label="P&L (Converted − Current)"
@@ -456,7 +476,9 @@ export default function BusinessPnlPage() {
             Reward tokens you claimed but have not cashed out to stablecoin —
             still exposed to price. Cost basis is the claim-time USD value;
             P&amp;L is what you&apos;ve gained or lost by holding instead of
-            converting. Uses the same prices entered above.
+            converting. Uses the same prices entered above. Stablecoin legs are
+            not listed: they carry no price exposure and already count as
+            realized in Converted Fees.
           </p>
         </div>
         {holdings.rows.length === 0 ? (
