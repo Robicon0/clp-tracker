@@ -3,21 +3,25 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
+  DEFAULT_SETTINGS,
   getBusinessPnLSettings,
   getClaims,
+  getPositions,
+  getSettings,
   saveBusinessPnLSettings,
   type BusinessPnLSettings,
 } from "../../lib/storage";
 import {
   calcBusinessPnL,
   calcConvertedFees,
+  calcGrowthTarget,
   calcUnconvertedHoldings,
   calcYieldAfter,
 } from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
 import { mergePrices, useTokenPrices } from "../../lib/useTokenPrices";
 import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
-import type { FeeClaim } from "../../lib/types";
+import type { AppSettings, FeeClaim, Position } from "../../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -37,6 +41,20 @@ function formatUsd(value: number): string {
 
 function formatToken(value: number): string {
   return tokenFormatter.format(Number.isFinite(value) ? value : 0);
+}
+
+// A needed price can land far outside the 2dp range a dollar total lives in —
+// a cheap token with a small holding needs a big number, a large holding needs
+// fractions of a cent — so this keeps more precision than formatUsd.
+const priceFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+});
+
+function formatPrice(value: number): string {
+  return priceFormatter.format(Number.isFinite(value) ? value : 0);
 }
 
 // Per-symbol reward totals for a chain block's footer. One symbol renders as
@@ -92,6 +110,10 @@ function claimStatus(claim: FeeClaim): string {
 
 export default function BusinessPnlPage() {
   const [claims, setClaims] = useState<FeeClaim[]>([]);
+  // Read only to compute the Growth Target gap below — this page never writes
+  // positions or app settings.
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settings, setSettings] = useState<BusinessPnLSettings>({
     prices: {},
     checkpoints: [],
@@ -111,6 +133,8 @@ export default function BusinessPnlPage() {
 
   const hydrated = useHydrated(() => {
     setClaims(getClaims());
+    setPositions(getPositions());
+    setAppSettings(getSettings());
     // Manual prices are keyed by the token symbol shown in the table, which
     // has been normalized (WETH→ETH) since the 2ef8ca5 merge. Overrides saved
     // BEFORE that merge are keyed by the raw symbol, so they have no row to
@@ -210,6 +234,39 @@ export default function BusinessPnlPage() {
   // The exact figure Overall P&L shows, from the same function — not a second
   // count of realized fees (Invariant #6).
   const convertedFees = useMemo(() => calcConvertedFees(claims), [claims]);
+
+  // How far short of the Growth Target the business currently is. Read from
+  // calcGrowthTarget with the same inputs the Growth Target card uses (its fee
+  // half is business.allTotal), so the gap here and the "$X behind" there are
+  // the same number by construction — nothing is recomputed.
+  const growth = useMemo(
+    () =>
+      calcGrowthTarget(
+        positions,
+        business.allTotal,
+        appSettings.initialCapital,
+        appSettings.targetMonthlyPercent,
+      ),
+    [positions, business.allTotal, appSettings],
+  );
+
+  // Per token: the price THIS token alone would have to reach to close that
+  // gap, with its quantity and every other number held still. Solving
+  // gap = quantity × (needed − current) gives needed = current + gap/quantity.
+  // Quantities come from the UNCONVERTED holdings rows, never calcBusinessPnL's
+  // lifetime totals — those include reward tokens already converted away, which
+  // you can no longer sell into the gap.
+  const gapToTarget = growth.cumulativeTarget - growth.combinedEarnings;
+  const neededPrices = useMemo(() => {
+    const out = new Map<string, number>();
+    if (!(gapToTarget > 0)) return out; // already at or past target
+    for (const row of holdings.rows) {
+      // Nothing to solve for without a quantity to move or a price to move from.
+      if (row.price === null || !(row.quantity > 0)) continue;
+      out.set(row.token, row.price + gapToTarget / row.quantity);
+    }
+    return out;
+  }, [holdings.rows, gapToTarget]);
 
   const checkpointRows = useMemo(
     () =>
@@ -480,6 +537,17 @@ export default function BusinessPnlPage() {
             not listed: they carry no price exposure and already count as
             realized in Converted Fees.
           </p>
+          {/* One line, not a caveat essay: the assumption is the whole point of
+              reading the column, so it has to be visible beside it. */}
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            <span className="font-medium text-[var(--foreground)]">
+              Price to Hit Target
+            </span>{" "}
+            = what that one token would have to reach to close the{" "}
+            {formatUsd(Math.max(gapToTarget, 0))} Growth Target gap on its own,
+            holding its quantity and every other number still. A planning
+            estimate, not a forecast — each row assumes only that token moves.
+          </p>
         </div>
         {holdings.rows.length === 0 ? (
           <div className="px-6 py-10 text-center text-sm text-[var(--muted)]">
@@ -520,6 +588,9 @@ export default function BusinessPnlPage() {
                     <th className="px-4 py-3 text-right font-medium">
                       Unrealized P&L
                     </th>
+                    <th className="px-4 py-3 text-right font-medium">
+                      Price to Hit Target
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
@@ -556,6 +627,21 @@ export default function BusinessPnlPage() {
                           formatUsd(row.pnl)
                         )}
                       </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {gapToTarget <= 0 ? (
+                          <span className="text-emerald-400">
+                            target already met
+                          </span>
+                        ) : neededPrices.has(row.token) ? (
+                          <span className="text-[var(--foreground)]">
+                            {formatPrice(
+                              neededPrices.get(row.token) as number,
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-[var(--muted)]">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -576,6 +662,9 @@ export default function BusinessPnlPage() {
                     >
                       {formatUsd(holdings.totalPnl)}
                     </td>
+                    {/* No total: these are alternative single-token scenarios,
+                        not parts of one sum — adding them would be meaningless. */}
+                    <td className="px-4 py-3" />
                   </tr>
                 </tfoot>
               </table>
