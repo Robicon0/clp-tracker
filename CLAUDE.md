@@ -2917,6 +2917,45 @@ at the plan gate.
   converted 0.3 ETH claim. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- b609641: Business P&L — the Growth Target gap is now SPLIT EVENLY across
+  eligible unconverted tokens instead of each token closing it alone
+  (2026-08-10), one commit after 67a951c introduced the column. Same solve, one
+  extra division: share = gap / eligible count, needed = currentPrice +
+  share/quantity. calcGrowthTarget, gapToTarget and calcUnconvertedHoldings are
+  untouched — this only changes how the gap is divided before each row is
+  solved.
+  ELIGIBLE IS NOW A NAMED SET, not an inline skip: eligibleHoldings =
+  rows with a price AND quantity > 0, exactly the rows that received a price
+  before. It matters more than it did, because the count is now a DIVISOR — an
+  unpriced or zero-quantity token must not inflate it, or every other token's
+  share would be understated and the prices would collectively fall short.
+  Verified with a deliberately unpriced FOOBAR alongside four priced tokens: the
+  line read "across 4 tokens", not 5.
+  ZERO ELIGIBLE TOKENS is folded into the existing at-target branch — gapShare is
+  0 unless the gap is positive AND the count is non-zero, so the map stays empty
+  and there is no division by zero (Invariant #8). Verified with every token
+  unpriced and a real gap: all rows "—", no split line, no NaN or Infinity
+  anywhere on the page.
+  THE NEW LINE EARNS ITS PLACE: without the share stated in dollars the per-row
+  prices look arbitrary, because the number they solve for is invisible. Amber,
+  beside the existing hint, and hidden entirely once the gap closes. The hint
+  itself was rewritten — it claimed each row "closes the gap on its own", which
+  is now false, and says instead that every token below moves at once carrying
+  the same dollar amount.
+  Verified live on localhost:3001 (capital $10,000, target 3%/mo, position opened
+  100 days ago at break-even; held 0.1 ETH @ $2,000, 4 SOL @ $50, 50 SUI @ $2,
+  2 ZEC @ $50, plus 1,000 unpriced FOOBAR): gap $385.55 across 4 tokens =
+  $96.39 each, and every row matched hand calculation — ETH $2,963.8634
+  (2000 + 96.386/0.1), SOL $74.0966 (50 + 96.386/4), SUI $3.9277
+  (2 + 96.386/50), ZEC $98.1932 (50 + 96.386/2), FOOBAR "—". END-TO-END:
+  applying all four prices at once collapsed the gap $385.55 → $0.00, confirming
+  the four shares sum to the gap (sub-cent residual only, from monthsElapsed
+  advancing between reads). Raising ETH to $50,000 put every row back to "target
+  already met" with the split line gone. The 67a951c caveat still applies
+  unchanged: a token partly converted away moves the Growth Target card by more
+  than its share, because calcBusinessPnL values lifetime quantities.
+  Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
