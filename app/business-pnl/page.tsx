@@ -371,10 +371,10 @@ export default function BusinessPnlPage() {
           hint="Actually cashed out — the same figure Overall P&L uses"
         />
         <SummaryStat
-          label="P&L (Converted − Current)"
+          label="P&L (Current − Converted)"
           value={formatUsd(business.pnl)}
           valueClass={pnlColor(business.pnl)}
-          hint="Positive = claim-time value ahead of holding in kind"
+          hint="Positive = holding has done better than cashing out at claim time; negative = worse"
         />
       </div>
 

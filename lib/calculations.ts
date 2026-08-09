@@ -464,7 +464,12 @@ export function calcBusinessPnL(
     allTotal,
     unpricedTokens,
     usdcConverted,
-    pnl: usdcConverted - allTotal,
+    // Current value MINUS claim-time value, so the sign reads the way every
+    // other P&L in the app does: positive = holding the reward tokens has paid
+    // off (green), negative = cashing out at claim time would have been better
+    // (red). The Sprint 7 sheet subtracted the other way round, which inverted
+    // the colour against its own meaning.
+    pnl: allTotal - usdcConverted,
   };
 }
 
