@@ -3038,6 +3038,45 @@ at the plan gate.
   $500.00 all unchanged. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- a0b564c: Yield Checkpoints moved from Business P&L to Transfers, and each
+  checkpoint now reports money OUT beside money IN (2026-08-10). A relocation
+  plus one new read; calcYieldAfter, the Expenses card and the checkpoint
+  storage are all unchanged.
+  STORAGE DID NOT MOVE, only the UI did: checkpoints still live on
+  clp_business_pnl.checkpoints. The Transfers page loads that key
+  (getBusinessPnLSettings) and writes back only its checkpoints field, so
+  existing checkpoints appeared on the new page with no migration — verified,
+  the seeded dates rendered immediately and Business P&L's copy on disk was
+  untouched after add and remove. Business P&L kept its `checkpoints: []`
+  default in the settings literal (the shape is shared) and lost the memo, the
+  two handlers, the newCheckpoint state, the JSX and its calcYieldAfter import.
+  NEW: calcExpensesAfter(transfers, withdrawals, dateIso) in lib/calculations
+  .ts. Same cutoff rule as calcYieldAfter (strictly >), summing logged
+  Withdrawals plus transfers where isExpensedTransfer(t) — IMPORTED from
+  lib/transferState, never re-implemented, so "what counts as money out" has
+  one definition shared with the Expenses card and the balance memo (Invariant
+  #6). calculations.ts now imports transferState; the dependency runs one way.
+  THE PROOF THAT IT IS THE SAME DEFINITION, and the reason a checkpoint dated
+  before every record is worth keeping around: at cutoff 01/01/2026 the row
+  read Taken out $215.00 against an Expenses (USD) card of $215.00 — equal, not
+  approximately. If those two ever drift, one of them has grown a second
+  definition.
+  TWO NUMBERS, NEVER ONE: fees earned and taken out sit side by side separated
+  by a "·", with no net, difference or total anywhere, and the note under the
+  heading says so explicitly. They answer different questions and a single
+  figure would imply an accounting relationship the app does not claim.
+  Verified live on localhost:3001 with a seed straddling the cutoff (claims $100
+  before / $300 + $250 after; expensed transfers $40 before / $60 after; a $500
+  REDEPLOYED transfer after; withdrawals $25 before / $90 after): checkpoint
+  01/06/2026 → Fees earned $550.00, Taken out $150.00 (= $60 expensed + $90
+  withdrawn, correctly excluding both pre-cutoff records AND the $500 redeployed
+  transfer); checkpoint 01/01/2026 → $650.00 / $215.00 matching the Expenses
+  card exactly. Adding 01/07/2026 gave $250.00 / $0.00 and persisted sorted;
+  Remove dropped it from both the list and storage. Section renders between
+  "Transfers by Chain" and "Expenses & Withdrawals" (h2 order confirmed), and
+  Business P&L no longer contains the string "checkpoint" anywhere on the page.
+  Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - Sidebar Net P&L no longer equals Total P&L's Net P&L (since 6da8f43,
