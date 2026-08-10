@@ -2989,9 +2989,62 @@ at the plan gate.
   P&L (−$9,000 = 1,000 active − 10,000 capital), Net P&L and "still held" were
   unaffected. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- 6da8f43: DELIBERATE FORMULA CHANGE, user-directed: Total P&L's Net P&L now
+  values fee tokens at TODAY's price instead of claim-time (2026-08-10). Plus a
+  Dashboard hint rewording (display only).
+  TASK A: computeTotals gained an optional third argument feesForNetPnL, passed
+  only by the whole-business `totals` pass as calcBusinessPnL(claims, prices)
+  .allTotal — the exact figure Business P&L's "All Total" card shows, from the
+  same function, so the two pages cannot disagree (Invariant #6). PortfolioTotals
+  gained netFees (what Net P&L adds) alongside totalFees (claim-time, unchanged),
+  and netPnL = lpPnL + netFees + totalShortPnL. The activeCapital pass omits the
+  argument and falls back to totalFees — harmless, since only its capital fields
+  are read.
+  WHY BOTH FIELDS EXIST: Total Fees Earned is a record of what was booked when it
+  was claimed and must not move; Net P&L answers "what is the business worth now"
+  and so must price fee tokens the way it prices everything else. The breakdown
+  row is therefore labelled "+ Fee Tokens (Current Value)", NOT "Total Fees
+  Earned" — reusing that name would put two different numbers under one label.
+  ONE FETCH STILL: the useTokenPrices call and its mergePrices memo MOVED UP the
+  file, above `totals`, because the fee term now depends on them. Still exactly
+  one useTokenPrices call in the file (grep-verified) — the 7d1ae7b single-fetch
+  property is intact. Watch the same ordering trap: manualPrices' useState must
+  stay above the useHydrated that seeds it.
+  ⚠ KNOWN DIVERGENCE — FLAGGED, NOT FIXED, NEEDS A DECISION: components/Sidebar
+  .tsx computes its own Net P&L from getEffectiveTotalFees (claim-time) and its
+  comment states it "mirrors the Total P&L page's Net P&L exactly (Invariant
+  #6)". That is now false. MEASURED on the verification seed: Sidebar $3,050.00
+  vs Total P&L $4,050.00, the $1,000 gap being one ETH claimed at $2,000 and
+  priced $3,000 today. It was left alone deliberately — the task said no other
+  figure changes, and matching it means giving the Sidebar its own price fetch on
+  EVERY page (it renders in the layout), which is an architecture change, not a
+  line edit. Either flip the Sidebar to current-value fees (accepting that cost)
+  or accept the divergence and rewrite that comment; do not leave the comment
+  claiming a mirror that no longer holds.
+  TASK B (display only): the Dashboard hints on Fees Earned (Active) and Total
+  Profit (Active) read as scope claims about their own card ("…see Total P&L for
+  your whole business, including closed positions") when they are pointers to a
+  different number on a different page. Now "Active only. Total P&L page covers
+  everything, including closed." and "Price change + fees, open positions only.
+  Total P&L page covers everything, including closed."
+  Verified live on localhost:3001 (2 positions — active dep 10,000/now 10,500
+  with short +150, closed dep 5,000/final 5,200; 1 ETH claimed at $2,000 now
+  priced $3,000, 100 SUI claimed at $200 still $200): Net P&L $4,050.00 = LP P&L
+  $700 + Fee Tokens (Current Value) $3,200 + Short $150, and the expanded
+  breakdown showed exactly those rows summing to the displayed total. Total Fees
+  Earned stayed $2,200.00 (claim-time) — now visibly different from Net P&L's fee
+  term, which is the point. LP P&L $700.00, Total Short P&L $150.00, Dashboard
+  Fees Earned (Active) $2,000.00, Total Profit (Active) $2,500.00 and Overall P&L
+  $500.00 all unchanged. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
-- None currently tracked.
+- Sidebar Net P&L no longer equals Total P&L's Net P&L (since 6da8f43,
+  2026-08-10). Total P&L values fee tokens at current price; the Sidebar still
+  uses claim-time. Invariant #6 requires them to agree. Decide: give the Sidebar
+  the current-value figure (costs a price fetch on every page) or accept the
+  split and correct the Sidebar's "mirrors Total P&L exactly" comment.
 
 ## Architecture Notes
 
