@@ -11,6 +11,7 @@ import {
   saveSettings,
 } from "../../lib/storage";
 import {
+  calcBusinessPnL,
   calcDaysActive,
   calcFeeAPR,
   calcOverallPnL,
@@ -84,7 +85,10 @@ const STABLE_SYMBOLS = new Set(["USDC", "USDT", "DAI"]);
 interface PortfolioTotals {
   totalInvested: number;
   totalCurrentValue: number;
+  // Claim-time value, for the Total Fees Earned card.
   totalFees: number;
+  // The fee term Net P&L actually adds — current value when supplied.
+  netFees: number;
   totalShortPnL: number;
   lpPnL: number;
   netPnL: number;
@@ -116,9 +120,18 @@ interface MonthRow {
   positionsActive: number;
 }
 
+// feesForNetPnL, when supplied, is the fee term Net P&L adds — Business P&L's
+// All Total, i.e. every reward token valued at TODAY's price. totalFees stays
+// the claim-time sum either way, because the Total Fees Earned card beside it
+// is a record of what was booked when it was claimed and must not move. The two
+// deliberately differ; only Net P&L switched to the current-value view, so that
+// "what is the business worth now" prices fee tokens the same way it prices
+// everything else. Omitted (the activeCapital pass) it falls back to totalFees,
+// which is harmless there since that pass is only read for capital figures.
 function computeTotals(
   positions: Position[],
   allClaims: FeeClaim[],
+  feesForNetPnL?: number,
 ): PortfolioTotals {
   let totalInvested = 0;
   let totalCurrentValue = 0;
@@ -133,13 +146,15 @@ function computeTotals(
     }
   }
   const lpPnL = totalCurrentValue - totalInvested;
+  const netFees = feesForNetPnL ?? totalFees;
   return {
     totalInvested,
     totalCurrentValue,
     totalFees,
+    netFees,
     totalShortPnL,
     lpPnL,
-    netPnL: lpPnL + totalFees + totalShortPnL,
+    netPnL: lpPnL + netFees + totalShortPnL,
   };
 }
 
@@ -315,6 +330,25 @@ export default function TotalPnlPage() {
     setTargetMonthlyPercent(settings.targetMonthlyPercent);
   });
 
+  // Manual overrides from Business P&L settings sit on top of the fetched
+  // values — the same merge order used everywhere else. Declared here, above
+  // the totals below, because Net P&L's fee term is now priced from it; the
+  // page still issues exactly ONE /api/prices call, shared by the portfolio
+  // cards' held-fees figure, Growth Target and Net P&L.
+  const { fetchedPrices } = useTokenPrices(claims);
+  const prices = useMemo(
+    () => mergePrices(fetchedPrices, manualPrices),
+    [fetchedPrices, manualPrices],
+  );
+
+  // Every fee token ever claimed, valued at today's price — the exact figure
+  // Business P&L's "All Total" card shows, from the same function, so the two
+  // pages cannot disagree (Invariant #6).
+  const feesAtCurrentValue = useMemo(
+    () => (hydrated ? calcBusinessPnL(claims, prices).allTotal : 0),
+    [hydrated, claims, prices],
+  );
+
   // This page is the whole-business view, so the PROFIT figures it computes —
   // Fees Earned, LP P&L, Short P&L and the Net P&L that sums them — span every
   // position ever opened, closed included. Money already earned does not stop
@@ -326,16 +360,17 @@ export default function TotalPnlPage() {
   const totals = useMemo(
     () =>
       hydrated
-        ? computeTotals(positions, claims)
+        ? computeTotals(positions, claims, feesAtCurrentValue)
         : {
             totalInvested: 0,
             totalCurrentValue: 0,
             totalFees: 0,
+            netFees: 0,
             totalShortPnL: 0,
             lpPnL: 0,
             netPnL: 0,
           },
-    [hydrated, positions, claims],
+    [hydrated, positions, claims, feesAtCurrentValue],
   );
 
   // Capital deployed RIGHT NOW. Deliberately a separate, open-only pass:
@@ -354,6 +389,7 @@ export default function TotalPnlPage() {
             totalInvested: 0,
             totalCurrentValue: 0,
             totalFees: 0,
+            netFees: 0,
             totalShortPnL: 0,
             lpPnL: 0,
             netPnL: 0,
@@ -386,14 +422,6 @@ export default function TotalPnlPage() {
     saveSettings({ ...getSettings(), targetMonthlyPercent: next });
     setTargetMonthlyPercent(next);
   };
-
-  // Manual overrides from Business P&L settings sit on top of the fetched
-  // values — the same merge order used everywhere else.
-  const { fetchedPrices } = useTokenPrices(claims);
-  const prices = useMemo(
-    () => mergePrices(fetchedPrices, manualPrices),
-    [fetchedPrices, manualPrices],
-  );
 
   const overall = useMemo(
     () =>
@@ -616,8 +644,11 @@ function PortfolioSummarySection({
               rows={[
                 { label: "LP P&L", value: formatUsd(totals.lpPnL) },
                 {
-                  label: "+ Total Fees Earned",
-                  value: formatUsd(totals.totalFees),
+                  // Not "Total Fees Earned" — that card is claim-time value and
+                  // this term is today's, so reusing its name would put two
+                  // different numbers under one label (Invariant #6).
+                  label: "+ Fee Tokens (Current Value)",
+                  value: formatUsd(totals.netFees),
                 },
                 {
                   label: "+ Short P&L",

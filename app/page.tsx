@@ -455,13 +455,13 @@ export default function DashboardPage() {
               label="Fees Earned (Active)"
               value={formatUsd(activeSummary.totalFees)}
               valueClass={pnlColor(activeSummary.totalFees)}
-              hint="Active positions only — see Total P&L for your whole business, including closed positions."
+              hint="Active only. Total P&L page covers everything, including closed."
             />
             <SummaryCard
               label="Total Profit (Active)"
               value={formatUsd(activeSummary.totalProfit)}
               valueClass={pnlColor(activeSummary.totalProfit)}
-              hint="Price change + fees on open positions. See Total P&L for your whole business, including closed positions."
+              hint="Price change + fees, open positions only. Total P&L page covers everything, including closed."
             />
             <AverageFeeAprCard yearlyApr={activeSummary.averageAPR} />
             <SummaryCard
