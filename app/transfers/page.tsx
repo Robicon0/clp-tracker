@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import {
+  getBusinessPnLSettings,
   getClaims,
   getDeletedTransfers,
   getOutlierDismissals,
@@ -20,10 +21,12 @@ import {
   migrateTransferMoneyStatus,
   purgeTransfer,
   restoreTransfer,
+  saveBusinessPnLSettings,
   saveOutlierDismissals,
   saveTransfers,
   saveWithdrawals,
   softDeleteTransfer,
+  type BusinessPnLSettings,
 } from "../../lib/storage";
 import {
   correctTransferSymbol,
@@ -36,6 +39,7 @@ import {
   IDLE_UPSIDE_DAYS,
   type TransferSymbolMismatchRow,
 } from "../../lib/dataHealth";
+import { calcExpensesAfter, calcYieldAfter } from "../../lib/calculations";
 import { OutlierBanner } from "../../components/OutlierBanner";
 import {
   PositionCombobox,
@@ -911,7 +915,15 @@ export default function TransfersPage() {
   const [showDeleted, setShowDeleted] = useState(false);
   const [pendingPurge, setPendingPurge] = useState<string | null>(null);
 
+  // Yield checkpoints live in the Business P&L settings key and stay there —
+  // this page only reads and writes that one field, so nothing migrates.
+  const [businessSettings, setBusinessSettings] = useState<BusinessPnLSettings>(
+    { prices: {}, checkpoints: [] },
+  );
+  const [newCheckpoint, setNewCheckpoint] = useState("");
+
   const refresh = () => {
+    setBusinessSettings(getBusinessPnLSettings());
     setSettings(getSettings());
     setTransfers(getTransfers());
     setDeletedTransfers(getDeletedTransfers());
@@ -928,6 +940,39 @@ export default function TransfersPage() {
     migrateTransferMoneyStatus();
     refresh();
   });
+
+  const persistBusinessSettings = (next: BusinessPnLSettings) => {
+    setBusinessSettings(next);
+    saveBusinessPnLSettings(next);
+  };
+
+  const addCheckpoint = () => {
+    if (newCheckpoint.trim() === "") return;
+    if (businessSettings.checkpoints.includes(newCheckpoint)) return;
+    const checkpoints = [...businessSettings.checkpoints, newCheckpoint].sort();
+    persistBusinessSettings({ ...businessSettings, checkpoints });
+    setNewCheckpoint("");
+  };
+
+  const removeCheckpoint = (date: string) => {
+    persistBusinessSettings({
+      ...businessSettings,
+      checkpoints: businessSettings.checkpoints.filter((c) => c !== date),
+    });
+  };
+
+  // Two independent reads per checkpoint, never combined: what came IN as fee
+  // claims (calcYieldAfter, unchanged) and what went OUT (calcExpensesAfter,
+  // which shares isExpensedTransfer with the Expenses card).
+  const checkpointRows = useMemo(
+    () =>
+      businessSettings.checkpoints.map((date) => ({
+        date,
+        earned: calcYieldAfter(claims, date),
+        takenOut: calcExpensesAfter(transfers, withdrawals, date),
+      })),
+    [claims, transfers, withdrawals, businessSettings.checkpoints],
+  );
 
   const positionPairById = useMemo(() => {
     const map = new Map<string, string>();
@@ -2134,6 +2179,83 @@ export default function TransfersPage() {
                 </div>
               </>
             )}
+          </div>
+
+          {/* Moved here from Business P&L: a checkpoint asks "what has happened
+              since this date", and money out lives on this page. Same storage
+              key (clp_business_pnl.checkpoints) — nothing migrated. */}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+            <div className="border-b border-[var(--border)] px-5 py-4">
+              <h2 className="text-sm font-semibold tracking-tight">
+                Yield Checkpoints
+              </h2>
+              <p className="mt-0.5 text-xs text-[var(--muted)]">
+                Fees earned = claims logged after this date. Taken out = same
+                definition as the Expenses card (withdrawals + transfers marked
+                Expense) after this date. Shown separately on purpose — not
+                netted.
+              </p>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              {checkpointRows.length === 0 && (
+                <p className="text-sm text-[var(--muted)]">
+                  No checkpoints yet. Add a date below to track per-period yield.
+                </p>
+              )}
+              {checkpointRows.map((row) => (
+                <div
+                  key={row.date}
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)]/40 px-4 py-3"
+                >
+                  <span className="text-sm">
+                    Since{" "}
+                    <span className="font-medium">
+                      {formatDateDDMMYYYY(row.date)}
+                    </span>
+                  </span>
+                  <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <span className="text-sm tabular-nums text-[var(--muted)]">
+                      Fees earned:{" "}
+                      <span className="font-semibold text-[var(--foreground)]">
+                        {formatUsd(row.earned)}
+                      </span>
+                    </span>
+                    <span className="text-[var(--border-strong)]">·</span>
+                    <span className="text-sm tabular-nums text-[var(--muted)]">
+                      Taken out:{" "}
+                      <span className="font-semibold text-[var(--foreground)]">
+                        {formatUsd(row.takenOut)}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeCheckpoint(row.date)}
+                      className="text-xs text-[var(--muted)] hover:text-rose-400"
+                    >
+                      Remove
+                    </button>
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-center gap-3 pt-1">
+                <input
+                  type="date"
+                  aria-label="New checkpoint date"
+                  style={{ colorScheme: "dark" }}
+                  className="block h-9 w-44 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 text-sm text-[var(--foreground)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                  value={newCheckpoint}
+                  onChange={(e) => setNewCheckpoint(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={addCheckpoint}
+                  className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:opacity-50"
+                  disabled={newCheckpoint.trim() === ""}
+                >
+                  Add Checkpoint
+                </button>
+              </div>
+            </div>
           </div>
 
           {expenseLedger.length > 0 && (

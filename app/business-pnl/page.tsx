@@ -16,7 +16,6 @@ import {
   calcConvertedFees,
   calcGrowthTarget,
   calcUnconvertedHoldings,
-  calcYieldAfter,
 } from "../../lib/calculations";
 import { useHydrated } from "../../lib/useHydrated";
 import { mergePrices, useTokenPrices } from "../../lib/useTokenPrices";
@@ -118,7 +117,6 @@ export default function BusinessPnlPage() {
     prices: {},
     checkpoints: [],
   });
-  const [newCheckpoint, setNewCheckpoint] = useState("");
   // Current prices for every reward token seen in claims. Manual entries in
   // settings.prices always override a fetched price (see effectivePrices
   // below), so auto-refresh never clobbers a user value. Shared with the
@@ -200,21 +198,6 @@ export default function BusinessPnlPage() {
     [fetchedPrices, settings.prices],
   );
 
-  const addCheckpoint = () => {
-    if (newCheckpoint.trim() === "") return;
-    if (settings.checkpoints.includes(newCheckpoint)) return;
-    const checkpoints = [...settings.checkpoints, newCheckpoint].sort();
-    persist({ ...settings, checkpoints });
-    setNewCheckpoint("");
-  };
-
-  const removeCheckpoint = (date: string) => {
-    persist({
-      ...settings,
-      checkpoints: settings.checkpoints.filter((c) => c !== date),
-    });
-  };
-
   const business = useMemo(
     () => calcBusinessPnL(claims, effectivePrices),
     [claims, effectivePrices],
@@ -284,15 +267,6 @@ export default function BusinessPnlPage() {
     }
     return out;
   }, [eligibleHoldings, gapShare]);
-
-  const checkpointRows = useMemo(
-    () =>
-      settings.checkpoints.map((date) => ({
-        date,
-        accumulated: calcYieldAfter(claims, date),
-      })),
-    [claims, settings.checkpoints],
-  );
 
   // Ledger blocks mirror the sheet's PAIRS blocks, grouped by chain.
   const ledgerBlocks = useMemo(() => {
@@ -704,65 +678,6 @@ export default function BusinessPnlPage() {
             )}
           </>
         )}
-      </div>
-
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-        <div className="border-b border-[var(--border)] px-5 py-4">
-          <h2 className="text-sm font-semibold tracking-tight">
-            Yield Checkpoints
-          </h2>
-          <p className="mt-0.5 text-xs text-[var(--muted)]">
-            Each checkpoint shows the claim USD value accumulated after that
-            date — derived from claim dates, nothing hardcoded.
-          </p>
-        </div>
-        <div className="space-y-3 px-5 py-4">
-          {checkpointRows.length === 0 && (
-            <p className="text-sm text-[var(--muted)]">
-              No checkpoints yet. Add a date below to track per-period yield.
-            </p>
-          )}
-          {checkpointRows.map((row) => (
-            <div
-              key={row.date}
-              className="flex items-center justify-between gap-4 rounded-md border border-[var(--border)] bg-[var(--surface-2)]/40 px-4 py-3"
-            >
-              <span className="text-sm">
-                Accumulated after{" "}
-                <span className="font-medium">{formatDate(row.date)}</span>
-              </span>
-              <span className="flex items-center gap-4">
-                <span className="text-sm font-semibold tabular-nums">
-                  {formatUsd(row.accumulated)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeCheckpoint(row.date)}
-                  className="text-xs text-[var(--muted)] hover:text-rose-400"
-                >
-                  Remove
-                </button>
-              </span>
-            </div>
-          ))}
-          <div className="flex items-center gap-3 pt-1">
-            <input
-              type="date"
-              aria-label="New checkpoint date"
-              className={`${inputClass} w-44`}
-              value={newCheckpoint}
-              onChange={(e) => setNewCheckpoint(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={addCheckpoint}
-              className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:opacity-50"
-              disabled={newCheckpoint.trim() === ""}
-            >
-              Add Checkpoint
-            </button>
-          </div>
-        </div>
       </div>
 
       {ledgerBlocks.length > 0 && (

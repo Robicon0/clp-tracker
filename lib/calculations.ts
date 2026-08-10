@@ -3,8 +3,10 @@ import type {
   PortfolioSummary,
   Position,
   Transfer,
+  Withdrawal,
 } from "./types";
 import { normalizeToken } from "./nameNormalization";
+import { isExpensedTransfer } from "./transferState";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -485,6 +487,33 @@ export function calcYieldAfter(claims: FeeClaim[], dateIso: string): number {
     }
     const t = new Date(claim.date).getTime();
     if (Number.isFinite(t) && t > cutoff) total += claim.stableAmount;
+  }
+  return total;
+}
+
+// Money taken out of the business strictly after a checkpoint date — the same
+// cutoff rule as calcYieldAfter, and deliberately the SAME definition of "out"
+// as the Transfers page's Expenses card: logged withdrawals PLUS any transfer
+// whose money state is Expense. The expense test is isExpensedTransfer from
+// lib/transferState, never a second inline predicate, so this figure and the
+// Expenses card can never disagree about what counts (Invariant #6). With a
+// cutoff before every record it reproduces balance.withdrawn exactly.
+export function calcExpensesAfter(
+  transfers: Transfer[],
+  withdrawals: Withdrawal[],
+  dateIso: string,
+): number {
+  const cutoff = new Date(dateIso).getTime();
+  if (!Number.isFinite(cutoff)) return 0;
+  let total = 0;
+  for (const w of withdrawals) {
+    const t = new Date(w.date).getTime();
+    if (Number.isFinite(t) && t > cutoff) total += toFinite(w.amount);
+  }
+  for (const tr of transfers) {
+    if (!isExpensedTransfer(tr)) continue;
+    const t = new Date(tr.date).getTime();
+    if (Number.isFinite(t) && t > cutoff) total += toFinite(tr.amount);
   }
   return total;
 }
