@@ -104,6 +104,13 @@ export interface Transfer {
   // Absent on every live and legacy transfer; getTransfers() hides any record
   // that has it, and getAllTransfers() is the only reader that sees them.
   deletedAt?: string;
+  // Set when this transfer's source fee claim was DELETED while the transfer
+  // had already been sent, deployed or expensed. That money really moved, so
+  // the record is kept and only its sourceClaimId is dropped (93719c5) — this
+  // timestamp is what stops the unlink being silent, feeding the Data Health
+  // "claim deleted" check until the user edits the transfer, which clears it.
+  // Absent on every other transfer, including ones whose claim never existed.
+  claimDeletedAt?: string;
   notes: string;
 }
 

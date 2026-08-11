@@ -79,6 +79,12 @@ export function DataHealthCard({ report }: { report: DataHealthReport }) {
       href: "/transfers#claim-drift",
       tone: "amber" as const,
     },
+    {
+      label: "Transfers whose claim was deleted",
+      count: counts.orphanedByClaim,
+      href: "/transfers#claim-deleted",
+      tone: "amber" as const,
+    },
   ].filter((c) => c.count > 0);
 
   if (counts.total === 0) {

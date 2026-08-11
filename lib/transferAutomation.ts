@@ -408,12 +408,16 @@ export function cleanupClaimTransfers(claimId: string): ClaimTransferCleanup {
   }
   if (detached.length > 0) {
     const byId = new Map(detached.map((t) => [t.id, t]));
+    const now = new Date().toISOString();
     saveTransfers(
       getTransfers().map((t) => {
         if (!byId.has(t.id)) return t;
         const { sourceClaimId: _s, ...rest } = t;
         void _s;
-        return rest;
+        // Dropping the id alone made this unlink invisible: the row simply sat
+        // there afterwards looking like any hand-logged transfer. The stamp
+        // keeps it reviewable (Data Health) until the user edits it.
+        return { ...rest, claimDeletedAt: now };
       }),
     );
   }

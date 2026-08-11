@@ -67,6 +67,7 @@ const EMPTY_DATA_HEALTH: DataHealthReport = {
   stalePositions: [],
   incompleteClaims: [],
   driftedClaimTransfers: [],
+  orphanedByClaim: [],
   idleUpside: [],
   counts: {
     positionSymbol: 0,
@@ -79,6 +80,7 @@ const EMPTY_DATA_HEALTH: DataHealthReport = {
     incompleteClaims: 0,
     idleUpside: 0,
     driftedClaimTransfers: 0,
+    orphanedByClaim: 0,
     total: 0,
   },
 };

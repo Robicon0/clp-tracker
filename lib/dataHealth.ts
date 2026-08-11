@@ -687,6 +687,38 @@ export function findDriftedClaimTransfers(
 }
 
 // ---------------------------------------------------------------------------
+// Orphaned by claim deletion
+// ---------------------------------------------------------------------------
+
+// A transfer whose source fee claim was deleted while this money had already
+// been sent, deployed or expensed. cleanupClaimTransfers keeps the record —
+// the money genuinely moved and erasing it would erase where it went — but the
+// unlink used to be silent, leaving a row that looked like any hand-logged
+// transfer. The stamp it now writes is what this reads.
+//
+// No predicate of its own beyond "is the stamp there": the decision about WHICH
+// transfers get detached rather than soft-deleted lives in cleanupClaimTransfers
+// (isUntouchedAuto), and restating it here would let the two disagree.
+// Resolution is an edit — saving the transfer clears the stamp — because
+// reviewing it is the only thing that can be done about it.
+export interface OrphanedByClaimRow {
+  transfer: Transfer;
+  deletedAt: string;
+}
+
+export function findOrphanedByClaimDeletion(
+  transfers: Transfer[],
+): OrphanedByClaimRow[] {
+  const rows: OrphanedByClaimRow[] = [];
+  for (const t of transfers) {
+    if (t.claimDeletedAt === undefined || t.claimDeletedAt === null) continue;
+    rows.push({ transfer: t, deletedAt: t.claimDeletedAt });
+  }
+  // Most recently orphaned first — that is the one the user just caused.
+  return rows.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+}
+
+// ---------------------------------------------------------------------------
 // Consolidated report (Part 4)
 // ---------------------------------------------------------------------------
 
@@ -701,6 +733,7 @@ export interface DataHealthCounts {
   incompleteClaims: number;
   idleUpside: number;
   driftedClaimTransfers: number;
+  orphanedByClaim: number;
   total: number;
 }
 
@@ -714,6 +747,7 @@ export interface DataHealthReport {
   stalePositions: StalePositionRow[];
   incompleteClaims: IncompleteClaimRow[];
   driftedClaimTransfers: DriftedClaimTransferRow[];
+  orphanedByClaim: OrphanedByClaimRow[];
   idleUpside: IdleUpsideRow[];
   counts: DataHealthCounts;
 }
@@ -739,6 +773,7 @@ export function computeDataHealth(
   const incompleteClaims = findIncompleteClaims(claims, positions);
   const idleUpside = findIdleUpsideTransfers(transfers, positions);
   const driftedClaimTransfers = findDriftedClaimTransfers(transfers, claims);
+  const orphanedByClaim = findOrphanedByClaimDeletion(transfers);
   const counts: DataHealthCounts = {
     positionSymbol: positionSymbol.length,
     claimSymbol: claimSymbol.length,
@@ -750,6 +785,7 @@ export function computeDataHealth(
     incompleteClaims: incompleteClaims.length,
     idleUpside: idleUpside.length,
     driftedClaimTransfers: driftedClaimTransfers.length,
+    orphanedByClaim: orphanedByClaim.length,
     total:
       positionSymbol.length +
       claimSymbol.length +
@@ -760,7 +796,8 @@ export function computeDataHealth(
       stalePositions.length +
       incompleteClaims.length +
       idleUpside.length +
-      driftedClaimTransfers.length,
+      driftedClaimTransfers.length +
+      orphanedByClaim.length,
   };
   return {
     positionSymbol,
@@ -772,6 +809,7 @@ export function computeDataHealth(
     stalePositions,
     incompleteClaims,
     driftedClaimTransfers,
+    orphanedByClaim,
     idleUpside,
     counts,
   };

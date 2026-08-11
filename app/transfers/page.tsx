@@ -34,8 +34,10 @@ import {
   findTransferAmountOutliers,
   findDriftedClaimTransfers,
   findIdleUpsideTransfers,
+  findOrphanedByClaimDeletion,
   findTransferSymbolMismatches,
   type DriftedClaimTransferRow,
+  type OrphanedByClaimRow,
   type OutlierRow,
   type IdleUpsideRow,
   IDLE_UPSIDE_DAYS,
@@ -851,6 +853,68 @@ function ClaimDriftBanner({
   );
 }
 
+// A transfer whose source fee claim was deleted while this money had already
+// been sent, deployed or expensed. Amber: nothing is wrong with the record —
+// the money moved and the claim is gone, both true — it just no longer has
+// anything explaining where it came from, so it is worth a look before that
+// context is lost. Opening the editor and saving clears the flag.
+function ClaimDeletedBanner({
+  rows,
+  pairLabelFor,
+  onReview,
+}: {
+  rows: OrphanedByClaimRow[];
+  pairLabelFor: (t: Transfer) => string;
+  onReview: (t: Transfer) => void;
+}) {
+  return (
+    <div
+      id="claim-deleted"
+      className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-amber-300">
+        {rows.length}{" "}
+        {rows.length === 1
+          ? "transfer's fee claim was"
+          : "transfers' fee claims were"}{" "}
+        deleted
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        This money had already been sent, deployed or expensed, so the transfer
+        was kept — deleting it would erase where the money actually went — but
+        it no longer has a claim behind it. Check the amount still looks right;
+        saving it marks it reviewed.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.transfer.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {pairLabelFor(r.transfer)}
+              <span className="ml-2 font-normal text-[var(--muted)]">
+                {formatDateDDMMYYYY(r.transfer.date)}
+              </span>
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              {formatUsd(r.transfer.amount)} · claim deleted{" "}
+              {formatDateDDMMYYYY(r.deletedAt)}
+            </span>
+            <button
+              type="button"
+              onClick={() => onReview(r.transfer)}
+              className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+            >
+              Review
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // A transfer's token must belong to its linked position's pair (same substring
 // test as the Position/Claim detectors). Offers a confirmed one-click fix that
 // rewrites to the pair-derived symbol, plus per-row Edit. Detection-only until
@@ -1270,6 +1334,11 @@ export default function TransfersPage() {
     [hydrated, transfers, claims],
   );
 
+  const orphanedByClaim = useMemo(
+    () => (hydrated ? findOrphanedByClaimDeletion(transfers) : []),
+    [hydrated, transfers],
+  );
+
   const sortedFiltered = useMemo(() => {
     if (!hydrated) return [];
     const filtered = transfers.filter(
@@ -1497,6 +1566,10 @@ export default function TransfersPage() {
             deployedAt: target.deployedAt,
           }
         : {}),
+      // claimDeletedAt is deliberately NOT carried across: saving the transfer
+      // IS how the "source claim was deleted" flag is resolved, so rebuilding
+      // without it clears the Data Health row. It is the one out-of-form field
+      // that should not survive an edit.
     };
     updated.notes = withAmountEditNote(
       updated.notes,
@@ -1848,12 +1921,19 @@ export default function TransfersPage() {
             <ClaimDriftBanner
               rows={claimDrift}
               pairLabelFor={(t) => positionPairById.get(t.positionId) ?? "—"}
-              onSelect={(t) => {
-                setSelectedIds(new Set([t.id]));
-                setPositionFilter("");
-                setTypeFilter("all");
-                setSearch("");
-              }}
+              // Straight into the editor — the same modal the table's Edit
+              // button opens. Correcting the amount IS the resolution for this
+              // flag, so routing through select-then-find-the-row was a step
+              // with no decision in it.
+              onSelect={(t) => setModal({ kind: "edit", transfer: t })}
+            />
+          )}
+
+          {orphanedByClaim.length > 0 && (
+            <ClaimDeletedBanner
+              rows={orphanedByClaim}
+              pairLabelFor={(t) => positionPairById.get(t.positionId) ?? "—"}
+              onReview={(t) => setModal({ kind: "edit", transfer: t })}
             />
           )}
 
