@@ -3077,6 +3077,40 @@ at the plan gate.
   Business P&L no longer contains the string "checkpoint" anywhere on the page.
   Zero console errors; seeds removed. tsc/lint/build clean.
 
+- 36cafc6: Editing a claim now SAYS SO when the edit could not reach its linked
+  transfer (2026-08-11). Nothing about the decision changed — reconcileClaim
+  Transfers still refuses to overwrite a transfer the user has sent, deployed or
+  expensed (666ec71). That refusal was simply invisible: persistUpdatedClaim
+  called `void reconcileClaimTransfers(claim)` and threw the result away, so an
+  edited amount could sit on the claim while the transfer kept the old one with
+  nothing on screen to say so.
+  persistUpdatedClaim is now `async` and RETURNS the ReconcileResult.
+  persistNewClaim is untouched (a new claim has no pre-existing transfer to
+  skip). /claims handleEdit awaits it and sets a notice on "skipped-touched";
+  the claim itself is written synchronously inside persist, so the list still
+  refreshes immediately and only the notice waits on the reconcile.
+  THE NOTICE IS DISMISSED BY HAND, not on a timer: it reports money that quietly
+  did NOT update, which is exactly the kind of message that must not vanish
+  before it is read. Styled like the amber Data Health banners so it reads as
+  the same class of "worth a look" notice, and it links to /transfers because
+  checking the figure there is the actual next step.
+  BULK SYMBOL FIX IGNORES THE RESULT, deliberately: handleFixAllSymbols calls
+  persistUpdatedClaim in a loop, so N flagged claims would raise N identical
+  notices — and a symbol correction changes no transfer AMOUNT, which is what
+  the notice is about. It now calls `void persistUpdatedClaim(...)`, which also
+  keeps the return-type change from breaking that call site.
+  Verified live on localhost:3001 with two claims, one behind an UNTOUCHED auto
+  transfer and one behind a transfer already sent to AAVE BASE: editing the
+  untouched claim $100 → $150 showed NO warning and moved its transfer to $150
+  (existing behaviour intact, and again $150 → $175); editing the platformed
+  claim $200 → $500 saved the claim at $500, left the transfer at $200 on AAVE
+  BASE — today's behaviour, now visible — and showed "Saved — but the linked
+  transfer was left alone". Dismiss cleared it, and a following untouched edit
+  did not bring it back. Bulk-fixing two SUI/USDC claims mislabelled "SOL",
+  BOTH with already-platformed transfers (so both skip), corrected both claims
+  to SUI and rendered exactly 0 notices. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - Sidebar Net P&L no longer equals Total P&L's Net P&L (since 6da8f43,
