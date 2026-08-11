@@ -1,5 +1,10 @@
 import { claimStableFace, isStableSymbol } from "./calculations";
-import { getTransfers, saveTransfers, softDeleteTransfer } from "./storage";
+import {
+  getTransfers,
+  restoreTransfer,
+  saveTransfers,
+  softDeleteTransfer,
+} from "./storage";
 import type { FeeClaim, Position, Transfer } from "./types";
 
 // Notes stamped on auto-created transfers. Also a tell-tale: an auto transfer
@@ -539,6 +544,10 @@ export function applyTransferSplit(
     ...(transfer.sourceClaimId !== undefined
       ? { splitFromClaimId: transfer.sourceClaimId }
       : {}),
+    // The ORIGINAL's own id, reused as the group key rather than minting a new
+    // one: it already uniquely identifies this split, and it is exactly what
+    // Undo needs to restore from Recently Deleted.
+    splitOriginalId: transfer.id,
   };
   const pieces: Transfer[] = [
     {
@@ -574,6 +583,139 @@ function stableSymbolOf(claim: FeeClaim): string {
   if (isStableSymbol(t1)) return t1;
   if (isStableSymbol(t2)) return t2;
   return "";
+}
+
+// ── Bulk split ──────────────────────────────────────────────────────────────
+
+export interface BulkSplitPlan {
+  // Rows that can be split without asking anything: they still point at a live
+  // claim, so the stable/token figures are readable.
+  splittable: { transfer: Transfer; plan: TransferSplitPlan }[];
+  // Rows left alone, each with the reason — a batch is never blocked by one
+  // unsplittable row.
+  skipped: { transfer: Transfer; reason: string }[];
+}
+
+// Bulk is deliberately CLAIM-ONLY: the manual path needs a figure typed per
+// transfer, which is not a batch operation. Anything else — no claim link, a
+// claim that no longer exists, an all-one-side amount, or a piece that is
+// already the result of a split — is reported rather than guessed at.
+export function planBulkSplit(
+  transfers: Transfer[],
+  claims: FeeClaim[],
+): BulkSplitPlan {
+  const out: BulkSplitPlan = { splittable: [], skipped: [] };
+  for (const t of transfers) {
+    if (t.splitPart !== undefined) {
+      out.skipped.push({ transfer: t, reason: "already a split piece" });
+      continue;
+    }
+    if (t.sourceClaimId === undefined) {
+      out.skipped.push({ transfer: t, reason: "no linked claim" });
+      continue;
+    }
+    const plan = planTransferSplit(t, claims);
+    if (plan.claim === null) {
+      out.skipped.push({ transfer: t, reason: "linked claim no longer exists" });
+      continue;
+    }
+    if (plan.error !== undefined) {
+      out.skipped.push({ transfer: t, reason: "nothing to split out" });
+      continue;
+    }
+    out.splittable.push({ transfer: t, plan });
+  }
+  return out;
+}
+
+export function applyBulkSplit(plan: BulkSplitPlan): number {
+  let count = 0;
+  // One at a time through the SAME writer the single split uses, so the write
+  // order (pieces first, then soft-delete) has one implementation.
+  for (const { transfer, plan: p } of plan.splittable) {
+    if (applyTransferSplit(transfer, p).length > 0) count += 1;
+  }
+  return count;
+}
+
+// ── Undo a split ────────────────────────────────────────────────────────────
+
+export interface UndoSplitPlan {
+  originalId: string;
+  pieces: Transfer[];
+  original: Transfer | null;
+  // True when the pieces no longer add up to the original, i.e. at least one
+  // was edited after the split. Undo discards that edit, so the UI confirms.
+  edited: boolean;
+  piecesTotal: number;
+  originalAmount: number;
+  error?: string;
+}
+
+// Undo is "delete the pieces, restore the original" — never a merge. The
+// original was soft-deleted, not erased, so the record that comes back is
+// byte-identical to the one that was split, including its sourceClaimId.
+export function planUndoSplit(
+  piece: Transfer,
+  liveTransfers: Transfer[],
+  allTransfers: Transfer[],
+): UndoSplitPlan {
+  const originalId = piece.splitOriginalId ?? "";
+  const pieces = liveTransfers.filter((t) => t.splitOriginalId === originalId);
+  const original =
+    allTransfers.find((t) => t.id === originalId && t.deletedAt !== undefined) ??
+    null;
+  const piecesTotal = pieces.reduce(
+    (sum, t) => sum + (Number.isFinite(t.amount) ? t.amount : 0),
+    0,
+  );
+  const originalAmount = original?.amount ?? 0;
+  if (originalId === "") {
+    return {
+      originalId,
+      pieces,
+      original,
+      edited: false,
+      piecesTotal,
+      originalAmount,
+      error: "This transfer is not part of a split.",
+    };
+  }
+  if (original === null) {
+    return {
+      originalId,
+      pieces,
+      original,
+      edited: false,
+      piecesTotal,
+      originalAmount,
+      error:
+        "The original transfer was permanently deleted, so there is nothing to restore. Delete these pieces by hand if you no longer want them.",
+    };
+  }
+  // Sum-based, because the pieces do not store what they were created as. It
+  // catches any single edited amount; two edits that cancel out exactly would
+  // slip through, which is a far-fetched way to lose an edit you are explicitly
+  // undoing. A missing piece (deleted separately) also shows up here.
+  const edited =
+    pieces.length !== 2 || Math.abs(piecesTotal - originalAmount) >= 0.005;
+  return {
+    originalId,
+    pieces,
+    original,
+    edited,
+    piecesTotal,
+    originalAmount,
+  };
+}
+
+export function applyUndoSplit(plan: UndoSplitPlan): boolean {
+  if (plan.error !== undefined || plan.original === null) return false;
+  for (const p of plan.pieces) softDeleteTransfer(p.id);
+  // Restore last: restoreTransfer only drops deletedAt, so the original returns
+  // with its platform, deploy-link, sourceClaimId and notes exactly as they were.
+  restoreTransfer(plan.originalId);
+  return true;
 }
 
 // ── Backfill eligibility (pure) ─────────────────────────────────────────────

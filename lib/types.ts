@@ -119,6 +119,11 @@ export interface Transfer {
   // deliberately NOT carried onto the pieces (see applyTransferSplit).
   splitFromClaimId?: string;
   splitPart?: "stable" | "token";
+  // The id of the transfer this piece was split OUT of. Doubles as the group
+  // key (both pieces share it) and as the restore target for Undo Split — the
+  // original is soft-deleted, not erased, so undo is "delete the pieces, put
+  // the original back" rather than any kind of merge.
+  splitOriginalId?: string;
   notes: string;
 }
 

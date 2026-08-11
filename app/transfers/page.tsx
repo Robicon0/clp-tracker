@@ -52,18 +52,24 @@ import {
 } from "../../components/PositionCombobox";
 import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import {
+  applyBulkSplit,
   applyRevertToAuto,
   applyTransferSplit,
+  applyUndoSplit,
   buildClaimTransfers,
   createUpsideTransfer,
   eligibleClaimsForBackfill,
   eligibleClosesForBackfill,
   isAutoCreated,
+  planBulkSplit,
   planRevertToAuto,
   planTransferSplit,
+  planUndoSplit,
   reconcileClaimTransfers,
   type AutoRevertPlan,
+  type BulkSplitPlan,
   type TransferSplitPlan,
+  type UndoSplitPlan,
 } from "../../lib/transferAutomation";
 import { useHydrated } from "../../lib/useHydrated";
 import {
@@ -293,7 +299,8 @@ type ModalState =
   | { kind: "deploy"; transfers: Transfer[] }
   | { kind: "platform"; transfers: Transfer[] }
   | { kind: "revert"; transfers: Transfer[] }
-  | { kind: "split"; transfer: Transfer }
+  | { kind: "split"; transfers: Transfer[] }
+  | { kind: "undoSplit"; transfer: Transfer }
   | { kind: "addWithdrawal" }
   | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
@@ -398,9 +405,11 @@ function TransferListRow({
           {/* A split piece looks like an ordinary transfer to every calculation
               and check — this tag is the only thing that says it is one half of
               a row that used to be whole. */}
+          {/* The token, not the generic side name: "Split · USDC" says what
+              this row actually holds. splitPart stays the internal handle. */}
           {t.splitPart !== undefined && (
             <span className="inline-flex items-center rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-violet-300">
-              Split · {t.splitPart}
+              Split · {t.token || t.splitPart}
             </span>
           )}
           {!isTransferred && !isDeployed && (
@@ -444,6 +453,7 @@ function SelectionActions({
   onRemovePlatform,
   onRevertToAuto,
   onSplit,
+  onUndoSplit,
   onDeleteRequest,
   onDeleteConfirm,
   onDeleteCancel,
@@ -456,7 +466,8 @@ function SelectionActions({
   onSendToPlatform: (list: Transfer[]) => void;
   onRemovePlatform: (t: Transfer) => void;
   onRevertToAuto: (list: Transfer[]) => void;
-  onSplit: (t: Transfer) => void;
+  onSplit: (list: Transfer[]) => void;
+  onUndoSplit: (t: Transfer) => void;
   onDeleteRequest: () => void;
   onDeleteConfirm: () => void;
   onDeleteCancel: () => void;
@@ -468,6 +479,7 @@ function SelectionActions({
   // same predicates the confirmation previews use.
   const placeable = selected.filter(canPlaceTransfer).length;
   const revertable = selected.filter(isAutoCreated).length;
+  const splittable = selected.filter((t) => t.splitPart === undefined).length;
   const btn =
     "rounded-md border px-2.5 py-1 text-[12px] font-medium transition-colors";
   const neutral = `${btn} border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--foreground)] hover:border-[var(--accent)]`;
@@ -550,12 +562,25 @@ function SelectionActions({
           Revert to auto-created
         </button>
       )}
-      {/* Single-only: a split reads one transfer's stable/token makeup and
-          replaces that one record with two. There is no sensible batch meaning,
-          and a piece is never itself split again (it is already one side). */}
-      {single && single.splitPart === undefined && (
-        <button type="button" onClick={() => onSplit(single)} className={neutral}>
-          Split
+      {/* A piece is never split again (it is already one side), so the button
+          only counts rows that are not themselves pieces. In a batch only
+          claim-linked rows can actually be split; the modal previews which. */}
+      {splittable > 0 && (
+        <button
+          type="button"
+          onClick={() => onSplit(selected)}
+          className={neutral}
+        >
+          {single ? "Split" : `Split ${splittable}`}
+        </button>
+      )}
+      {single && single.splitOriginalId !== undefined && (
+        <button
+          type="button"
+          onClick={() => onUndoSplit(single)}
+          className={neutral}
+        >
+          Undo Split
         </button>
       )}
       <button type="button" onClick={onDeleteRequest} className={rose}>
@@ -1578,6 +1603,20 @@ export default function TransfersPage() {
     setModal({ kind: "none" });
   };
 
+  const handleBulkSplit = (plan: BulkSplitPlan) => {
+    applyBulkSplit(plan);
+    clearSelection();
+    refresh();
+    setModal({ kind: "none" });
+  };
+
+  const handleUndoSplit = (plan: UndoSplitPlan) => {
+    applyUndoSplit(plan);
+    clearSelection();
+    refresh();
+    setModal({ kind: "none" });
+  };
+
   const handleAdd = (form: TransferFormState) => {
     saveTransfers([...getTransfers(), buildTransfer(newId(), form)]);
     refresh();
@@ -2347,7 +2386,10 @@ export default function TransfersPage() {
                     onRevertToAuto={(list) =>
                       setModal({ kind: "revert", transfers: list })
                     }
-                    onSplit={(tr) => setModal({ kind: "split", transfer: tr })}
+                    onSplit={(list) => setModal({ kind: "split", transfers: list })}
+                    onUndoSplit={(tr) =>
+                      setModal({ kind: "undoSplit", transfer: tr })
+                    }
                     onDeleteRequest={() => setPendingDelete(true)}
                     onDeleteConfirm={() =>
                       handleDelete(selectedTransfers.map((t) => t.id))
@@ -2709,12 +2751,29 @@ export default function TransfersPage() {
               }
             />
           )}
-          {modal.kind === "split" && (
-            <SplitTransferModal
-              transfer={modal.transfer}
-              claims={claims}
+          {modal.kind === "split" &&
+            (modal.transfers.length === 1 ? (
+              <SplitTransferModal
+                transfer={modal.transfers[0]}
+                claims={claims}
+                onCancel={() => setModal({ kind: "none" })}
+                onSubmit={(plan) => handleSplit(modal.transfers[0], plan)}
+              />
+            ) : (
+              <BulkSplitModal
+                transfers={modal.transfers}
+                claims={claims}
+                onCancel={() => setModal({ kind: "none" })}
+                onSubmit={handleBulkSplit}
+              />
+            ))}
+          {modal.kind === "undoSplit" && (
+            <UndoSplitModal
+              piece={modal.transfer}
+              transfers={transfers}
+              allTransfers={[...transfers, ...deletedTransfers]}
               onCancel={() => setModal({ kind: "none" })}
-              onSubmit={(plan) => handleSplit(modal.transfer, plan)}
+              onSubmit={handleUndoSplit}
             />
           )}
           {modal.kind === "addWithdrawal" && (
@@ -3564,6 +3623,184 @@ function SendToPlatformModal({
           className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Confirm
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+// Bulk split: only claim-linked rows can be done unattended, because the manual
+// path needs a figure typed per transfer. Everything else is REPORTED with its
+// reason rather than silently dropped, and one unsplittable row never blocks the
+// rest — that is the whole point of previewing the batch before applying it.
+function BulkSplitModal({
+  transfers,
+  claims,
+  onCancel,
+  onSubmit,
+}: {
+  transfers: Transfer[];
+  claims: FeeClaim[];
+  onCancel: () => void;
+  onSubmit: (plan: BulkSplitPlan) => void;
+}) {
+  const plan = useMemo(
+    () => planBulkSplit(transfers, claims),
+    [transfers, claims],
+  );
+  const total = plan.splittable.reduce((sum, s) => sum + s.transfer.amount, 0);
+  return (
+    <ModalShell title="Split transfers" onCancel={onCancel}>
+      <Section title={`${transfers.length} selected`}>
+        <p className="mb-3 text-[11px] leading-relaxed text-[var(--muted)]">
+          Each one becomes two rows — the stablecoin part and the token part —
+          using its own linked claim to work out the amounts. Every pair adds up
+          to what it replaced, so no balance moves, and each original goes to
+          Recently Deleted.
+        </p>
+        {plan.skipped.length > 0 && (
+          <p className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+            {plan.splittable.length}{" "}
+            {plan.splittable.length === 1 ? "transfer" : "transfers"} will be
+            split, {plan.skipped.length} skipped — most often because there is no
+            linked claim to compute the split from. Split those individually,
+            where you can type the stablecoin amount yourself.
+          </p>
+        )}
+        {plan.splittable.length > 0 && (
+          <ul className="space-y-2">
+            {plan.splittable.map(({ transfer: t, plan: p }) => (
+              <li
+                key={t.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+              >
+                <span className="tabular-nums text-[var(--muted)]">
+                  {formatDateDDMMYYYY(t.date)} ·{" "}
+                  <span className="font-medium text-[var(--foreground)]">
+                    {formatUsd(t.amount)}
+                  </span>
+                </span>
+                <span className="tabular-nums text-[var(--muted)]">
+                  {formatUsd(p.stableAmount)} stable +{" "}
+                  {formatUsd(p.tokenAmount)} token
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {plan.skipped.length > 0 && (
+          <ul className="mt-3 space-y-1">
+            {plan.skipped.map(({ transfer: t, reason }) => (
+              <li
+                key={t.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 text-[11px] text-[var(--muted)]"
+              >
+                <span className="tabular-nums">
+                  {formatDateDDMMYYYY(t.date)} · {formatUsd(t.amount)}
+                </span>
+                <span>skipped — {reason}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+      <div className="flex justify-end gap-2 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={plan.splittable.length === 0}
+          onClick={() => onSubmit(plan)}
+          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Split {plan.splittable.length} ({formatUsd(total)})
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+// Undo: delete both pieces, restore the original from Recently Deleted. Never a
+// merge — the original was only soft-deleted, so what comes back is the exact
+// record that was split, sourceClaimId and all. Confirms first when the pieces
+// no longer add up to it, since undoing discards whatever was edited.
+function UndoSplitModal({
+  piece,
+  transfers,
+  allTransfers,
+  onCancel,
+  onSubmit,
+}: {
+  piece: Transfer;
+  transfers: Transfer[];
+  allTransfers: Transfer[];
+  onCancel: () => void;
+  onSubmit: (plan: UndoSplitPlan) => void;
+}) {
+  const plan = useMemo(
+    () => planUndoSplit(piece, transfers, allTransfers),
+    [piece, transfers, allTransfers],
+  );
+  return (
+    <ModalShell title="Undo split" onCancel={onCancel}>
+      <Section title="Put this back together">
+        {plan.error !== undefined ? (
+          <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+            {plan.error}
+          </p>
+        ) : (
+          <>
+            <p className="mb-3 text-[11px] leading-relaxed text-[var(--muted)]">
+              The {plan.pieces.length} split{" "}
+              {plan.pieces.length === 1 ? "row" : "rows"} below go to Recently
+              Deleted and the original {formatUsd(plan.originalAmount)} transfer
+              comes back exactly as it was.
+            </p>
+            <ul className="space-y-2">
+              {plan.pieces.map((p) => (
+                <li
+                  key={p.id}
+                  className="flex items-center justify-between rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+                >
+                  <span className="text-[var(--muted)]">
+                    {p.token || p.splitPart}
+                  </span>
+                  <span className="font-semibold tabular-nums text-[var(--foreground)]">
+                    {formatUsd(p.amount)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {plan.edited && (
+              <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+                These pieces now total {formatUsd(plan.piecesTotal)}, not the{" "}
+                {formatUsd(plan.originalAmount)} they were split from — one of
+                them was edited since. Undoing discards that edit. Undo anyway?
+              </p>
+            )}
+          </>
+        )}
+      </Section>
+      <div className="flex justify-end gap-2 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={plan.error !== undefined}
+          onClick={() => onSubmit(plan)}
+          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {plan.edited ? "Undo anyway" : "Undo split"}
         </button>
       </div>
     </ModalShell>
