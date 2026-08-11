@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
+  getBusinessPnLSettings,
   getClaims,
   getPositions,
   getTransfers,
 } from "../lib/storage";
-import { getEffectiveDeposited, getEffectiveTotalFees } from "../lib/calculations";
+import { calcBusinessPnL, getEffectiveDeposited } from "../lib/calculations";
 import { useHydrated } from "../lib/useHydrated";
+import { mergePrices, useTokenPrices } from "../lib/useTokenPrices";
 import type { FeeClaim, Position, Transfer } from "../lib/types";
 
 interface NavItem {
@@ -40,20 +42,29 @@ interface PortfolioStatus {
   hasData: boolean;
 }
 
+// Mirrors the Total P&L page's Net P&L (Invariant #6): LP P&L + fees + short
+// P&L across every position ever opened, closed included — so this must not
+// filter, or the two numbers drift apart.
+//
+// The FEE half is Business P&L's All Total, i.e. every reward token valued at
+// TODAY's price, matching 6da8f43. It is one global figure, not a per-position
+// sum: getEffectiveTotalFees would give the claim-TIME value, which is what
+// Total P&L's separate "Total Fees Earned" card shows and is deliberately a
+// different number. That is why this takes `prices` and why the Sidebar fetches
+// them at all (see the note in the component).
+//
+// LP P&L (currentBalance − deposited) and Short P&L are untouched.
 function computePortfolioStatus(
   positions: Position[],
   allClaims: FeeClaim[],
+  prices: Record<string, number>,
 ): PortfolioStatus {
   if (positions.length === 0) {
     return { state: "neutral", netPnl: 0, hasData: false };
   }
-  // Mirrors the Total P&L page's Net P&L exactly (Invariant #6), which spans
-  // every position ever opened, closed included — so this must not filter, or
-  // the two numbers drift apart.
-  let netPnl = 0;
+  let netPnl = calcBusinessPnL(allClaims, prices).allTotal;
   for (const p of positions) {
     netPnl += p.currentBalance - getEffectiveDeposited(p);
-    netPnl += getEffectiveTotalFees(p, allClaims);
     if (p.shortTotal !== null && Number.isFinite(p.shortTotal)) {
       netPnl += p.shortTotal;
     }
@@ -79,11 +90,15 @@ export function Sidebar() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [claims, setClaims] = useState<FeeClaim[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  // Declared ABOVE the useHydrated that seeds it — the ordering trap logged in
+  // 7d1ae7b (react-hooks/immutability: "accessed before it is declared").
+  const [manualPrices, setManualPrices] = useState<Record<string, number>>({});
 
   const load = () => {
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
+    setManualPrices(getBusinessPnLSettings().prices);
   };
 
   const hydrated = useHydrated(load);
@@ -112,6 +127,9 @@ export function Sidebar() {
     setPositions(getPositions());
     setClaims(getClaims());
     setTransfers(getTransfers());
+    // Manual price overrides too, or editing one on Business P&L and navigating
+    // away would leave this figure on the stale price.
+    setManualPrices(getBusinessPnLSettings().prices);
   }, [pathname, hydrated]);
 
   const counts = useMemo(
@@ -123,9 +141,23 @@ export function Sidebar() {
     [positions, claims, transfers],
   );
 
+  // ACCEPTED COST, user-authorized: the Sidebar renders on every page, so this
+  // puts one /api/prices call on every page load, not just the three pages that
+  // already fetched. Deliberately NOT deduped against those — sharing a fetch
+  // across the layout/page boundary is a wider restructuring than this change.
+  // A page that already fetches now issues two requests for the same symbols.
+  const { fetchedPrices } = useTokenPrices(claims);
+  const prices = useMemo(
+    () => mergePrices(fetchedPrices, manualPrices),
+    [fetchedPrices, manualPrices],
+  );
+
+  // While prices are still in flight, fetchedPrices is empty and unpriced
+  // tokens simply contribute 0 to All Total — the figure starts low and settles
+  // upward rather than flickering or blanking, and the colour follows it.
   const status = useMemo(
-    () => (hydrated ? computePortfolioStatus(positions, claims) : null),
-    [hydrated, positions, claims],
+    () => (hydrated ? computePortfolioStatus(positions, claims, prices) : null),
+    [hydrated, positions, claims, prices],
   );
 
   return (
