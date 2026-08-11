@@ -3111,6 +3111,59 @@ at the plan gate.
   to SUI and rendered exactly 0 notices. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- 74b5a96: Data Health — transfers that no longer match their fee claim
+  (2026-08-11). findDriftedClaimTransfers(transfers, claims) in lib/dataHealth
+  .ts, same shape as the other find* checks. Detection only; no calculation,
+  balance or classification changed.
+  WHAT IT CATCHES: the persistent half of "skipped-touched". reconcileClaim
+  Transfers refuses to overwrite a transfer the user has already sent, deployed
+  or expensed (666ec71), so editing that claim's USD value leaves the two
+  legitimately diverged — and diverged they stay, silently, until someone
+  reconciles them by hand.
+  THE TOUCHED TEST IS IMPORTED, NOT RESTATED: isUntouchedAuto comes from
+  transferAutomation, the very predicate reconcile branches on, so this check
+  flags exactly the set reconcile skipped. A second definition of "touched"
+  would eventually flag rows that DID sync or miss rows that did not (Invariant
+  #6). dataHealth.ts now imports transferAutomation; the existing calculations
+  ↔ dataHealth cycle is unaffected and the build is clean.
+  FOUR DELIBERATE NON-FLAGS, each verified: an untouched auto transfer (reconcile
+  rebuilds it on every save, so it cannot drift — this is what makes the check
+  specific rather than noisy); a transfer whose claim was DELETED (93719c5
+  already detaches or removes it, so there is nothing to compare or fix); a
+  claim with stableAmount null (that is findIncompleteClaims' record, and
+  reporting it here would flag one record twice under the wrong name); and a
+  difference under half a cent (a float representation gap is not drift a user
+  can act on). A manual transfer with no sourceClaimId is out by construction.
+  Rows sort by absolute difference, largest first.
+  UI: amber, same tier as idle earnings — neither number is wrong on its own
+  (the claim records what was earned, the transfer records money that already
+  moved), but they were meant to agree, so the gap should be a decision rather
+  than an accident. Banner id #claim-drift on Transfers with the established
+  "Select" pattern (clears the filters, selects the row, hands it to the
+  toolbar where Edit lives); Dashboard category "Transfers out of step with
+  their claim" deep-links to it.
+  REPLACES 36cafc6's one-time notice, removed with its skippedNotice state and
+  the Link import it was the only user of (lint caught that). handleEdit is back
+  to `void persistUpdatedClaim(claim)` — persistUpdatedClaim still RETURNS the
+  ReconcileResult, which is now simply unused by both call sites.
+  REMINDER, and it fired again: EMPTY_DATA_HEALTH in app/page.tsx is a
+  hand-written literal — every new check must add BOTH its rows field and its
+  count there or tsc fails.
+  Verified against the compiled module across 8 seeded transfers covering every
+  branch above (only the touched-and-drifted rows flagged, sorted by size), then
+  live on localhost:3001: editing the claim behind an UNTOUCHED transfer
+  ($100 → $175) auto-synced the transfer and flagged nothing; editing the claim
+  behind an AAVE-platformed transfer ($200 → $500) left the transfer at $200 and
+  raised the banner "1 transfer no longer matches the fee claim it came from —
+  transfer $200.00 · claim now $500.00", which SURVIVED navigation and a full
+  reload (the point of the change); the Dashboard read "Data Health — 3 issues"
+  with "Transfers out of step with their claim 1" linking to
+  /transfers#claim-drift; correcting the transfer amount to $500 cleared the
+  banner and dropped the Dashboard to 2 with the category gone. Available
+  Balance behaved exactly as before throughout ($175 = $675 lifetime − $500
+  transferred-to-platform). Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - Sidebar Net P&L no longer equals Total P&L's Net P&L (since 6da8f43,
