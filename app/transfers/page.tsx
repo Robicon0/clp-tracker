@@ -882,8 +882,11 @@ function ClaimDeletedBanner({
       <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
         This money had already been sent, deployed or expensed, so the transfer
         was kept — deleting it would erase where the money actually went — but
-        it no longer has a claim behind it. Check the amount still looks right;
-        saving it marks it reviewed.
+        it no longer has a claim behind it. Check the amount still looks right,
+        then save the transfer to mark it reviewed — replacing its
+        &ldquo;auto-created from fee claim&rdquo; note with your own, since that
+        note is what identifies a row whose deletion predates this check and is
+        shown as (date unknown).
       </p>
       <ul className="mt-3 space-y-2">
         {rows.map((r) => (
@@ -898,8 +901,12 @@ function ClaimDeletedBanner({
               </span>
             </span>
             <span className="tabular-nums text-[var(--muted)]">
-              {formatUsd(r.transfer.amount)} · claim deleted{" "}
-              {formatDateDDMMYYYY(r.deletedAt)}
+              {formatUsd(r.transfer.amount)} ·{" "}
+              {/* An inferred row is just as real, it simply has no recorded
+                  date — say that rather than printing a date we do not have. */}
+              {r.confirmed && r.deletedAt !== null
+                ? `claim deleted ${formatDateDDMMYYYY(r.deletedAt)}`
+                : "claim deleted (date unknown)"}
             </span>
             <button
               type="button"

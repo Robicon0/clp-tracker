@@ -18,7 +18,7 @@ import type {
 import { normalizeChain } from "./nameNormalization";
 import { isUnvaluedConvertedClaim } from "./calculations";
 import { isIdleTransfer } from "./transferState";
-import { isUntouchedAuto } from "./transferAutomation";
+import { AUTO_CLAIM_NOTE, isUntouchedAuto } from "./transferAutomation";
 
 // ---------------------------------------------------------------------------
 // Shared pair parsing
@@ -701,9 +701,33 @@ export function findDriftedClaimTransfers(
 // (isUntouchedAuto), and restating it here would let the two disagree.
 // Resolution is an edit — saving the transfer clears the stamp — because
 // reviewing it is the only thing that can be done about it.
+// confirmed=true: claimDeletedAt was stamped at the moment of deletion, so both
+// the fact and its date are exact. confirmed=false: INFERRED from the record's
+// own shape, for deletions that happened before the stamp existed (f9c43f9) —
+// the fact is certain, the date is not, so deletedAt is null and the UI says so.
 export interface OrphanedByClaimRow {
   transfer: Transfer;
-  deletedAt: string;
+  deletedAt: string | null;
+  confirmed: boolean;
+}
+
+// THE TELL, for a deletion that predates the stamp: a fees transfer carrying
+// AUTO_CLAIM_NOTE but NO sourceClaimId. Only the automation writes that note,
+// and it always writes the id alongside it, so the note surviving without the
+// id means the id was stripped — and cleanupClaimTransfers' detach branch is
+// the only code that strips it. AUTO_CLAIM_NOTE is imported rather than typed
+// out, so the note and the test cannot drift apart.
+//
+// Deliberately NOT caught by this heuristic: a manually-logged transfer (never
+// had the note), and a "Revert to auto-created" row (rebuilt WITH its
+// sourceClaimId, so the id is present). An untouched auto transfer whose claim
+// was deleted was soft-deleted with it and is not in the live list at all.
+function looksOrphanedByNote(t: Transfer): boolean {
+  return (
+    t.sourceClaimId === undefined &&
+    t.transferType === "fees" &&
+    t.notes.includes(AUTO_CLAIM_NOTE)
+  );
 }
 
 export function findOrphanedByClaimDeletion(
@@ -711,11 +735,24 @@ export function findOrphanedByClaimDeletion(
 ): OrphanedByClaimRow[] {
   const rows: OrphanedByClaimRow[] = [];
   for (const t of transfers) {
-    if (t.claimDeletedAt === undefined || t.claimDeletedAt === null) continue;
-    rows.push({ transfer: t, deletedAt: t.claimDeletedAt });
+    // The stamp is the source of truth when present, and the `continue` is what
+    // stops a stamped row ALSO matching the heuristic below and being listed
+    // twice under two different confidence levels.
+    if (t.claimDeletedAt !== undefined && t.claimDeletedAt !== null) {
+      rows.push({ transfer: t, deletedAt: t.claimDeletedAt, confirmed: true });
+      continue;
+    }
+    if (looksOrphanedByNote(t)) {
+      rows.push({ transfer: t, deletedAt: null, confirmed: false });
+    }
   }
-  // Most recently orphaned first — that is the one the user just caused.
-  return rows.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  // Confirmed rows first (most recent first among them), then the inferred ones,
+  // which have no date to sort by — ordered by transfer date so they are stable.
+  return rows.sort((a, b) => {
+    if (a.confirmed !== b.confirmed) return a.confirmed ? -1 : 1;
+    if (a.deletedAt && b.deletedAt) return b.deletedAt.localeCompare(a.deletedAt);
+    return (b.transfer.date ?? "").localeCompare(a.transfer.date ?? "");
+  });
 }
 
 // ---------------------------------------------------------------------------
