@@ -3211,6 +3211,50 @@ at the plan gate.
   drift banner's Select opened the editor on the right record (amount field
   200). Zero console errors; seeds removed. tsc/lint/build clean.
 
+- 15e8bf1: The claim-deleted check now also catches deletions that happened
+  BEFORE the claimDeletedAt stamp existed (2026-08-11, extending f9c43f9).
+  Detection only; no calculation, balance or stored record changed.
+  THE TELL: a fees transfer carrying AUTO_CLAIM_NOTE with NO sourceClaimId. Only
+  the automation writes that note and it always writes the id alongside, so the
+  note surviving without the id means the id was stripped — and
+  cleanupClaimTransfers' detach branch is the only code that strips it. The
+  constant is IMPORTED from transferAutomation, never retyped, so the note and
+  the test cannot drift.
+  TWO CONFIDENCE TIERS, and the row says which: confirmed=true rows come from the
+  stamp (exact fact, exact date); confirmed=false rows are inferred (fact
+  certain, date unknown), carry deletedAt null and render "claim deleted (date
+  unknown)". Never both — a stamped row `continue`s before the heuristic runs, so
+  it cannot be listed twice under two confidence levels. Confirmed rows sort
+  first; inferred ones sort by transfer date since they have none of their own.
+  NOT CAUGHT, deliberately: a manually-logged transfer (never had the note); a
+  "Revert to auto-created" row (rebuilt WITH its sourceClaimId); a non-fees
+  transfer; and an upside transfer, which carries the CLOSE note, not the claim
+  one. An untouched auto transfer whose claim was deleted was soft-deleted with
+  it and is not in the live list at all.
+  MEASURED CONSEQUENCE, and the banner copy was rewritten because of it: saving a
+  STAMPED row clears claimDeletedAt (f9c43f9's resolution) but the row then still
+  carries the auto note with no id, so the heuristic immediately re-flags it as
+  an undated row. The heuristic cannot tell "reviewed" from "never seen" — both
+  look identical. So there is now ONE resolution for the whole check, stated
+  plainly in the banner: save the transfer AND replace its "auto-created from fee
+  claim" note with your own. The earlier two-clause copy implying a dated row
+  clears on a plain save was only true for rows whose note had already been
+  edited, and is gone.
+  REAL-DATA NOTE: the reported ZEC/USDC $119.25 duplicate lives in the user's
+  browser localStorage, which this environment cannot read (same limit as
+  c372b30/666ec71), so it was verified against a seed reproducing its exact shape
+  — notes = AUTO_CLAIM_NOTE, no sourceClaimId, no claimDeletedAt, type fees. It
+  appears in the banner as "$119.25 · claim deleted (date unknown)".
+  Verified against the compiled module across 7 transfers covering every branch
+  (stamped-with-note, stamped-without-note, inferred, manual, still-linked,
+  wrong-type, upside) — 3 flagged, every id appearing exactly once — and live on
+  localhost:3001: the banner read "2 transfers' fee claims were deleted" with the
+  stamped $200 row dated 11/08/2026 above the inferred $119.25 row marked (date
+  unknown), and the hand-logged $80 transfer absent. Editing the inferred row's
+  note to "checked 11/08 — claim was deleted, amount confirmed" removed it from
+  the banner while keeping amount, platform and money status intact.
+  Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - Sidebar Net P&L no longer equals Total P&L's Net P&L (since 6da8f43,
