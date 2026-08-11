@@ -3299,6 +3299,65 @@ at the plan gate.
   string-identical at $2,803.78. Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- f2c73aa: Split — one transfer becomes two independently trackable rows, a
+  stablecoin piece and a token piece (2026-08-12). Opt-in per transfer; most are
+  never split. No total moves: the pieces are the stable figure and ITS
+  REMAINDER, so they sum to the original exactly by construction, not by
+  rounding twice.
+  THE AMOUNT: planTransferSplit reads the stable side from the linked claim via
+  claimStableFace — the existing function, not a second reading of which legs
+  are stablecoin — because a Transfer stores one amount and one token and has no
+  leg breakdown of its own. With no live claim link the user types the stable
+  figure and the remainder becomes the token side. Three guards (Invariant #8):
+  no figure yet, larger than the transfer, or equal to the whole transfer (there
+  is nothing to split out) each block with their own message.
+  applyTransferSplit writes both pieces THEN soft-deletes the original — that
+  order matters, because saveTransfers re-attaches soft-deleted rows and the
+  reverse would resurrect it. The original lands in Recently Deleted, restorable
+  like every other delete here, which is the escape hatch if a split was wrong.
+  WHY sourceClaimId IS CLEARED (the user's reasoning, confirmed against the
+  code): findDriftedClaimTransfers compares a linked transfer's amount to its
+  claim's FULL stableAmount, so a piece keeping the link would read as
+  permanently short and false-flag forever; cleanupClaimTransfers and
+  reconcileClaimTransfers both assume one claim maps to one transfer. Clearing
+  it is what excludes the pieces from all of that. The id survives as
+  splitFromClaimId (plus splitPart), which NOTHING outside the UI reads.
+  THE TRAP THE AUDIT FOUND, and it is not sourceClaimId: the NOTES field.
+  findOrphanedByClaimDeletion (15e8bf1) flags a fees transfer carrying
+  AUTO_CLAIM_NOTE with no sourceClaimId — which is exactly a split piece's
+  shape. Inheriting the original's auto note would have false-flagged every
+  split piece of an auto-created transfer as "your claim was deleted". Pieces
+  therefore carry SPLIT_NOTE, whose text deliberately does not contain that
+  phrase. Verified 0 orphan flags after splitting an auto-created transfer.
+  TWO MORE CONSEQUENCES, both correct but worth knowing: a split piece matches
+  the "manual same-day same-position fees transfer" heuristic in
+  reconcileClaimTransfers' skipped-existing guard AND in claimHasFeeTransfer, so
+  after splitting, editing the source claim mints no new transfer and the
+  backfill will not re-create one. That is the desired outcome — the money is
+  already logged as two rows — but it means a split is effectively a one-way
+  door for that claim's automation until the original is restored. Also
+  isAutoCreated is false on both pieces, so "Revert to auto-created" correctly
+  disappears for them.
+  UI: Split is single-select only (there is no batch meaning, and a piece is
+  never split again — splitPart !== undefined hides the button), previews both
+  amounts and the unchanged total before writing, and the rows carry a violet
+  "Split · stable" / "Split · token" pill. handleEdit CARRIES the split tags
+  across an edit — unlike claimDeletedAt, they describe what the record IS, not
+  something to review.
+  Verified against the compiled module (exact split 60/40 from a 40 SUI + 60
+  USDC claim, sum equal, original soft-deleted, 0 drift, 0 orphan, isAutoCreated
+  false, all three manual guards) and live on localhost:3001: splitting the
+  linked $100 fees transfer produced $60 stable + $40 token with Lifetime Earned
+  and Available Balance byte-identical at $350.00 before and after; the stable
+  piece alone became an Expense (Expenses $0 → $60, Available $350 → $290) while
+  the token piece stayed Redeployed, and the token piece alone went to AAVE BASE
+  (Transferred $0 → $40, Available $310) while the stable piece was untouched —
+  independent in both directions; the original appeared under "Show Recently
+  Deleted (1)"; splitting the hand-logged $250 Undeployed transfer via manual
+  entry gave $90 + $160 with the type inherited and no splitFromClaimId; and the
+  Dashboard showed zero claim-drift and zero claim-deleted flags from any of the
+  four pieces. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
