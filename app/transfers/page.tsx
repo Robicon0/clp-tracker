@@ -32,8 +32,10 @@ import {
   correctTransferSymbol,
   dismissalFor,
   findTransferAmountOutliers,
+  findDriftedClaimTransfers,
   findIdleUpsideTransfers,
   findTransferSymbolMismatches,
+  type DriftedClaimTransferRow,
   type OutlierRow,
   type IdleUpsideRow,
   IDLE_UPSIDE_DAYS,
@@ -783,6 +785,72 @@ function IdleUpsideBanner({
   );
 }
 
+// A transfer whose fee claim has since been edited to a different USD value.
+// Amber like the idle check, not red: neither number is wrong on its own — the
+// claim records what was earned and the transfer records money that has already
+// moved — but they were meant to agree, so the gap should be a decision rather
+// than an accident. "Select" hands the row to the toolbar (clearing filters
+// first so it is guaranteed visible), where Edit already lives. Reports only.
+function ClaimDriftBanner({
+  rows,
+  pairLabelFor,
+  onSelect,
+}: {
+  rows: DriftedClaimTransferRow[];
+  pairLabelFor: (t: Transfer) => string;
+  onSelect: (t: Transfer) => void;
+}) {
+  return (
+    <div
+      id="claim-drift"
+      className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4"
+    >
+      <h2 className="text-sm font-semibold text-amber-300">
+        {rows.length} {rows.length === 1 ? "transfer no" : "transfers no"} longer
+        matches the fee claim it came from
+      </h2>
+      <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+        The claim&apos;s USD value was edited after this money had already been
+        sent, deployed or expensed, so the transfer kept its original amount.
+        Update the transfer if the new value is the right one — or leave it, if
+        what actually moved was the old amount.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <li
+            key={r.transfer.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+          >
+            <span className="font-medium text-[var(--foreground)]">
+              {pairLabelFor(r.transfer)}
+              <span className="ml-2 font-normal text-[var(--muted)]">
+                {formatDateDDMMYYYY(r.transfer.date)}
+              </span>
+            </span>
+            <span className="tabular-nums text-[var(--muted)]">
+              transfer{" "}
+              <span className="font-medium text-[var(--foreground)]">
+                {formatUsd(r.transfer.amount)}
+              </span>{" "}
+              · claim now{" "}
+              <span className="font-medium text-amber-300">
+                {formatUsd(r.claimAmount)}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => onSelect(r.transfer)}
+              className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+            >
+              Select
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // A transfer's token must belong to its linked position's pair (same substring
 // test as the Position/Claim detectors). Offers a confirmed one-click fix that
 // rewrites to the pair-derived symbol, plus per-row Edit. Detection-only until
@@ -1195,6 +1263,11 @@ export default function TransfersPage() {
   const idleUpside = useMemo(
     () => (hydrated ? findIdleUpsideTransfers(transfers, positions) : []),
     [hydrated, transfers, positions],
+  );
+
+  const claimDrift = useMemo(
+    () => (hydrated ? findDriftedClaimTransfers(transfers, claims) : []),
+    [hydrated, transfers, claims],
   );
 
   const sortedFiltered = useMemo(() => {
@@ -1761,6 +1834,19 @@ export default function TransfersPage() {
           {idleUpside.length > 0 && (
             <IdleUpsideBanner
               rows={idleUpside}
+              pairLabelFor={(t) => positionPairById.get(t.positionId) ?? "—"}
+              onSelect={(t) => {
+                setSelectedIds(new Set([t.id]));
+                setPositionFilter("");
+                setTypeFilter("all");
+                setSearch("");
+              }}
+            />
+          )}
+
+          {claimDrift.length > 0 && (
+            <ClaimDriftBanner
+              rows={claimDrift}
               pairLabelFor={(t) => positionPairById.get(t.positionId) ?? "—"}
               onSelect={(t) => {
                 setSelectedIds(new Set([t.id]));

@@ -18,6 +18,7 @@ import type {
 import { normalizeChain } from "./nameNormalization";
 import { isUnvaluedConvertedClaim } from "./calculations";
 import { isIdleTransfer } from "./transferState";
+import { isUntouchedAuto } from "./transferAutomation";
 
 // ---------------------------------------------------------------------------
 // Shared pair parsing
@@ -634,6 +635,58 @@ export function findIdleUpsideTransfers(
 }
 
 // ---------------------------------------------------------------------------
+// Drifted claim transfers
+// ---------------------------------------------------------------------------
+
+// A transfer whose linked fee claim has since been edited to a different USD
+// value, while the transfer kept the old one. This is the visible, persistent
+// half of the "skipped-touched" outcome (36cafc6): reconcileClaimTransfers
+// deliberately refuses to overwrite a transfer the user has already sent,
+// deployed or expensed, so the two legitimately diverge — and stay diverged
+// until someone reconciles them by hand.
+//
+// UNTOUCHED transfers are excluded by construction, not by choice: reconcile
+// rebuilds those to match on every save, so they cannot drift. isUntouchedAuto
+// is IMPORTED from transferAutomation, the same predicate reconcile itself
+// branches on, so this check flags exactly the set reconcile skipped — a second
+// definition of "touched" would eventually flag rows that did sync, or miss
+// rows that did not (Invariant #6).
+export interface DriftedClaimTransferRow {
+  transfer: Transfer;
+  claim: FeeClaim;
+  claimAmount: number;
+  difference: number;
+}
+
+export function findDriftedClaimTransfers(
+  transfers: Transfer[],
+  claims: FeeClaim[],
+): DriftedClaimTransferRow[] {
+  const byId = new Map(claims.map((c) => [c.id, c]));
+  const rows: DriftedClaimTransferRow[] = [];
+  for (const t of transfers) {
+    if (t.sourceClaimId === undefined) continue;
+    const claim = byId.get(t.sourceClaimId);
+    // A claim that no longer exists is not drift — deleting a claim already
+    // detaches or removes its transfer (93719c5), so there is nothing to
+    // compare against and nothing to fix.
+    if (!claim) continue;
+    if (isUntouchedAuto(t)) continue;
+    // A claim with no USD value yet is an incomplete claim, which
+    // findIncompleteClaims already reports; comparing against it would flag the
+    // same record twice under a wrong name.
+    const claimAmount = claim.stableAmount;
+    if (claimAmount === null || !Number.isFinite(claimAmount)) continue;
+    // Cent-level equality: these are both stored dollar figures, and a float
+    // representation gap is not drift a user could act on.
+    const difference = t.amount - claimAmount;
+    if (Math.abs(difference) < 0.005) continue;
+    rows.push({ transfer: t, claim, claimAmount, difference });
+  }
+  return rows.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
+}
+
+// ---------------------------------------------------------------------------
 // Consolidated report (Part 4)
 // ---------------------------------------------------------------------------
 
@@ -647,6 +700,7 @@ export interface DataHealthCounts {
   stalePositions: number;
   incompleteClaims: number;
   idleUpside: number;
+  driftedClaimTransfers: number;
   total: number;
 }
 
@@ -659,6 +713,7 @@ export interface DataHealthReport {
   transferOutliers: OutlierRow[];
   stalePositions: StalePositionRow[];
   incompleteClaims: IncompleteClaimRow[];
+  driftedClaimTransfers: DriftedClaimTransferRow[];
   idleUpside: IdleUpsideRow[];
   counts: DataHealthCounts;
 }
@@ -683,6 +738,7 @@ export function computeDataHealth(
   const stalePositions = findStalePositions(positions, claims, staleDismissals);
   const incompleteClaims = findIncompleteClaims(claims, positions);
   const idleUpside = findIdleUpsideTransfers(transfers, positions);
+  const driftedClaimTransfers = findDriftedClaimTransfers(transfers, claims);
   const counts: DataHealthCounts = {
     positionSymbol: positionSymbol.length,
     claimSymbol: claimSymbol.length,
@@ -693,6 +749,7 @@ export function computeDataHealth(
     stalePositions: stalePositions.length,
     incompleteClaims: incompleteClaims.length,
     idleUpside: idleUpside.length,
+    driftedClaimTransfers: driftedClaimTransfers.length,
     total:
       positionSymbol.length +
       claimSymbol.length +
@@ -702,7 +759,8 @@ export function computeDataHealth(
       transferOutliers.length +
       stalePositions.length +
       incompleteClaims.length +
-      idleUpside.length,
+      idleUpside.length +
+      driftedClaimTransfers.length,
   };
   return {
     positionSymbol,
@@ -713,6 +771,7 @@ export function computeDataHealth(
     transferOutliers,
     stalePositions,
     incompleteClaims,
+    driftedClaimTransfers,
     idleUpside,
     counts,
   };

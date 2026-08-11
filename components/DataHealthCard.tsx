@@ -73,6 +73,12 @@ export function DataHealthCard({ report }: { report: DataHealthReport }) {
       href: "/transfers#idle-earnings",
       tone: "amber" as const,
     },
+    {
+      label: "Transfers out of step with their claim",
+      count: counts.driftedClaimTransfers,
+      href: "/transfers#claim-drift",
+      tone: "amber" as const,
+    },
   ].filter((c) => c.count > 0);
 
   if (counts.total === 0) {
