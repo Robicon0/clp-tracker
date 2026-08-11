@@ -3164,6 +3164,53 @@ at the plan gate.
   transferred-to-platform). Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- f9c43f9: Claim-drift Select opens the editor; new Data Health check for
+  transfers whose claim was DELETED (2026-08-11). No calculation, balance or
+  money-state changed in either half.
+  TASK A: ClaimDriftBanner's Select now calls setModal({kind:"edit"}) — the same
+  modal the table's Edit button opens — instead of selecting the row and
+  clearing the filters. Correcting the amount IS the resolution for that flag,
+  so the old path was a step containing no decision.
+  OPEN QUESTION, deliberately not settled here: IdleUpsideBanner's Select still
+  works the old way (select + clear filters), and that is arguably right for it —
+  idle money is resolved by "Mark as deployed" or "Send to Platform", which live
+  in the TOOLBAR and act on a selection, not by editing the record. So the two
+  banners differing may be correct rather than inconsistent. Decide before adding
+  a third banner, so the pattern is chosen once.
+  TASK B — the field is the point: Transfer gained optional claimDeletedAt.
+  cleanupClaimTransfers already kept a TOUCHED transfer when its claim was
+  deleted (93719c5) — the money genuinely moved, so erasing the record would
+  erase where it went — but it dropped sourceClaimId and nothing else, leaving a
+  row indistinguishable from any hand-logged transfer. The detach branch now
+  stamps the deletion time, and findOrphanedByClaimDeletion(transfers) reports
+  it: counts/report/total wiring like every other check, an amber #claim-deleted
+  banner on Transfers, and a Dashboard category.
+  NO SECOND PREDICATE: the check is literally "is the stamp present". The
+  decision about WHICH transfers get detached rather than soft-deleted stays in
+  cleanupClaimTransfers (isUntouchedAuto); restating it in dataHealth would let
+  the two disagree (Invariant #6). An UNTOUCHED transfer is still soft-deleted
+  with its claim and never stamped — verified, nothing to review because nothing
+  survived.
+  RESOLUTION IS AN EDIT, and it works by omission: handleEdit rebuilds the record
+  from buildTransfer and hand-carries the out-of-form fields (sourceClaimId,
+  sourceCloseId, deploy-link). claimDeletedAt is deliberately NOT in that list,
+  so saving the transfer drops it and the row leaves the banner. That is the only
+  available resolution — the claim is gone, so all the user can do is confirm the
+  amount still looks right. The omission is commented at the call site; do not
+  "fix" it by adding the field to the carry-across block.
+  Verified live on localhost:3001 with two claims, one behind an UNTOUCHED
+  transfer and one behind a transfer already sent to AAVE BASE: deleting the
+  touched one's claim kept the transfer live, dropped sourceClaimId and stamped
+  claimDeletedAt, while deleting the untouched one's claim soft-deleted its
+  transfer with NO stamp (93719c5 behaviour intact). The banner read "1
+  transfer's fee claim was deleted — $200.00 · claim deleted 11/08/2026";
+  Review opened the editor directly and saving cleared the stamp, removed the
+  banner row, and preserved platform AAVE BASE / amount $200 / notes untouched.
+  With a drift row and an orphan row seeded together the Dashboard read "Data
+  Health — 3 issues" listing both categories with correct deep links, and the
+  drift banner's Select opened the editor on the right record (amount field
+  200). Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - Sidebar Net P&L no longer equals Total P&L's Net P&L (since 6da8f43,
