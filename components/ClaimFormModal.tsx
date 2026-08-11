@@ -14,7 +14,10 @@ import {
   savePositions,
 } from "../lib/storage";
 import { getEffectiveDeposited } from "../lib/calculations";
-import { reconcileClaimTransfers } from "../lib/transferAutomation";
+import {
+  reconcileClaimTransfers,
+  type ReconcileResult,
+} from "../lib/transferAutomation";
 import type { FeeClaim, Position } from "../lib/types";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -194,10 +197,18 @@ export function persistNewClaim(claim: FeeClaim): void {
   void reconcileClaimTransfers(claim);
 }
 
-export function persistUpdatedClaim(claim: FeeClaim): void {
+// Returns the reconcile outcome so a caller can tell the user when their edit
+// did NOT reach the linked transfer — "skipped-touched" means the user had
+// already sent, deployed or expensed that transfer, so reconcile deliberately
+// left it alone. That decision is unchanged; it was simply invisible before,
+// because the promise was discarded. Callers that have nothing to say about it
+// (the bulk symbol fix) can still ignore the result.
+export async function persistUpdatedClaim(
+  claim: FeeClaim,
+): Promise<ReconcileResult> {
   saveClaims(getClaims().map((c) => (c.id === claim.id ? claim : c)));
   applyPositionValueUpdate(claim);
-  void reconcileClaimTransfers(claim);
+  return reconcileClaimTransfers(claim);
 }
 
 interface ModalShellProps {

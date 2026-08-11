@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   getClaims,
@@ -276,6 +277,8 @@ export default function ClaimsPage() {
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // Set when an edit's reconcile came back "skipped-touched".
+  const [skippedNotice, setSkippedNotice] = useState(false);
 
   const [dismissals, setDismissals] = useState<OutlierDismissal[]>([]);
 
@@ -411,8 +414,19 @@ export default function ClaimsPage() {
     setModal({ kind: "none" });
   };
 
+  // The save itself is unchanged; what is new is that its outcome is read.
+  // reconcile refuses to overwrite a transfer the user has already sent,
+  // deployed or expensed — correct, but until now completely silent, so an
+  // edited amount could sit on the claim while the transfer kept the old one.
+  // The modal closes and the list refreshes either way; only the notice is
+  // conditional.
   const handleEdit = (claim: FeeClaim) => {
-    persistUpdatedClaim(claim);
+    setSkippedNotice(false);
+    void persistUpdatedClaim(claim).then((result) => {
+      if (result.status === "skipped-touched") setSkippedNotice(true);
+    });
+    // The claim itself is already written synchronously inside persist, so the
+    // list refreshes immediately; only the notice waits on the reconcile.
     refresh();
     setModal({ kind: "none" });
   };
@@ -432,9 +446,12 @@ export default function ClaimsPage() {
   // to its pair-derived value, through the shared persist path so transfers
   // stay reconciled (Invariant #10). User-triggered and confirmed — never
   // silent. Fixing the symbols re-sums the Business P&L totals correctly.
+  // Result deliberately ignored here: N claims would raise N identical notices,
+  // and a symbol correction does not change any transfer AMOUNT, which is what
+  // the notice is about.
   const handleFixAllSymbols = (rows: ClaimSymbolMismatchRow[]) => {
     for (const row of rows) {
-      persistUpdatedClaim(correctClaimSymbols(row));
+      void persistUpdatedClaim(correctClaimSymbols(row));
     }
     refresh();
   };
@@ -494,6 +511,36 @@ export default function ClaimsPage() {
           hint="Deposit-weighted across all positions with claims here — active AND closed. The Dashboard's Average Fee APR is active-only, so this runs higher."
         />
       </div>
+
+      {/* Shown only after an edit that reconcile refused to propagate. Styled
+          like the amber Data Health banners so it reads as the same class of
+          "worth a look" notice, and dismissed by hand — auto-hiding a message
+          about money that quietly did not update is exactly wrong. */}
+      {skippedNotice && (
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-5 py-4">
+          <div>
+            <p className="text-[13px] font-medium text-amber-300">
+              Saved — but the linked transfer was left alone
+            </p>
+            <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+              This claim&apos;s transfer has already been sent, deployed or
+              marked an Expense, so the amount was NOT updated there. Check it
+              yourself on the{" "}
+              <Link href="/transfers" className="underline hover:text-amber-300">
+                Transfers page
+              </Link>
+              .
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSkippedNotice(false)}
+            className="rounded-md border border-amber-500/40 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* This banner already IS the Data Health "incomplete claims" surface —
           same canonical predicate (isUnvaluedConvertedClaim), same count. It
