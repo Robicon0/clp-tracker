@@ -111,6 +111,14 @@ export interface Transfer {
   // "claim deleted" check until the user edits the transfer, which clears it.
   // Absent on every other transfer, including ones whose claim never existed.
   claimDeletedAt?: string;
+  // Split (opt-in, per transfer): one transfer broken into a stablecoin piece
+  // and a token piece so each can be expensed / platformed / deployed on its
+  // own. Both are DISPLAY/traceability only — no automation, balance or Data
+  // Health check reads them, which is the point: a split piece must behave like
+  // an ordinary manual transfer everywhere else. Note that sourceClaimId is
+  // deliberately NOT carried onto the pieces (see applyTransferSplit).
+  splitFromClaimId?: string;
+  splitPart?: "stable" | "token";
   notes: string;
 }
 

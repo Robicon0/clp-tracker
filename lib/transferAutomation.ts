@@ -1,4 +1,4 @@
-import { isStableSymbol } from "./calculations";
+import { claimStableFace, isStableSymbol } from "./calculations";
 import { getTransfers, saveTransfers, softDeleteTransfer } from "./storage";
 import type { FeeClaim, Position, Transfer } from "./types";
 
@@ -424,6 +424,156 @@ export function cleanupClaimTransfers(claimId: string): ClaimTransferCleanup {
   // After the detach write, so the map above cannot resurrect a deleted row.
   for (const id of softDeleted) softDeleteTransfer(id);
   return { softDeleted, detached: detached.map((t) => t.id) };
+}
+
+// ── Split a transfer into its stable and token halves ───────────────────────
+
+// Stamped on both pieces. Deliberately does NOT contain AUTO_CLAIM_NOTE:
+// findOrphanedByClaimDeletion (15e8bf1) flags a fees transfer that carries that
+// exact phrase with no sourceClaimId, which is precisely the shape a split
+// piece has — inheriting the original's auto note would false-flag every split
+// piece as "your claim was deleted". This is the trap in this feature.
+export const SPLIT_NOTE = "SPLIT FROM A SINGLE TRANSFER";
+
+export interface TransferSplitPlan {
+  // Where the stable figure came from: the linked claim's stablecoin legs, or
+  // the user typing it because there is no live claim to read.
+  source: "claim" | "manual";
+  stableAmount: number;
+  tokenAmount: number;
+  claim: FeeClaim | null;
+  // Set when the plan cannot be built; the UI explains and blocks.
+  error?: string;
+}
+
+// Proposes the split. With a live sourceClaimId the stable side is
+// claimStableFace(claim) — the SAME function Overall P&L's per-leg rule uses,
+// not a second reading of "which legs are stablecoin" — and the remainder is
+// the token side. Without one there is nothing to read (a Transfer stores a
+// single amount and a single token; only claims carry the leg breakdown), so
+// the caller supplies the stable figure.
+export function planTransferSplit(
+  transfer: Transfer,
+  claims: FeeClaim[],
+  manualStable?: number,
+): TransferSplitPlan {
+  const total = toFiniteAmount(transfer.amount);
+  const claim =
+    transfer.sourceClaimId !== undefined
+      ? claims.find((c) => c.id === transfer.sourceClaimId) ?? null
+      : null;
+
+  const raw = claim !== null ? claimStableFace(claim) : manualStable;
+  const source: "claim" | "manual" = claim !== null ? "claim" : "manual";
+
+  if (raw === undefined || !Number.isFinite(raw)) {
+    return {
+      source,
+      stableAmount: 0,
+      tokenAmount: total,
+      claim,
+      error: "Enter how much of this transfer was already in stablecoin.",
+    };
+  }
+  const stableAmount = Math.max(0, raw);
+  if (stableAmount > total) {
+    return {
+      source,
+      stableAmount,
+      tokenAmount: 0,
+      claim,
+      error:
+        "The stablecoin portion cannot be larger than the transfer itself.",
+    };
+  }
+  if (stableAmount <= 0 || stableAmount >= total) {
+    return {
+      source,
+      stableAmount,
+      tokenAmount: total - stableAmount,
+      claim,
+      error:
+        "This transfer is entirely one side, so there is nothing to split out.",
+    };
+  }
+  // The remainder, never a second rounding of the same number — the two pieces
+  // sum to the original exactly, so no balance anywhere can shift.
+  return {
+    source,
+    stableAmount,
+    tokenAmount: total - stableAmount,
+    claim,
+    error: undefined,
+  };
+}
+
+function toFiniteAmount(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+// Writes the split: two new records, then the original soft-deleted (Recently
+// Deleted, restorable — the same convention as every other delete here, and the
+// escape hatch if a split was a mistake).
+//
+// NEITHER PIECE CARRIES sourceClaimId, and that is load-bearing rather than
+// tidiness. findDriftedClaimTransfers compares a linked transfer's amount to
+// its claim's FULL stableAmount, so a piece keeping the link would read as
+// permanently short and false-flag forever; cleanupClaimTransfers and
+// reconcileClaimTransfers likewise assume one claim maps to one transfer.
+// Clearing the id is what correctly excludes the pieces from all of it. The
+// claim id survives as splitFromClaimId, which nothing but the UI reads.
+export function applyTransferSplit(
+  transfer: Transfer,
+  plan: TransferSplitPlan,
+): Transfer[] {
+  if (plan.error !== undefined) return [];
+  const base = {
+    positionId: transfer.positionId,
+    date: transfer.date,
+    platform: transfer.platform,
+    destination: transfer.destination,
+    transferType: transfer.transferType,
+    // The original's status carries over to both; each is independently
+    // editable from here, which is the whole point of splitting.
+    moneyStatus: transfer.moneyStatus,
+    ...(transfer.sourceClaimId !== undefined
+      ? { splitFromClaimId: transfer.sourceClaimId }
+      : {}),
+  };
+  const pieces: Transfer[] = [
+    {
+      ...base,
+      id: newId(),
+      token: plan.claim?.token1Symbol
+        ? stableSymbolOf(plan.claim) || transfer.token
+        : transfer.token,
+      amount: plan.stableAmount,
+      splitPart: "stable",
+      notes: SPLIT_NOTE,
+    },
+    {
+      ...base,
+      id: newId(),
+      token: transfer.token,
+      amount: plan.tokenAmount,
+      splitPart: "token",
+      notes: SPLIT_NOTE,
+    },
+  ];
+  saveTransfers([...getTransfers(), ...pieces]);
+  // After the write, so the save above cannot resurrect the original.
+  softDeleteTransfer(transfer.id);
+  return pieces;
+}
+
+// The stablecoin leg's symbol, for labelling the stable piece. Falls back to
+// the original transfer's token when the claim has no identifiable stable leg.
+function stableSymbolOf(claim: FeeClaim): string {
+  const t1 = claim.token1Symbol.trim().toUpperCase();
+  const t2 = claim.token2Symbol.trim().toUpperCase();
+  if (isStableSymbol(t1)) return t1;
+  if (isStableSymbol(t2)) return t2;
+  return "";
 }
 
 // ── Backfill eligibility (pure) ─────────────────────────────────────────────

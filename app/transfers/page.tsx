@@ -53,14 +53,17 @@ import {
 import { normalizeChain, normalizeToken } from "../../lib/nameNormalization";
 import {
   applyRevertToAuto,
+  applyTransferSplit,
   buildClaimTransfers,
   createUpsideTransfer,
   eligibleClaimsForBackfill,
   eligibleClosesForBackfill,
   isAutoCreated,
   planRevertToAuto,
+  planTransferSplit,
   reconcileClaimTransfers,
   type AutoRevertPlan,
+  type TransferSplitPlan,
 } from "../../lib/transferAutomation";
 import { useHydrated } from "../../lib/useHydrated";
 import {
@@ -290,6 +293,7 @@ type ModalState =
   | { kind: "deploy"; transfers: Transfer[] }
   | { kind: "platform"; transfers: Transfer[] }
   | { kind: "revert"; transfers: Transfer[] }
+  | { kind: "split"; transfer: Transfer }
   | { kind: "addWithdrawal" }
   | { kind: "editWithdrawal"; withdrawal: Withdrawal };
 
@@ -391,6 +395,14 @@ function TransferListRow({
             {datesLabel ?? formatDateDDMMYYYY(t.date)}
           </span>
           <TypePill type={t.transferType} />
+          {/* A split piece looks like an ordinary transfer to every calculation
+              and check — this tag is the only thing that says it is one half of
+              a row that used to be whole. */}
+          {t.splitPart !== undefined && (
+            <span className="inline-flex items-center rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-violet-300">
+              Split · {t.splitPart}
+            </span>
+          )}
           {!isTransferred && !isDeployed && (
             <MoneyStatusPill status={t.moneyStatus} />
           )}
@@ -431,6 +443,7 @@ function SelectionActions({
   onSendToPlatform,
   onRemovePlatform,
   onRevertToAuto,
+  onSplit,
   onDeleteRequest,
   onDeleteConfirm,
   onDeleteCancel,
@@ -443,6 +456,7 @@ function SelectionActions({
   onSendToPlatform: (list: Transfer[]) => void;
   onRemovePlatform: (t: Transfer) => void;
   onRevertToAuto: (list: Transfer[]) => void;
+  onSplit: (t: Transfer) => void;
   onDeleteRequest: () => void;
   onDeleteConfirm: () => void;
   onDeleteCancel: () => void;
@@ -534,6 +548,14 @@ function SelectionActions({
           className={sky}
         >
           Revert to auto-created
+        </button>
+      )}
+      {/* Single-only: a split reads one transfer's stable/token makeup and
+          replaces that one record with two. There is no sensible batch meaning,
+          and a piece is never itself split again (it is already one side). */}
+      {single && single.splitPart === undefined && (
+        <button type="button" onClick={() => onSplit(single)} className={neutral}>
+          Split
         </button>
       )}
       <button type="button" onClick={onDeleteRequest} className={rose}>
@@ -1547,6 +1569,15 @@ export default function TransfersPage() {
     setModal({ kind: "none" });
   };
 
+  // Two new rows in, original soft-deleted — all inside applyTransferSplit, so
+  // the write order (save the pieces, THEN soft-delete) lives in one place.
+  const handleSplit = (target: Transfer, plan: TransferSplitPlan) => {
+    applyTransferSplit(target, plan);
+    clearSelection();
+    refresh();
+    setModal({ kind: "none" });
+  };
+
   const handleAdd = (form: TransferFormState) => {
     saveTransfers([...getTransfers(), buildTransfer(newId(), form)]);
     refresh();
@@ -1572,6 +1603,15 @@ export default function TransfersPage() {
             deployedToPositionId: target.deployedToPositionId,
             deployedAt: target.deployedAt,
           }
+        : {}),
+      // The split tags ARE carried across: they describe what the record IS,
+      // not something to review, so editing a piece must not quietly turn it
+      // back into an ordinary transfer.
+      ...(target.splitFromClaimId !== undefined
+        ? { splitFromClaimId: target.splitFromClaimId }
+        : {}),
+      ...(target.splitPart !== undefined
+        ? { splitPart: target.splitPart }
         : {}),
       // claimDeletedAt is deliberately NOT carried across: saving the transfer
       // IS how the "source claim was deleted" flag is resolved, so rebuilding
@@ -2307,6 +2347,7 @@ export default function TransfersPage() {
                     onRevertToAuto={(list) =>
                       setModal({ kind: "revert", transfers: list })
                     }
+                    onSplit={(tr) => setModal({ kind: "split", transfer: tr })}
                     onDeleteRequest={() => setPendingDelete(true)}
                     onDeleteConfirm={() =>
                       handleDelete(selectedTransfers.map((t) => t.id))
@@ -2666,6 +2707,14 @@ export default function TransfersPage() {
               onSubmit={(platform) =>
                 handleSendToPlatform(modal.transfers, platform)
               }
+            />
+          )}
+          {modal.kind === "split" && (
+            <SplitTransferModal
+              transfer={modal.transfer}
+              claims={claims}
+              onCancel={() => setModal({ kind: "none" })}
+              onSubmit={(plan) => handleSplit(modal.transfer, plan)}
             />
           )}
           {modal.kind === "addWithdrawal" && (
@@ -3515,6 +3564,122 @@ function SendToPlatformModal({
           className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Confirm
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+// Splits ONE transfer into its stablecoin and token halves, previewing both
+// before anything is written. With a live claim link the stable figure is read
+// from the claim (claimStableFace) and shown read-only; without one there is
+// nothing to read — a Transfer stores one amount and one token — so the user
+// types it and the remainder becomes the token side.
+function SplitTransferModal({
+  transfer,
+  claims,
+  onCancel,
+  onSubmit,
+}: {
+  transfer: Transfer;
+  claims: FeeClaim[];
+  onCancel: () => void;
+  onSubmit: (plan: TransferSplitPlan) => void;
+}) {
+  const linked = useMemo(
+    () => planTransferSplit(transfer, claims),
+    [transfer, claims],
+  );
+  const fromClaim = linked.claim !== null;
+  const [manual, setManual] = useState("");
+  const plan = useMemo(
+    () =>
+      fromClaim
+        ? linked
+        : planTransferSplit(
+            transfer,
+            claims,
+            manual.trim() === "" ? undefined : Number(manual),
+          ),
+    [fromClaim, linked, transfer, claims, manual],
+  );
+  return (
+    <ModalShell title="Split transfer" onCancel={onCancel}>
+      <Section title="Break this into two independent transfers">
+        <p className="mb-3 text-[11px] leading-relaxed text-[var(--muted)]">
+          {formatUsd(transfer.amount)} becomes two rows — the stablecoin part
+          and the token part — each separately editable from then on, so you can
+          send one to a platform now and expense the other later. The two always
+          add up to the original, so no balance moves. The original goes to
+          Recently Deleted and can be restored.
+        </p>
+
+        {fromClaim ? (
+          <p className="mb-4 rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[11px] leading-relaxed text-[var(--muted)]">
+            Split read from the linked fee claim&apos;s stablecoin legs.
+          </p>
+        ) : (
+          <Field
+            label="Stablecoin portion (USD)"
+            htmlFor="split-stable"
+            hint="This transfer has no linked claim to read, so enter how much of it was already in stablecoin. The rest becomes the token part."
+          >
+            <input
+              id="split-stable"
+              type="number"
+              step="any"
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              placeholder="0.00"
+              className={inputClass}
+            />
+          </Field>
+        )}
+
+        {plan.error !== undefined ? (
+          <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+            {plan.error}
+          </p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {[
+              { label: "Stable part", value: plan.stableAmount },
+              { label: "Token part", value: plan.tokenAmount },
+            ].map((row) => (
+              <div
+                key={row.label}
+                className="flex items-center justify-between rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)]/40 px-3 py-2 text-[12px]"
+              >
+                <span className="text-[var(--muted)]">{row.label}</span>
+                <span className="font-semibold tabular-nums text-[var(--foreground)]">
+                  {formatUsd(row.value)}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between px-3 text-[11px] text-[var(--muted)]">
+              <span>Total after split</span>
+              <span className="tabular-nums">
+                {formatUsd(plan.stableAmount + plan.tokenAmount)} · unchanged
+              </span>
+            </div>
+          </div>
+        )}
+      </Section>
+      <div className="flex justify-end gap-2 px-5 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)]/70"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={plan.error !== undefined}
+          onClick={() => onSubmit(plan)}
+          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Split into two
         </button>
       </div>
     </ModalShell>
