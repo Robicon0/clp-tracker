@@ -3255,13 +3255,53 @@ at the plan gate.
   the banner while keeping amount, platform and money status intact.
   Zero console errors; seeds removed. tsc/lint/build clean.
 
+- 6d22d25: Sidebar Net P&L now equals Total P&L's again — fees at CURRENT value
+  (2026-08-12). Closes the Known Issue opened by 6da8f43, which is removed from
+  that section. Invariant #6's "Sidebar Net P&L must always equal Total P&L's
+  Net P&L" holds once more.
+  computePortfolioStatus takes a `prices` argument and its fee term is now
+  calcBusinessPnL(allClaims, prices).allTotal — ONE global figure, not the
+  per-position getEffectiveTotalFees sum it replaced. That distinction is the
+  whole fix: getEffectiveTotalFees is claim-TIME value, which is what Total
+  P&L's separate "Total Fees Earned" card shows and is deliberately a different
+  number. LP P&L (currentBalance − deposited) and Short P&L are untouched, and
+  the loop still spans every position ever opened.
+  ACCEPTED COST, user-authorized and stated plainly: the Sidebar renders in the
+  LAYOUT, so it now runs the standard fetch stack (useHydrated +
+  getBusinessPnLSettings + useTokenPrices + mergePrices) and a /api/prices call
+  happens on EVERY page load — including Settings and Positions, which never
+  fetched before — and TWICE on the pages that already did (Dashboard, Total
+  P&L, Business P&L), since it is deliberately not deduped across the
+  layout/page boundary. Sharing one fetch across that boundary is a wider
+  restructuring; 7d1ae7b collapsed the duplicate WITHIN a page, which is a
+  different problem.
+  TWO SMALL THINGS THAT MATTER: manualPrices' useState is declared ABOVE the
+  useHydrated that seeds it (the react-hooks/immutability trap from 7d1ae7b —
+  "accessed before it is declared"), and the navigation-refresh effect re-reads
+  the manual overrides too, not just positions/claims/transfers, or editing a
+  price on Business P&L and navigating away would leave this figure on the old
+  one.
+  LOADING BEHAVIOUR (measured, not assumed): while a fetch is in flight
+  fetchedPrices is empty, unpriced tokens contribute 0 to All Total, and the
+  figure simply starts lower and settles upward — it never blanks, flickers or
+  throws, and the +/− colour follows whatever the current value is. In practice
+  the clp_price_cache (Sprint 8.5) makes repeat loads instant.
+  Verified live on localhost:3001 with 2 positions (active 10,000 → 10,500 with
+  short +150, closed 5,000 → 5,200) and 2 unconverted claims (1 ETH booked at
+  $2,000, 100 SUI at $200): with manual prices ETH 3,000 / SUI 2 the Sidebar read
+  $4,050.00 against Total P&L's Net P&L $4,050.00 — equal, where it read $3,050
+  before this change — while Total Fees Earned stayed $2,200.00 (claim-time) and
+  LP P&L $700.00. On /settings, a page with no price fetching of its own, the
+  Sidebar still showed $4,050.00 in green with "PORTFOLIO +", proving the global
+  fetch works. Dropping the active position to 3,000 gave −$3,450.00 (=−7,000 +
+  200 + 3,200 + 150) in red with "PORTFOLIO −". With the manual overrides removed
+  so real fetched prices applied, the Sidebar and the Net P&L card were
+  string-identical at $2,803.78. Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
-- Sidebar Net P&L no longer equals Total P&L's Net P&L (since 6da8f43,
-  2026-08-10). Total P&L values fee tokens at current price; the Sidebar still
-  uses claim-time. Invariant #6 requires them to agree. Decide: give the Sidebar
-  the current-value figure (costs a price fetch on every page) or accept the
-  split and correct the Sidebar's "mirrors Total P&L exactly" comment.
+- None currently tracked.
 
 ## Architecture Notes
 
