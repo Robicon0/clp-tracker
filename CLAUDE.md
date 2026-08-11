@@ -3358,6 +3358,54 @@ at the plan gate.
   Dashboard showed zero claim-drift and zero claim-deleted flags from any of the
   four pieces. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- dd81140: Split gained a real-token badge, Undo Split, and bulk split
+  (2026-08-12, extending f2c73aa). No sum changes anywhere — the f2c73aa
+  invariant (pieces add up to what they replaced) holds through all three.
+  (1) DISPLAY ONLY: the badge reads the piece's own `token` — "Split · USDC",
+  "Split · SUI" — instead of the generic side name. splitPart remains the
+  internal handle for styling and the never-split-a-piece guard.
+  (2) UNDO. Transfer gained splitOriginalId, set on BOTH pieces to the
+  ORIGINAL transfer's own id rather than a freshly minted group id: it is
+  already unique, it groups the pair, and it is exactly the restore target Undo
+  needs. Undo is "soft-delete the pieces, restoreTransfer(original)" — NEVER a
+  merge, which is the whole reason splitting soft-deletes rather than erases.
+  restoreTransfer only drops deletedAt, so what comes back is byte-identical,
+  sourceClaimId included; verified by JSON-comparing the restored record against
+  the pre-split one.
+  THE EDITED CHECK IS SUM-BASED, and its limit is stated on purpose: pieces do
+  not store what they were created as, so planUndoSplit compares their CURRENT
+  total (and count) against the soft-deleted original's amount. That catches any
+  single edited amount or a piece deleted separately. Two edits that cancel out
+  exactly would slip through — a far-fetched way to lose an edit you are
+  explicitly undoing, and not worth another stored field. When edited, the modal
+  shows both totals and the button reads "Undo anyway".
+  A PURGED original is handled rather than crashed: if the record was
+  permanently deleted from Recently Deleted there is nothing to restore, so the
+  modal explains and blocks (Invariant #8).
+  (3) BULK. planBulkSplit is deliberately CLAIM-ONLY — the manual path needs a
+  figure typed per transfer, which is not a batch operation. Every other row is
+  REPORTED with its reason ("no linked claim", "linked claim no longer exists",
+  "already a split piece", "nothing to split out") and the batch proceeds
+  without it; one unsplittable row never blocks the rest. applyBulkSplit loops
+  through the SAME applyTransferSplit the single path uses, so the write order
+  (pieces first, then soft-delete) has one implementation.
+  The modal previews every pair's amounts before writing, and the confirm button
+  names the real count and total ("Split 2 ($200.00)"), so it can never promise
+  more than it does.
+  Verified against the compiled module (bulk 2-split/1-skipped with the sum
+  preserved at 700; undo restoring T1 byte-identical; edited-case detected at
+  115 vs 100) and live on localhost:3001 with 2 claim-linked $100 transfers and
+  one hand-logged $500: Select all visible → "Split 3" → modal read "2 transfers
+  will be split, 1 skipped", previewed $60+$40 and $30+$70, and the $500 listed
+  "skipped — no linked claim"; applying left Lifetime Earned and Available
+  Balance byte-identical at $700.00 with four pieces badged SPLIT · USDC /
+  SPLIT · SUI and "Show Recently Deleted (2)". Undo on the untouched pair
+  restored the $100 original with sourceClaimId C1 and its auto note intact,
+  balances still $700.00. Editing a piece $30 → $45 and undoing its sibling gave
+  "These pieces now total $115.00, not the $100.00 they were split from" with
+  the button reading "Undo anyway". Zero console errors; seeds removed.
+  tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
