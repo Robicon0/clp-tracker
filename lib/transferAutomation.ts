@@ -649,7 +649,102 @@ export interface UndoSplitPlan {
   edited: boolean;
   piecesTotal: number;
   originalAmount: number;
+  // True when the original was INFERRED rather than pointed at: a piece created
+  // before splitOriginalId existed has no pointer, so the sibling and original
+  // are matched on shape. The match can only ever be a best guess, so the UI
+  // confirms what it found before restoring anything.
+  bestEffort: boolean;
   error?: string;
+}
+
+// A piece from before splitOriginalId: the split tag and the split note are
+// there, the pointer is not.
+function isLegacySplitPiece(t: Transfer): boolean {
+  return (
+    t.splitPart !== undefined &&
+    t.splitOriginalId === undefined &&
+    t.notes === SPLIT_NOTE
+  );
+}
+
+// Same-split fingerprint: everything applyTransferSplit copies from the
+// original onto both pieces. Amount is deliberately NOT part of it — that is
+// what differs between the two halves.
+function sameSplitShape(a: Transfer, b: Transfer): boolean {
+  return (
+    a.positionId === b.positionId &&
+    a.date === b.date &&
+    a.platform === b.platform &&
+    a.transferType === b.transferType
+  );
+}
+
+// Best-effort undo for a legacy piece. Finds the sibling by shape and opposite
+// side, then looks for a soft-deleted transfer of the same shape whose amount
+// equals the two pieces added together. Deliberately refuses to act on anything
+// less than exactly ONE candidate on both counts — restoring the wrong record
+// would be worse than doing nothing, and the user can always fix it by hand.
+function planLegacyUndoSplit(
+  piece: Transfer,
+  liveTransfers: Transfer[],
+  allTransfers: Transfer[],
+): UndoSplitPlan {
+  const blocked = (error: string, pieces: Transfer[]): UndoSplitPlan => ({
+    originalId: "",
+    pieces,
+    original: null,
+    edited: false,
+    piecesTotal: pieces.reduce((s, t) => s + toFiniteAmount(t.amount), 0),
+    originalAmount: 0,
+    bestEffort: true,
+    error,
+  });
+
+  const siblings = liveTransfers.filter(
+    (t) =>
+      t.id !== piece.id &&
+      t.notes === SPLIT_NOTE &&
+      t.splitPart !== undefined &&
+      t.splitPart !== piece.splitPart &&
+      sameSplitShape(t, piece),
+  );
+  if (siblings.length !== 1) {
+    return blocked(
+      siblings.length === 0
+        ? "Couldn't find this piece's other half, so there is nothing to add it back to. Fix this one manually."
+        : "More than one transfer could be this piece's other half, so it isn't safe to guess. Fix this one manually.",
+      [piece],
+    );
+  }
+  const sibling = siblings[0];
+  const pieces = [piece, sibling];
+  const total = toFiniteAmount(piece.amount) + toFiniteAmount(sibling.amount);
+  const candidates = allTransfers.filter(
+    (t) =>
+      t.deletedAt !== undefined &&
+      sameSplitShape(t, piece) &&
+      Math.abs(toFiniteAmount(t.amount) - total) < 0.005,
+  );
+  if (candidates.length !== 1) {
+    return blocked(
+      candidates.length === 0
+        ? "Couldn't find a deleted transfer matching these two added together, so there is nothing to restore. Fix this one manually."
+        : "Several deleted transfers match these two added together, so it isn't safe to guess which one to restore. Fix this one manually.",
+      pieces,
+    );
+  }
+  const original = candidates[0];
+  return {
+    originalId: original.id,
+    pieces,
+    original,
+    // The match is BY total, so the pieces necessarily add up — an edited piece
+    // simply would not have matched anything, and shows as "couldn't find" above.
+    edited: false,
+    piecesTotal: total,
+    originalAmount: toFiniteAmount(original.amount),
+    bestEffort: true,
+  };
 }
 
 // Undo is "delete the pieces, restore the original" — never a merge. The
@@ -660,6 +755,11 @@ export function planUndoSplit(
   liveTransfers: Transfer[],
   allTransfers: Transfer[],
 ): UndoSplitPlan {
+  // Legacy pieces only — anything split since dd81140 carries the pointer and
+  // takes the exact path below, unchanged.
+  if (isLegacySplitPiece(piece)) {
+    return planLegacyUndoSplit(piece, liveTransfers, allTransfers);
+  }
   const originalId = piece.splitOriginalId ?? "";
   const pieces = liveTransfers.filter((t) => t.splitOriginalId === originalId);
   const original =
@@ -678,6 +778,7 @@ export function planUndoSplit(
       edited: false,
       piecesTotal,
       originalAmount,
+      bestEffort: false,
       error: "This transfer is not part of a split.",
     };
   }
@@ -689,6 +790,7 @@ export function planUndoSplit(
       edited: false,
       piecesTotal,
       originalAmount,
+      bestEffort: false,
       error:
         "The original transfer was permanently deleted, so there is nothing to restore. Delete these pieces by hand if you no longer want them.",
     };
@@ -706,6 +808,7 @@ export function planUndoSplit(
     edited,
     piecesTotal,
     originalAmount,
+    bestEffort: false,
   };
 }
 

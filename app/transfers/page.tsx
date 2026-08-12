@@ -574,7 +574,9 @@ function SelectionActions({
           {single ? "Split" : `Split ${splittable}`}
         </button>
       )}
-      {single && single.splitOriginalId !== undefined && (
+      {/* Any split piece, including legacy ones with no splitOriginalId — those
+          take the best-effort match inside planUndoSplit. */}
+      {single && single.splitPart !== undefined && (
         <button
           type="button"
           onClick={() => onUndoSplit(single)}
@@ -3761,6 +3763,19 @@ function UndoSplitModal({
               Deleted and the original {formatUsd(plan.originalAmount)} transfer
               comes back exactly as it was.
             </p>
+            {/* A legacy piece has no stored pointer, so the original was found
+                by matching shape and total. Say exactly what was matched and
+                make the user agree before anything is restored. */}
+            {plan.bestEffort && plan.original !== null && (
+              <p className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+                This split was made before undo was recorded, so the original
+                was matched rather than looked up: a deleted{" "}
+                {formatUsd(plan.originalAmount)} transfer dated{" "}
+                {formatDateDDMMYYYY(plan.original.date)}
+                {plan.original.platform ? ` on ${plan.original.platform}` : ""}.
+                Check that is the right one before restoring it.
+              </p>
+            )}
             <ul className="space-y-2">
               {plan.pieces.map((p) => (
                 <li
@@ -3800,7 +3815,15 @@ function UndoSplitModal({
           onClick={() => onSubmit(plan)}
           className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {plan.edited ? "Undo anyway" : "Undo split"}
+          {/* On an error the button is disabled anyway, but it must not sit
+              there offering to restore something that was never found. */}
+          {plan.error !== undefined
+            ? "Undo split"
+            : plan.edited
+              ? "Undo anyway"
+              : plan.bestEffort
+                ? "Yes, restore that one"
+                : "Undo split"}
         </button>
       </div>
     </ModalShell>
