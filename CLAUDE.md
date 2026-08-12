@@ -3406,6 +3406,53 @@ at the plan gate.
   the button reading "Undo anyway". Zero console errors; seeds removed.
   tsc/lint/build clean.
 
+- e27c2c0: Undo Split now works on pieces created before splitOriginalId existed
+  (2026-08-12, extending dd81140). Additive fallback only — the precise path is
+  byte-unchanged, and nothing about how new splits are written moved.
+  ROUTING: planUndoSplit branches on isLegacySplitPiece (splitPart set,
+  splitOriginalId absent, notes === SPLIT_NOTE) and hands those to
+  planLegacyUndoSplit. A piece carrying the pointer never reaches the fallback,
+  so anything split since dd81140 still takes the exact lookup with no extra
+  confirmation.
+  THE MATCH, in two steps, each requiring exactly ONE candidate: the sibling is
+  another live SPLIT_NOTE row with the same positionId/date/platform/transferType
+  (sameSplitShape — precisely the fields applyTransferSplit copies onto both
+  pieces; amount is excluded because that is what differs between halves) and
+  the OPPOSITE splitPart; the original is a SOFT-DELETED transfer of that same
+  shape whose amount equals the two pieces added together within half a cent.
+  ZERO OR SEVERAL AT EITHER STEP MEANS REFUSE, with its own message and a
+  disabled button — four distinct cases (no sibling, several siblings, no
+  original, several originals). Restoring the wrong financial record is worse
+  than leaving the user to fix one row by hand, and only they know which is
+  which.
+  CONFIRMATION IS THE POINT: bestEffort=true on the plan drives an amber block
+  naming exactly what was matched — amount, date and platform of the deleted
+  record — and the button reads "Yes, restore that one" instead of just doing
+  it. The precise path keeps "Undo split" and runs on one click.
+  ONE THING FALLS OUT OF THE MATCH: because the original is found BY total, an
+  edited piece cannot match anything, so the legacy path reports "couldn't find"
+  rather than the "edited since splitting" warning. That is the right answer —
+  with no stored pointer there is genuinely no way to know which deleted
+  transfer an edited pair came from. `edited` is therefore always false on a
+  legacy plan.
+  The Undo Split button now shows for any transfer with splitPart set (was:
+  splitOriginalId present).
+  Verified against the compiled module across all six branches — unique legacy
+  match (bestEffort true, original found), ambiguous original, no original, no
+  sibling, ambiguous sibling, and the precise path still returning
+  bestEffort=false — plus applying the clean legacy case, which restored the
+  original with sourceClaimId intact and removed both pieces. Live on
+  localhost:3001 with three pairs seeded (legacy-with-original,
+  legacy-without-original, new-with-pointer): the legacy piece offered Undo
+  Split and its modal read "the original was matched rather than looked up: a
+  deleted $100.00 transfer dated 01/07/2026 on AAVE" with the button "Yes,
+  restore that one"; applying restored O1 (platform AAVE, sourceClaimId C1, auto
+  note intact) with Lifetime Earned byte-identical at $300.00 before and after;
+  the no-match pair showed "Couldn't find a deleted transfer matching these two
+  added together" with the confirm disabled and reading plain "Undo split"; and
+  the pointer-carrying pair showed no best-effort notice, an enabled button and
+  the original wording. Zero console errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
