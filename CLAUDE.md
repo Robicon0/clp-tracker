@@ -3453,6 +3453,37 @@ at the plan gate.
   the pointer-carrying pair showed no best-effort notice, an enabled button and
   the original wording. Zero console errors; seeds removed. tsc/lint/build clean.
 
+- Two layout repositions, nothing computed differently (2026-08-14). Both are
+  pure JSX moves — same text, same styling, same props, same conditions; no
+  helper, formula or predicate was touched in either file.
+  (A) Business P&L: the "Price to Hit Target = …" paragraph and the amber
+  "$X behind target, split evenly across N tokens" line moved OUT of the
+  Unconverted Holdings header block and into their own bordered strip between
+  the three summary cards and the table. The header keeps only the general
+  "Reward tokens you claimed…" description, wording unchanged. The explanation
+  now reads beside the column it explains rather than at the top of the whole
+  section; both paragraphs stay inside the rows.length > 0 branch, so a section
+  with no holdings still shows nothing but its empty state. The gapShare > 0
+  guard is unchanged, so the amber line still disappears once the target is met.
+  (B) Transfers: <RecentlyDeletedSection> moved from directly under the Add
+  Transfer / Log an Expense buttons to the END of the page content — after the
+  summary cards, Yield Checkpoints, Transfers by Chain, Expenses & Withdrawals
+  and every banner, immediately before the modal blocks (which are overlays and
+  render nowhere in the flow). Same component, same props, still collapsed by
+  default and still hidden entirely at zero rows. A recovery tool most visits
+  never need was pushing the actual transfer data down.
+  Verified live on localhost:3001 with a seeded position / 1 live + 1
+  soft-deleted transfer / 2 unconverted claims: on Transfers the "Show Recently
+  Deleted (1)" toggle measured at y=1299 in a 1393px page, below the last
+  section heading (y=1106), and Restore still returned T2 with platform KRAKEN,
+  destination RAKA, notes and moneyStatus byte-identical and deletedAt absent,
+  Lifetime Earned $350.00, the section hiding itself once empty. On Business P&L
+  the Unconverted Holdings header held exactly ONE paragraph, with the
+  explanation at y=846 and the amber gap line at y=886 — both between the
+  summary cards (y=714) and the table (y=919), neither inside the header
+  (y=627) — and the amber line kept its text-amber-300 class. Zero console
+  errors; seeds removed. tsc/lint/build clean.
+
 ## Known Issues
 
 - None currently tracked.
