@@ -2052,25 +2052,6 @@ export default function TransfersPage() {
             onDone={refresh}
           />
 
-          <RecentlyDeletedSection
-            rows={deletedTransfers}
-            open={showDeleted}
-            onToggle={() => {
-              setShowDeleted((v) => !v);
-              setPendingPurge(null);
-            }}
-            pairLabelFor={(t) =>
-              t.transferType === "expense"
-                ? "Expense"
-                : positionPairById.get(t.positionId) ?? "—"
-            }
-            deployedLabelFor={(t) => deployedLabelOf(t) ?? "—"}
-            pendingPurge={pendingPurge}
-            onPurgeRequest={setPendingPurge}
-            onPurgeConfirm={handlePurge}
-            onPurgeCancel={() => setPendingPurge(null)}
-            onRestore={handleRestore}
-          />
 
           {/* Money Flow ledger: earned − withdrawn − deployed − transferred
               = available now. The three subtracted buckets are mutually
@@ -2688,6 +2669,28 @@ export default function TransfersPage() {
               </div>
             </div>
           )}
+
+          {/* Last section on the page: a recovery tool most visits never need,
+              so it sits below the actual transfer data rather than above it. */}
+          <RecentlyDeletedSection
+            rows={deletedTransfers}
+            open={showDeleted}
+            onToggle={() => {
+              setShowDeleted((v) => !v);
+              setPendingPurge(null);
+            }}
+            pairLabelFor={(t) =>
+              t.transferType === "expense"
+                ? "Expense"
+                : positionPairById.get(t.positionId) ?? "—"
+            }
+            deployedLabelFor={(t) => deployedLabelOf(t) ?? "—"}
+            pendingPurge={pendingPurge}
+            onPurgeRequest={setPendingPurge}
+            onPurgeConfirm={handlePurge}
+            onPurgeCancel={() => setPendingPurge(null)}
+            onRestore={handleRestore}
+          />
 
           {modal.kind === "add" && (
             <TransferFormModal

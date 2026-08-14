@@ -528,27 +528,6 @@ export default function BusinessPnlPage() {
             not listed: they carry no price exposure and already count as
             realized in Converted Fees.
           </p>
-          {/* One line, not a caveat essay: the assumption is the whole point of
-              reading the column, so it has to be visible beside it. */}
-          <p className="mt-2 text-xs text-[var(--muted)]">
-            <span className="font-medium text-[var(--foreground)]">
-              Price to Hit Target
-            </span>{" "}
-            = what each token would have to reach to cover its EQUAL SHARE of
-            the Growth Target gap, holding quantities and every other number
-            still. A planning estimate, not a forecast — it assumes every token
-            below moves at once, each carrying the same dollar amount.
-          </p>
-          {/* The split itself, stated in dollars: without it the per-row prices
-              look arbitrary, since the share they solve for is invisible. */}
-          {gapShare > 0 && (
-            <p className="mt-2 text-xs text-amber-300">
-              {formatUsd(gapToTarget)} behind target, split evenly across{" "}
-              {eligibleHoldings.length}{" "}
-              {eligibleHoldings.length === 1 ? "token" : "tokens"} —{" "}
-              {formatUsd(gapShare)} each.
-            </p>
-          )}
         </div>
         {holdings.rows.length === 0 ? (
           <div className="px-6 py-10 text-center text-sm text-[var(--muted)]">
@@ -571,6 +550,31 @@ export default function BusinessPnlPage() {
                 value={formatUsd(holdings.totalPnl)}
                 valueClass={pnlColor(holdings.totalPnl)}
               />
+            </div>
+            <div className="border-b border-[var(--border)] px-5 py-4">
+              {/* One line, not a caveat essay: the assumption is the whole point
+                  of reading the column, so it has to be visible beside it. */}
+              <p className="text-xs text-[var(--muted)]">
+                <span className="font-medium text-[var(--foreground)]">
+                  Price to Hit Target
+                </span>{" "}
+                = what each token would have to reach to cover its EQUAL SHARE
+                of the Growth Target gap, holding quantities and every other
+                number still. A planning estimate, not a forecast — it assumes
+                every token below moves at once, each carrying the same dollar
+                amount.
+              </p>
+              {/* The split itself, stated in dollars: without it the per-row
+                  prices look arbitrary, since the share they solve for is
+                  invisible. */}
+              {gapShare > 0 && (
+                <p className="mt-2 text-xs text-amber-300">
+                  {formatUsd(gapToTarget)} behind target, split evenly across{" "}
+                  {eligibleHoldings.length}{" "}
+                  {eligibleHoldings.length === 1 ? "token" : "tokens"} —{" "}
+                  {formatUsd(gapShare)} each.
+                </p>
+              )}
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-[var(--border)] text-sm">
